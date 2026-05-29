@@ -39,13 +39,13 @@ open class AnimeDekhoProvider : MainAPI() {
             request.data.contains("type\":\"series") -> "$mainUrl/serie/"
             request.data.contains("type\":\"movie") -> "$mainUrl/movies/"
             else -> {
-                val term = Regex("term\":\"([^\"]+)\"").find(request.data)?.groupValues?.get(1) ?: ""
+                val term = Regex("term\":\"([^\"]+)").find(request.data)?.groupValues?.get(1) ?: ""
                 "$mainUrl/category/$term/"
             }
         }
 
         val pageDoc = app.get(pageUrl).document
-        val nonce = Regex("nonce\":\"([^\"]+)\"").find(pageDoc.html())?.groupValues?.get(1) ?: ""
+        val nonce = Regex("nonce\":\"([^\"]+)").find(pageDoc.html())?.groupValues?.get(1) ?: ""
         val filterEl = pageDoc.selectFirst("[data-taxonomy]")
         val taxonomy = filterEl?.attr("data-taxonomy") ?: "none"
         val termVal = filterEl?.attr("data-term") ?: "none"
@@ -101,8 +101,29 @@ open class AnimeDekhoProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse {
         val media = Gson().fromJson(url, Media::class.java)
         val document = app.get(media.url).document
-        val title = document.selectFirst("h1.entry-title")?.text()?.trim()?.substringAfter("Watch Online ")
-            ?: document.selectFirst("meta[property=og:title]")?.attr("content")?.substringAfter("Watch Online ")?.substringBefore(" Movie in Hindi Dubbed Free") ?: "No Title"
+        val title = run {
+            val h1 = document.selectFirst("h1.entry-title")?.text()?.trim()
+            val ogTitle = document.selectFirst("meta[property=og:title]")?.attr("content")?.trim()
+            val twitterTitle = document.selectFirst("meta[name=twitter:title]")?.attr("content")?.trim()
+
+            fun String.cleanTitle(): String? {
+                val cleaned = this
+                    .substringAfter("Watch Online ").takeIf { it != this }
+                    ?: this
+                return cleaned
+                    .substringBefore(" Movie in Hindi")
+                    .substringBefore(" in Hindi")
+                    .substringBefore(" | AnimeDekho")
+                    .substringBefore("| AnimeDekho")
+                    .trim()
+                    .takeIf { it.isNotEmpty() && !it.contains("AnimeDekho", ignoreCase = true) }
+            }
+
+            h1?.cleanTitle()
+                ?: ogTitle?.cleanTitle()
+                ?: twitterTitle?.cleanTitle()
+                ?: "No Title"
+        }
         val poster = fixUrlNull(document.selectFirst("div.post-thumbnail figure img")?.attr("src") ?: media.poster)
         val plot = document.selectFirst("div.entry-content p")?.text()?.trim()
             ?: document.selectFirst("meta[name=twitter:description]")?.attr("content")
