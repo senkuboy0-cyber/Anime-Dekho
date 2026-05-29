@@ -4,6 +4,8 @@ import com.google.gson.Gson
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import com.lagradost.cloudstream3.utils.AppUtils.parseJson
+import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 
 open class AnimeDekhoProvider : MainAPI() {
@@ -39,33 +41,32 @@ open class AnimeDekhoProvider : MainAPI() {
         val isMovie = request.data.contains("type\":\"movie")
         val isCategory = !isSeries && !isMovie
 
-        val pageUrl = when {
-            isSeries -> "$mainUrl/serie/"
-            isMovie -> "$mainUrl/movies/"
-            else -> {
-                val term = Regex(""""term":"([^"]+)"""").find(request.data)?.groupValues?.get(1) ?: ""
-                "$mainUrl/category/$term/"
-            }
-        }
-
         // Category: traditional /page/N/ pagination
         if (isCategory) {
+            val term = Regex("\"term\":\"([^\"]+)\"").find(request.data)?.groupValues?.get(1) ?: ""
+            val pageUrl = "$mainUrl/category/$term/"
             val pagedUrl = if (page == 1) pageUrl else "${pageUrl}page/$page/"
-            val document = app.get(
-                pagedUrl,
-                headers = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                )
-            ).document
+            val document = app.get(pagedUrl).document
             val home = document.select("article").mapNotNull { it.toSearchResult() }
             val hasNextPage = document.selectFirst("a.next.page-numbers") != null
             return newHomePageResponse(request.name, home, hasNextPage)
         }
 
-        // Series & Movies: AJAX pagination
+        // Series & Movies: AJAX "Load more"
+        val pageUrl = if (isSeries) "$mainUrl/serie/" else "$mainUrl/movies/"
+
+        // Page 1: normal HTML scraping
+        if (page == 1) {
+            val document = app.get(pageUrl).document
+            val home = document.select("article").mapNotNull { it.toSearchResult() }
+            return newHomePageResponse(request.name, home, true)
+        }
+
+        // Page 2+: AJAX POST
         val pageDoc = app.get(pageUrl).document
-        val nonce = Regex(""""nonce":"([^"]+)"""")
+        val nonce = Regex("\"nonce\":\"([^\"]+)\"")
             .find(pageDoc.html())?.groupValues?.get(1) ?: ""
+
         val filterEl = pageDoc.selectFirst("[data-taxonomy]")
         val taxonomy = filterEl?.attr("data-taxonomy") ?: "none"
         val termVal = filterEl?.attr("data-term") ?: "none"
@@ -83,16 +84,15 @@ open class AnimeDekhoProvider : MainAPI() {
                 "X-Requested-With" to "XMLHttpRequest",
                 "Referer" to pageUrl
             )
-        )
+        ).text
 
-        val ajaxDoc = response.document
-        val home = ajaxDoc.select("article").mapNotNull { it.toSearchResult() }
-        val finalHome = if (page == 1) {
-            pageDoc.select("article").mapNotNull { it.toSearchResult() }
-        } else {
-            home
-        }
-        return newHomePageResponse(request.name, finalHome, home.isNotEmpty())
+        // JSON parse
+        val json = parseJson<AjaxResponse>(response)
+        val htmlDoc = Jsoup.parse(json.html)
+        val home = htmlDoc.select("article").mapNotNull { it.toSearchResult() }
+
+        // "next": true/false for hasNextPage
+        return newHomePageResponse(request.name, home, json.next)
     }
 
     private fun Element.toSearchResult(): AnimeSearchResponse? {
@@ -273,4 +273,9 @@ open class AnimeDekhoProvider : MainAPI() {
     }
 
     data class Media(val url: String, val poster: String? = null, val mediaType: Int? = null)
+
+    data class AjaxResponse(
+        val next: Boolean,
+        val html: String
+    )
 }
