@@ -43,7 +43,7 @@ open class AnimeDekhoProvider : MainAPI() {
             isSeries -> "$mainUrl/serie/"
             isMovie -> "$mainUrl/movies/"
             else -> {
-                val term = Regex("""term":"([^"]+)"""").find(request.data)?.groupValues?.get(1) ?: ""
+                val term = Regex(""""term":"([^"]+)"""").find(request.data)?.groupValues?.get(1) ?: ""
                 "$mainUrl/category/$term/"
             }
         }
