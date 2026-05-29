@@ -1,21 +1,21 @@
-# 🎬 AnimeDekho Provider - Cloudstream Extension
+# <img src="assets/icons/star.svg" width="28" height="28"/> AnimeDekho Provider - Cloudstream Extension
 
 A **Cloudstream** extension for streaming anime, cartoons, and movies from **AnimeDekho**, **HindiSubAnime**, and **OnePace** with Hindi dub and subtitle support.
 
 ---
 
-## ✨ Features
+## <img src="assets/icons/features.svg" width="24" height="24"/> Features
 
-- 🇮🇳 **Hindi Dubbed** anime and cartoons
-- 📺 **Anime Series & Movies** streaming
-- 🎯 **Multiple server** support
-- 🔍 **Search** functionality
-- 📱 **Cross-platform** support
-- 🌐 **Subtitle** support
+- <img src="assets/icons/check.svg" width="16" height="16"/> **Hindi Dubbed** anime and cartoons
+- <img src="assets/icons/check.svg" width="16" height="16"/> **Anime Series & Movies** streaming
+- <img src="assets/icons/check.svg" width="16" height="16"/> **Multiple server** support
+- <img src="assets/icons/check.svg" width="16" height="16"/> **Search** functionality
+- <img src="assets/icons/check.svg" width="16" height="16"/> **Cross-platform** support
+- <img src="assets/icons/check.svg" width="16" height="16"/> **Subtitle** support
 
 ---
 
-## 📦 Supported Sources
+## <img src="assets/icons/package.svg" width="24" height="24"/> Supported Sources
 
 | Source | Language | Type |
 |--------|----------|------|
@@ -25,30 +25,30 @@ A **Cloudstream** extension for streaming anime, cartoons, and movies from **Ani
 
 ---
 
-## 🛠️ Installation
+## <img src="assets/icons/wrench.svg" width="24" height="24"/> Installation
 
 1. Download the latest `.cs3` or extension file from [Releases](https://github.com/senkuboy0-cyber/Anime-Dekho/releases)
 2. Open **Cloudstream** app
-3. Go to **Settings** → **Extensions**
+3. Go to **Settings** -> **Extensions**
 4. Tap on the **+** button and select the downloaded file
 5. The extension will be installed automatically
 
 ---
 
-## 📂 Categories
+## <img src="assets/icons/folder.svg" width="24" height="24"/> Categories
 
-- 🎬 **Series**
-- 🎥 **Movies**
-- 🐉 **Anime**
-- 📺 **Cartoon**
-- 🔴 **Crunchyroll**
-- 🇮🇳 **Hindi Dub**
-- 🗣️ **Tamil**
-- 🗣️ **Telugu**
+- <img src="assets/icons/star.svg" width="16" height="16"/> **Series**
+- <img src="assets/icons/star.svg" width="16" height="16"/> **Movies**
+- <img src="assets/icons/star.svg" width="16" height="16"/> **Anime**
+- <img src="assets/icons/star.svg" width="16" height="16"/> **Cartoon**
+- <img src="assets/icons/star.svg" width="16" height="16"/> **Crunchyroll**
+- <img src="assets/icons/star.svg" width="16" height="16"/> **Hindi Dub**
+- <img src="assets/icons/star.svg" width="16" height="16"/> **Tamil**
+- <img src="assets/icons/star.svg" width="16" height="16"/> **Telugu**
 
 ---
 
-## 🔧 Built With
+## <img src="assets/icons/wrench.svg" width="24" height="24"/> Built With
 
 - [Cloudstream3](https://github.com/recloudstream/cloudstream) - Android streaming platform
 - **Kotlin** - Programming language
@@ -56,37 +56,38 @@ A **Cloudstream** extension for streaming anime, cartoons, and movies from **Ani
 
 ---
 
-## 📋 Requirements
+## <img src="assets/icons/docs.svg" width="24" height="24"/> Requirements
 
-- **Cloudstream3** app installed on your Android device
-- Android 5.0+ (API 21+)
+- <img src="assets/icons/check.svg" width="16" height="16"/> **Cloudstream3** app installed on your Android device
+- <img src="assets/icons/check.svg" width="16" height="16"/> Android 5.0+ (API 21+)
 
 ---
 
-## 🤝 Credits
+## <img src="assets/icons/heart.svg" width="24" height="24"/> Credits
 
 - Original extension by [Phisher98](https://github.com/phisher98)
 - Cloudstream3 by [recloudstream](https://github.com/recloudstream)
 
 ---
 
-## ⚠️ Disclaimer
+## <img src="assets/icons/warning.svg" width="24" height="24"/> Disclaimer
 
 This extension is for **educational purposes only**. We do not host or distribute any content. All content is fetched from third-party sources. Use at your own risk.
 
 ---
 
-## 📜 License
+## <img src="assets/icons/docs.svg" width="24" height="24"/> License
 
-This project is open source. Feel free to modify and distribute.
+This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
 
 ---
 
 <div align="center">
 
-**Made with ❤️ for Anime Lovers**
+**Made with <img src="assets/icons/heart.svg" width="16" height="16"/> for Anime Lovers**
 
 [![Cloudstream](https://img.shields.io/badge/Cloudstream-Extension-blue?style=for-the-badge)](https://github.com/recloudstream/cloudstream)
 [![Kotlin](https://img.shields.io/badge/Kotlin-1.9-purple?style=for-the-badge&logo=kotlin)](https://kotlinlang.org)
+[![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
 
 </div>
