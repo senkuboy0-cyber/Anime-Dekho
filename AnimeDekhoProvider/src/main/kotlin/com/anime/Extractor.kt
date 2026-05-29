@@ -372,7 +372,9 @@ class Blakiteapi : ExtractorApi() {
 
 
 open class Abyass : ExtractorApi() {
-    override var name = " override val requiresReferer = true
+    override var name = "Abyass"
+    override var mainUrl = "https://abyssplayer.com"
+    override val requiresReferer = true
 
     override suspend fun getUrl(
         url: String,
