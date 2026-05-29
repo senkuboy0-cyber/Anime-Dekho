@@ -52,16 +52,16 @@ open class GDMirrorbot : ExtractorApi() {
             Pair(url.substringAfterLast("embed/"), getBaseUrl(app.get(url).url))
         } else {
             var pageText = app.get(url).text
-            val finalId = Regex("""FinalID\s*=\s*"([^"]+)"""").find(pageText)?.groupValues?.get(1)
-            val myKey = Regex("""myKey\s*=\s*"([^"]+)"""").find(pageText)?.groupValues?.get(1)
-            val idType = Regex("""idType\s*=\s*"([^"]+)"""").find(pageText)?.groupValues?.get(1) ?: "imdbid"
-            val baseUrl = Regex("""let\s+baseUrl\s*=\s*"([^"]+)"""").find(pageText)?.groupValues?.get(1)
+            val finalId = Regex("FinalID\\s*=\\s*\"([^\"]+)\"").find(pageText)?.groupValues?.get(1)
+            val myKey = Regex("myKey\\s*=\\s*\"([^\"]+)\"").find(pageText)?.groupValues?.get(1)
+            val idType = Regex("idType\\s*=\\s*\"([^\"]+)\"").find(pageText)?.groupValues?.get(1) ?: "imdbid"
+            val baseUrl = Regex("let\\s+baseUrl\\s*=\\s*\"([^\"]+)\"").find(pageText)?.groupValues?.get(1)
             val hostUrl = baseUrl?.let { getBaseUrl(it) }
 
             if (finalId != null && myKey != null) {
                 val apiUrl = if (url.contains("/tv/")) {
-                    val season = Regex("""/tv/\d+/(\d+)/""").find(url)?.groupValues?.get(1) ?: "1"
-                    val episode = Regex("""/tv/\d+/\d+/(\d+)""").find(url)?.groupValues?.get(1) ?: "1"
+                    val season = Regex("/tv/\\d+/(\\d+)/").find(url)?.groupValues?.get(1) ?: "1"
+                    val episode = Regex("/tv/\\d+/\\d+/(\\d+)").find(url)?.groupValues?.get(1) ?: "1"
                     "$mainUrl/myseriesapi?tmdbid=$finalId&season=$season&epname=$episode&key=$myKey"
                 } else {
                     "$mainUrl/mymovieapi?$idType=$finalId&key=$myKey"
@@ -168,7 +168,7 @@ open class AWSStream : ExtractorApi() {
             val extractedPack = doc.selectFirst("script:containsData(function(p,a,c,k,e,d))")?.data().orEmpty()
 
             JsUnpacker(extractedPack).unpack()?.let { unpacked ->
-                Regex(""""kind":\s*"captions"\s*,\s*"file":\s*"(https.*?\.srt)"")
+                Regex("\"kind\":\\s*\"captions\"\\s*,\\s*\"file\":\\s*\"(https.*?\\.srt)\"")
                     .find(unpacked)
                     ?.groupValues
                     ?.get(1)
@@ -230,7 +230,7 @@ data class Media(val url: String, val poster: String? = null, val mediaType: Int
 
 class Animedekhoco : ExtractorApi() {
     override val name = "Animedekhoco"
-    override val mainUrl = ho.co"
+    override val mainUrl = "https://animedekho.co"
     override val requiresReferer = false
 
     override suspend fun getUrl(
@@ -251,7 +251,7 @@ class Animedekhoco : ExtractorApi() {
         }
 
         text?.let {
-            val regex = Regex("""file\s*:\s*"([^"]+)"""")
+            val regex = Regex("file\\s*:\\s*\"([^\"]+)\"")
             regex.find(it)?.groupValues?.get(1)?.let { link ->
                 links.add("Player File" to link)
             }
@@ -302,7 +302,7 @@ class StreamRuby : ExtractorApi() {
             "Origin" to cleanedUrl,
         )
 
-        Regex("""file:"(.*)"""").find(scriptData)?.groupValues?.getOrNull(1)?.let { link ->
+        Regex("file:\"(.*)\"").find(scriptData)?.groupValues?.getOrNull(1)?.let { link ->
             callback.invoke(
                 newExtractorLink(
                     name,
@@ -372,9 +372,7 @@ class Blakiteapi : ExtractorApi() {
 
 
 open class Abyass : ExtractorApi() {
-    override var name = "Abyass"
-    override var mainUrl = "https://abyssplayer.com"
-    override val requiresReferer = true
+    override var name = " override val requiresReferer = true
 
     override suspend fun getUrl(
         url: String,
@@ -393,7 +391,7 @@ open class Abyass : ExtractorApi() {
 
         val scripts = document.select("script").joinToString("\n") { it.data() }
 
-        val encrypted = Regex("""const\s+datas\s*=\s*"([^"]*)"""")
+        val encrypted = Regex("const\\s+datas\\s*=\\s*\"([^\"]*)\"")
             .find(scripts)
             ?.groupValues
             ?.getOrNull(1)
