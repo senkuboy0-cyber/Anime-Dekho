@@ -48,6 +48,46 @@ A **Cloudstream** extension for streaming anime, cartoons, and movies from **Ani
 
 ---
 
+## <img src="assets/icons/structure.svg" width="24" height="24"/> Project Structure
+
+```
+Anime-Dekho/
+│
+├── <img src="assets/icons/docs.svg" width="14" height="14"/> README.md
+├── <img src="assets/icons/docs.svg" width="14" height="14"/> LICENSE
+│
+├── <img src="assets/icons/folder.svg" width="14" height="14"/> assets/
+│   └── <img src="assets/icons/folder.svg" width="14" height="14"/> icons/
+│       ├── <img src="assets/icons/star.svg" width="12" height="12"/> star.svg
+│       ├── <img src="assets/icons/features.svg" width="12" height="12"/> features.svg
+│       ├── <img src="assets/icons/package.svg" width="12" height="12"/> package.svg
+│       ├── <img src="assets/icons/wrench.svg" width="12" height="12"/> wrench.svg
+│       ├── <img src="assets/icons/folder.svg" width="12" height="12"/> folder.svg
+│       ├── <img src="assets/icons/docs.svg" width="12" height="12"/> docs.svg
+│       ├── <img src="assets/icons/heart.svg" width="12" height="12"/> heart.svg
+│       ├── <img src="assets/icons/warning.svg" width="12" height="12"/> warning.svg
+│       ├── <img src="assets/icons/check.svg" width="12" height="12"/> check.svg
+│       └── <img src="assets/icons/structure.svg" width="12" height="12"/> structure.svg
+│
+└── <img src="assets/icons/folder.svg" width="14" height="14"/> AnimeDekhoProvider/
+    ├── <img src="assets/icons/wrench.svg" width="14" height="14"/> build.gradle.kts
+    │
+    └── <img src="assets/icons/folder.svg" width="14" height="14"/> src/
+        └── <img src="assets/icons/folder.svg" width="14" height="14"/> main/
+            ├── <img src="assets/icons/docs.svg" width="14" height="14"/> AndroidManifest.xml
+            │
+            └── <img src="assets/icons/folder.svg" width="14" height="14"/> kotlin/
+                └── <img src="assets/icons/folder.svg" width="14" height="14"/> com/
+                    └── <img src="assets/icons/folder.svg" width="14" height="14"/> anime/
+                        ├── <img src="assets/icons/star.svg" width="12" height="12"/> AnimeDekhoPlugin.kt
+                        ├── <img src="assets/icons/star.svg" width="12" height="12"/> AnimeDekhoProvider.kt
+                        ├── <img src="assets/icons/star.svg" width="12" height="12"/> Extractor.kt
+                        ├── <img src="assets/icons/star.svg" width="12" height="12"/> HindiSubAnime.kt
+                        └── <img src="assets/icons/star.svg" width="12" height="12"/> OnePace.kt
+```
+
+---
+
 ## <img src="assets/icons/wrench.svg" width="24" height="24"/> Built With
 
 - [Cloudstream3](https://github.com/recloudstream/cloudstream) - Android streaming platform
