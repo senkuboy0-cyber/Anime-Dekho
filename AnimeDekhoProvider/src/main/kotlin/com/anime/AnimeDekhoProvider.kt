@@ -37,7 +37,7 @@ open class AnimeDekhoProvider : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val pageUrl = when {
             request.data.contains("type\":\"series") -> "$mainUrl/serie/"
-            request.data.contains("type\":\"movie") -> "$mainUrl/movie/"
+            request.data.contains("type\":\"movie") -> "$mainUrl/movies/"
             else -> {
                 val term = Regex("term\":\"([^\"]+)\"").find(request.data)?.groupValues?.get(1) ?: ""
                 "$mainUrl/category/$term/"
