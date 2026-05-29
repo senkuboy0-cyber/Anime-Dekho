@@ -77,5 +77,6 @@ subprojects {
         implementation(kotlin("stdlib"))
         implementation("com.github.Blatzar:NiceHttp:0.4.16")
         implementation("org.jsoup:jsoup:1.17.2")
+        implementation("com.google.code.gson:gson:2.11.0")
     }
 }
