@@ -1,9 +1,8 @@
 package com.anime
 
+import com.google.gson.Gson
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import com.lagradost.cloudstream3.utils.AppUtils.parseJson
-import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import org.jsoup.nodes.Element
 
 open class OnepaceProvider : MainAPI() {
@@ -61,7 +60,7 @@ open class OnepaceProvider : MainAPI() {
             subtype = true
 
         }
-        return newAnimeSearchResponse(title, Media(href, posterUrl,title).toJson(), TvType.Anime, false) {
+        return newAnimeSearchResponse(title, Gson().toJson(Media(href, posterUrl,title)), TvType.Anime, false) {
             this.posterUrl = posterUrl
             addDubStatus(dubExist = dubtype, subExist = subtype)
         }
@@ -75,7 +74,7 @@ open class OnepaceProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val media = parseJson<Media>(url)
+        val media = Gson().fromJson(url, Media::class.java)
         val document = app.get(media.url).document
         val ArcINT=media.mediaType?.substringAfter("Arc ")
         val element= document.selectFirst("div.seasons.aa-crd > div.seasons-bx:contains($ArcINT)")
@@ -88,10 +87,10 @@ open class OnepaceProvider : MainAPI() {
                 ?.substringBefore("-"))?.toIntOrNull()
         val lst = element?.select("ul.seasons-lst.anm-a li")
         return if (lst!!.isEmpty()) {
-            newMovieLoadResponse(title, url, TvType.Movie, Media(
+            newMovieLoadResponse(title, url, TvType.Movie, Gson().toJson(Media(
                 media.url,
                 mediaType = 1
-            ).toJson()) {
+            ))) {
                 this.posterUrl = poster
                 this.plot = plot
                 this.year = year
@@ -103,7 +102,7 @@ open class OnepaceProvider : MainAPI() {
                 val poster= "https://raw.githubusercontent.com/phisher98/TVVVV/refs/heads/main/OnePack.png"
                 val seasonnumber = it.selectFirst("h3.title > span")?.text().toString().substringAfter("S").substringBefore("-")
                 val season=seasonnumber.toIntOrNull()
-                newEpisode(AnimeDekhoProvider.Media(href, mediaType = 2).toJson())
+                newEpisode(Gson().toJson(AnimeDekhoProvider.Media(href, mediaType = 2)))
                 {
                     this.name=name
                     this.posterUrl=poster
@@ -124,7 +123,7 @@ open class OnepaceProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
-        val media = parseJson<Media>(data)
+        val media = Gson().fromJson(data, Media::class.java)
         val body = app.get(media.url).document.selectFirst("body")?.attr("class") ?: return false
         val term = Regex("""(?:term|postid)-(\d+)""").find(body)?.groupValues?.get(1) ?: throw ErrorLoadingException("no id found")
         for (i in 0..4) {
