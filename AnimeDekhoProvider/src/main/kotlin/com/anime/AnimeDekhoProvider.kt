@@ -23,29 +23,69 @@ open class AnimeDekhoProvider : MainAPI() {
             TvType.Movie,
         )
 
-    override val mainPage =
-        mainPageOf(
-            "/series/" to "Series",
-            "/movie/" to "Movies",
-            "/category/anime/" to "Anime",
-            "/category/cartoon/" to "Cartoon",
-            "/category/crunchyroll/" to "Crunchyroll",
-            "/category/hindi-dub/" to "Hindi",
-            "/category/tamil/" to "Tamil",
-            "/category/telugu/" to "Telugu"
+    override val mainPage = mainPageOf(
+        """{"taxonomy":"none","search":"none","term":"none","type":"series"}""" to "Series",
+        """{"taxonomy":"none","search":"none","term":"none","type":"movie"}""" to "Movies",
+        """{"taxonomy":"category","search":"none","term":"anime","type":"none"}""" to "Anime",
+        """{"taxonomy":"category","search":"none","term":"cartoon","type":"none"}""" to "Cartoon",
+        """{"taxonomy":"category",search:"",term:"ub,type:"none"}""" to "Hindi Dub",
+        """{"taxonomy":"category","search":"none","term":"tamil","type":"none"}""" to "Tamil",
+        """{"taxonomy":"category","search":"none","term":"telugu","type":"none"}""" to "Telugu",
+    )
+
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        // Resolve the actual page URL from request.data JSON
+        val pageUrl = when {
+            request.data.contains("\"type\":\"series\"") -> "$mainUrl/serie/"
+            request.data.contains("\"type\":\"movie\"") -> "$mainUrl/movie/"
+            else -> {
+                val term = Regex(""""term":"([^"]+)"""").find(request.data)?.groupValues?.get(1) ?: ""
+                "$mainUrl/category/$term/"
+            }
+        }
+
+        val pageDoc = app.get(pageUrl).document
+
+        // Extract nonce from the page HTML
+        val nonce = Regex(""""nonce":"([^"]+)"""")
+            .find(pageDoc.html())?.groupValues?.get(1) ?: ""
+
+        // Extract query vars from data attributes
+        val filterEl = pageDoc.selectFirst("[data-taxonomy]")
+        val taxonomy = filterEl?.attr("data-taxonomy") ?: "none"
+        val termVal = filterEl?.attr("data-term") ?: "none"
+        val searchVal = filterEl?.attr("data-search") ?: "none"
+        val typeVal = filterEl?.attr("data-type") ?: "none"
+
+        // Build AJAX POST request vars
+        val vars = """{"_wpsearch":"$nonce","taxonomy":"$taxonomy","search":"$searchVal","term":"$termVal","type":"$typeVal","genres":[],"years":[],"sort":1,"page":$page}"""
+
+        val response = app.post(
+            "$mainUrl/wp-admin/admin-ajax.php",
+            data = mapOf(
+                "action" to "action_search",
+                "vars" to vars
+            ),
+            headers = mapOf(
+                "Content-Type" to "application/x-www-form-urlencoded",
+                "X-WP-Nonce" to nonce,
+                "X-Requested-With" to "XMLHttpRequest",
+                "Referer" to pageUrl
+            )
         )
 
-    override suspend fun getMainPage(
-        page: Int,
-        request: MainPageRequest,
-    ): HomePageResponse {
-        val link = "$mainUrl${request.data}"
-        val document = app.get(link).document
-        val home =
-            document.select("article").mapNotNull {
-                it.toSearchResult()
-            }
-        return newHomePageResponse(request.name, home)
+        val document = response.document
+        val home = document.select("article").mapNotNull { it.toSearchResult() }
+
+        // For page 1 use the initial page scrape, for subsequent pages use AJAX results
+        val finalHome = if (page == 1) {
+            pageDoc.select("article").mapNotNull { it.toSearchResult() }
+        } else {
+            home
+        }
+
+        val hasNextPage = home.isNotEmpty()
+        return newHomePageResponse(request.name, finalHome, hasNextPage)
     }
 
     private fun Element.toSearchResult(): AnimeSearchResponse? {
@@ -111,7 +151,7 @@ open class AnimeDekhoProvider : MainAPI() {
                 val mediadata = Media(
                     url = recHref,
                     poster = recPosterUrl,
-                    mediaType = 0 // You can adjust this
+                    mediaType = 0
                 )
                 val mediaJson = Gson().toJson(mediadata)
                 newTvSeriesSearchResponse(recName, mediaJson, TvType.TvSeries) {
