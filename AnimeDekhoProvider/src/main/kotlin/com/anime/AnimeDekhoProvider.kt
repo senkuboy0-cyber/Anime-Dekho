@@ -77,17 +77,16 @@ open class AnimeDekhoProvider : MainAPI() {
 
     private fun Element.toSearchResult(): AnimeSearchResponse? {
         val href = this.selectFirst("a.lnk-blk")?.attr("href") ?: return null
-        val rawTitle = this.selectFirst("header h2")?.text() ?: ""
-        val title = if (rawTitle.contains("AnimeDekho") || rawTitle.contains("animeDekho") || rawTitle.length <= 3) {
-            this.selectFirst("a.lnk-blk img")?.attr("alt")
-                ?: this.selectFirst("a.lnk-blk")?.attr("title")
-                ?: "null"
-        } else {
-            rawTitle
-        }
         var posterUrl = this.selectFirst("div figure img")?.attr("src")
         if (posterUrl!!.contains("data:image")) {
             posterUrl = this.selectFirst("div figure img")?.attr("data-lazy-src")
+        }
+        val imgAlt = this.selectFirst("div figure img")?.attr("alt")?.trim()
+        val h2Text = this.selectFirst("header h2")?.text()?.trim()
+        val title = when {
+            !imgAlt.isNullOrEmpty() && !imgAlt.contains("anime", ignoreCase = true) && imgAlt.length > 2 -> imgAlt
+            !h2Text.isNullOrEmpty() && !h2Text.contains("AnimeDekho", ignoreCase = true) && h2Text.length > 2 -> h2Text
+            else -> href.trimEnd('/').substringAfterLast("/").replace("-", " ").replaceFirstChar { it.uppercase() }
         }
         return newAnimeSearchResponse(title, Gson().toJson(Media(href, posterUrl)), TvType.Anime, false) {
             this.posterUrl = posterUrl
