@@ -9,7 +9,7 @@
             "Hindi Provider"
         ],
         "description": "Includes AnimeDekho,OnePace(DUB,SUB) and HindiSubAnime",
-        "fileSize": 54529,
+        "fileSize": 54458,
         "repositoryUrl": "https://github.com/senkuboy0-cyber/Anime-Dekho",
         "language": "hi",
         "tvTypes": [
@@ -19,9 +19,9 @@
         ],
         "iconUrl": "https://animedekho.app/wp-content/uploads/2023/07/AnimeDekho-Logo-300x-1.png",
         "apiVersion": 1,
-        "fileHash": "sha256-0a3ba22ea64c84a70660e5ff66a30ff69e96fc63e325540909f2154b159f1579",
-        "jarFileSize": 252425,
+        "fileHash": "sha256-b5b56bc4dc2a9d1043f5c66ddf721f054752ce8dc267a4989b13c5716509e035",
+        "jarFileSize": 251554,
         "jarUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/AnimeDekhoProvider.jar",
-        "jarHash": "sha256-d35813c601243c225f07d19848154d3a2a7733f8cefaa5e6d0c97dc030e30c7a"
+        "jarHash": "sha256-4bef608712aa5dfefeb0b42de0dc828d04e4f4ec20515b08ab7b73a4d3297568"
     }
 ]
