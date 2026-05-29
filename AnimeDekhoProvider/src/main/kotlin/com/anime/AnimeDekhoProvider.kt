@@ -21,28 +21,27 @@ open class AnimeDekhoProvider : MainAPI() {
             TvType.Movie,
         )
 
-    override val mainPage = mainPageOf(
-        "{\"taxonomy\":\"none\",\"search\":\"none\",\"term\":\"none\",\"type\":\"series\"}" to "Series",
-        "{\"taxonomy\":\"none\",\"search\":\"none\",\"term\":\\":\""{\"none\",\"term\":\"anime\",\"type\":\"none\"}" to "Anime",
-        "{\"taxonomy\":\"category\",\"search\":\"none\",\"term\":\"cartoon\",\"type\":\"none\"}" to "Cartoon",
-        "{\"taxonomy\":\"category\",\"search\":\"none\",\"term\":\"hindi-dub\",\"type\":\"none\"}" to "Hindi Dub",
-        "{\"taxonomy\":\"category\",\"search\":\"none\",\"term\":\"tamil\",\"type\":\"none\"}" to "Tamil",
-        "{\"taxonomy\":\"category\",\"search\":\"none\",\"term\":\"telugu\",\"type\":\"none\"}" to "Telugu"
-    )
+    private fun mainPageJson(taxonomy: String, search: String, term: String, type: String): String {
+        return "{\"taxonomy\":\"$taxonomy\",\"search\":\"$search\",\"term\":\"$term\",\"type\":\"$type\"}"
+    }
 
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+    override val mainPage = mainPageOf(
+        mainPageJson("none", "none", "none", "series") to "Series",
+        mainPageJson("none", "none", "none", "movie") to "Movies",
+        mainPageJson("category", "none", "anime", "none") to "Anime",
+        mainPageJson("category", "none",  to  , PageJson(,(none getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val pageUrl = when {
-            request.data.contains("\"type\":\"series\"") -> "$mainUrl/serie/"
-            request.data.contains("\"type\":\"movie\"") -> "$mainUrl/movie/"
+            request.data.contains("type\":\"series") -> "$mainUrl/serie/"
+            request.data.contains("type\":\"movie") -> "$mainUrl/movie/"
             else -> {
-                val term = Regex("\"term\":\"([^\"]+)\"").find(request.data)?.groupValues?.get(1) ?: ""
+                val term = Regex("term\":\"([^\"]+)\"").find(request.data)?.groupValues?.get(1) ?: ""
                 "$mainUrl/category/$term/"
             }
         }
 
         val pageDoc = app.get(pageUrl).document
 
-        val nonce = Regex("\"nonce\":\"([^\"]+)\"")
+        val nonce = Regex("nonce\":\"([^\"]+)\"")
             .find(pageDoc.html())?.groupValues?.get(1) ?: ""
 
         val filterEl = pageDoc.selectFirst("[data-taxonomy]")
