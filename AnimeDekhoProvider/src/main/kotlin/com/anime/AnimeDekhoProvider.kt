@@ -35,24 +35,44 @@ open class AnimeDekhoProvider : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        val isSeries = request.data.contains("type\":\"series")
+        val isMovie = request.data.contains("type\":\"movie")
+        val isCategory = !isSeries && !isMovie
+
         val pageUrl = when {
-            request.data.contains("type\":\"series") -> "$mainUrl/serie/"
-            request.data.contains("type\":\"movie") -> "$mainUrl/movies/"
+            isSeries -> "$mainUrl/serie/"
+            isMovie -> "$mainUrl/movies/"
             else -> {
-                val term = Regex("term\":\"([^\"]+)").find(request.data)?.groupValues?.get(1) ?: ""
+                val term = Regex("""term":"([^"]+)"""").find(request.data)?.groupValues?.get(1) ?: ""
                 "$mainUrl/category/$term/"
             }
         }
 
+        // Category: traditional /page/N/ pagination
+        if (isCategory) {
+            val pagedUrl = if (page == 1) pageUrl else "${pageUrl}page/$page/"
+            val document = app.get(
+                pagedUrl,
+                headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                )
+            ).document
+            val home = document.select("article").mapNotNull { it.toSearchResult() }
+            val hasNextPage = document.selectFirst("a.next.page-numbers") != null
+            return newHomePageResponse(request.name, home, hasNextPage)
+        }
+
+        // Series & Movies: AJAX pagination
         val pageDoc = app.get(pageUrl).document
-        val nonce = Regex("nonce\":\"([^\"]+)").find(pageDoc.html())?.groupValues?.get(1) ?: ""
+        val nonce = Regex(""""nonce":"([^"]+)"""")
+            .find(pageDoc.html())?.groupValues?.get(1) ?: ""
         val filterEl = pageDoc.selectFirst("[data-taxonomy]")
         val taxonomy = filterEl?.attr("data-taxonomy") ?: "none"
         val termVal = filterEl?.attr("data-term") ?: "none"
         val searchVal = filterEl?.attr("data-search") ?: "none"
         val typeVal = filterEl?.attr("data-type") ?: "none"
 
-        val vars = "{\"_wpsearch\":\"$nonce\",\"taxonomy\":\"$taxonomy\",\"search\":\"$searchVal\",\"term\":\"$termVal\",\"type\":\"$typeVal\",\"genres\":[],\"years\":[],\"sort\":1,\"page\":$page}"
+        val vars = """{"_wpsearch":"$nonce","taxonomy":"$taxonomy","search":"$searchVal","term":"$termVal","type":"$typeVal","genres":[],"years":[],"sort":1,"page":$page}"""
 
         val response = app.post(
             "$mainUrl/wp-admin/admin-ajax.php",
@@ -65,8 +85,8 @@ open class AnimeDekhoProvider : MainAPI() {
             )
         )
 
-        val document = response.document
-        val home = document.select("article").mapNotNull { it.toSearchResult() }
+        val ajaxDoc = response.document
+        val home = ajaxDoc.select("article").mapNotNull { it.toSearchResult() }
         val finalHome = if (page == 1) {
             pageDoc.select("article").mapNotNull { it.toSearchResult() }
         } else {
