@@ -230,7 +230,7 @@ data class Media(val url: String, val poster: String? = null, val mediaType: Int
 
 class Animedekhoco : ExtractorApi() {
     override val name = "Animedekhoco"
-    override val mainUrl = "https://animedekho.co"
+    override val mainUrl = ho.co"
     override val requiresReferer = false
 
     override suspend fun getUrl(
