@@ -63,9 +63,17 @@ open class AnimeDekhoProvider : MainAPI() {
                 "vars" to vars
             ),
             headers = mapOf(
-                "Content-Type" to "application/x-www-form-urlencoded", X-WP to
-                 to ""
-        )).mapNotNull if (page == 1) {
+                "Content-Type" to "application/x-www-form-urlencoded",
+                "X-WP-Nonce" to nonce,
+                "X-Requested-With" to "XMLHttpRequest",
+                "Referer" to pageUrl
+            )
+        )
+
+        val document = response.document
+        val home = document.select("article").mapNotNull { it.toSearchResult() }
+
+        val finalHome = if (page == 1) {
             pageDoc.select("article").mapNotNull { it.toSearchResult() }
         } else {
             home
@@ -79,9 +87,8 @@ open class AnimeDekhoProvider : MainAPI() {
         val href = this.selectFirst("a.lnk-blk")?.attr("href") ?: return null
         val title = this.selectFirst("header h2")?.text() ?: "null"
         var posterUrl = this.selectFirst("div figure img")?.attr("src")
-        if (posterUrl!!.contains("data:image"))
-        {
-            posterUrl=this.selectFirst("div figure img")?.attr("data-lazy-src")
+        if (posterUrl!!.contains("data:image")) {
+            posterUrl = this.selectFirst("div figure img")?.attr("data-lazy-src")
         }
         return newAnimeSearchResponse(title, Media(href, posterUrl).toJson(), TvType.Anime, false) {
             this.posterUrl = posterUrl
@@ -100,7 +107,7 @@ open class AnimeDekhoProvider : MainAPI() {
         val document = app.get(media.url).document
         val title = document.selectFirst("h1.entry-title")?.text()?.trim()?.substringAfter("Watch Online ")
             ?: document.selectFirst("meta[property=og:title]")?.attr("content")?.substringAfter("Watch Online ")?.substringBefore(" Movie in Hindi Dubbed Free") ?: "No Title"
-        val poster = fixUrlNull(document.select"-thumbnail figure img")?.attr("src") ?: media.poster)
+        val poster = fixUrlNull(document.selectFirst("div.post-thumbnail figure img")?.attr("src") ?: media.poster)
         val plot = document.selectFirst("div.entry-content p")?.text()?.trim()
             ?: document.selectFirst("meta[name=twitter:description]")?.attr("content")
         val year = (document.selectFirst("span.year")?.text()?.trim()
@@ -121,14 +128,13 @@ open class AnimeDekhoProvider : MainAPI() {
             val episodes = document.select("ul.seasons-lst li").mapNotNull {
                 val name = it.selectFirst("h3.title")?.ownText() ?: "null"
                 val href = it.selectFirst("a")?.attr("href") ?: return@mapNotNull null
-                val poster=it.selectFirst("div > div > figure > img")?.attr("src")
+                val poster = it.selectFirst("div > div > figure > img")?.attr("src")
                 val seasonnumber = it.selectFirst("h3.title > span")?.text().toString().substringAfter("S").substringBefore("-")
-                val season=seasonnumber.toIntOrNull()
-                newEpisode(Media(href, mediaType = 2).toJson())
-                {
-                    this.name=name
-                    this.posterUrl=poster
-                    this.season=season
+                val season = seasonnumber.toIntOrNull()
+                newEpisode(Media(href, mediaType = 2).toJson()) {
+                    this.name = name
+                    this.posterUrl = poster
+                    this.season = season
                 }
             }
             val recommendations = document.select("div.swiper-wrapper article").map {
@@ -161,7 +167,7 @@ open class AnimeDekhoProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
         val media = runCatching { parseJson<Media>(data) }.getOrElse {
-            Log.e("Error:", "Failed to parse media JSON $it" )
+            Log.e("Error:", "Failed to parse media JSON $it")
             return false
         }
 
@@ -216,7 +222,6 @@ open class AnimeDekhoProvider : MainAPI() {
 
         return success
     }
-
 
     data class Media(val url: String, val poster: String? = null, val mediaType: Int? = null)
 
