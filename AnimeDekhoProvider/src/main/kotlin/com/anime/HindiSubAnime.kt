@@ -1,11 +1,11 @@
 package com.anime
 
+import com.google.gson.Gson
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.ErrorLoadingException
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.mainPageOf
-import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 
@@ -29,7 +29,7 @@ class HindiSubAnime : AnimeDekhoProvider() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
-        val media = parseJson<Media>(data)
+        val media = Gson().fromJson(data, Media::class.java)
         val body = app.get(media.url).document.selectFirst("body")?.attr("class") ?: return false
         val term = Regex("""(?:term|postid)-(\d+)""").find(body)?.groupValues?.get(1)
             ?: throw ErrorLoadingException("no id found")
