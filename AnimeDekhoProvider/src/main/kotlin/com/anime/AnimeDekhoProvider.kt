@@ -77,7 +77,10 @@ open class AnimeDekhoProvider : MainAPI() {
 
     private fun Element.toSearchResult(): AnimeSearchResponse? {
         val href = this.selectFirst("a.lnk-blk")?.attr("href") ?: return null
-        val title = this.selectFirst("header h2")?.text() ?: "null"
+        val title = this.selectFirst("header h2")?.text()
+            ?: this.selectFirst("h1.entry-title")?.text()
+            ?: this.selectFirst("a.lnk-blk")?.attr("title")
+            ?: "null"
         var posterUrl = this.selectFirst("div figure img")?.attr("src")
         if (posterUrl!!.contains("data:image")) {
             posterUrl = this.selectFirst("div figure img")?.attr("data-lazy-src")
