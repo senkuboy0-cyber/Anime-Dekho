@@ -38,61 +38,73 @@ open class AnimeDekhoProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val isSeries = request.data.contains("type\":\"series")
-        val isMovie = request.data.contains("type\":\"movie")
+        val isMovie = request.data.contains("type\":\"movies")
         val isCategory = !isSeries && !isMovie
 
-        // Category: traditional /page/N/ pagination
+        // Category: /page/N/ pagination
         if (isCategory) {
-            val term = Regex("\"term\":\"([^\"]+)\"").find(request.data)?.groupValues?.get(1) ?: ""
-            val pageUrl = "$mainUrl/category/$term/"
-            val pagedUrl = if (page == 1) pageUrl else "${pageUrl}page/$page/"
-            val document = app.get(pagedUrl).document
-            val home = document.select("article").mapNotNull { it.toSearchResult() }
-            val hasNextPage = document.selectFirst("a.next.page-numbers") != null
-            return newHomePageResponse(request.name, home, hasNextPage)
+            val term = Regex("\"term\":\"([^\"]+)\"")
+                .find(request.data)?.groupValues?.get(1) ?: ""
+            val url = if (page == 1) "$mainUrl/category/$term/"
+                      else           "$mainUrl/category/$term/page/$page/"
+            val doc = app.get(url).document
+            val home = doc.select("article").mapNotNull { it.toSearchResult() }
+            val hasNext = doc.selectFirst("a.next.page-numbers") != null
+            return newHomePageResponse(request.name, home, hasNext)
         }
 
-        // Series & Movies: AJAX "Load more"
-        val pageUrl = if (isSeries) "$mainUrl/serie/" else "$mainUrl/movies/"
+        // Series / Movies: AJAX
+        val baseUrl = if (isSeries) "$mainUrl/serie/" else "$mainUrl/movies/"
+        val typeVal = if (isSeries) "series" else "movie"
 
-        // Page 1: normal HTML scraping
+        // Page 1: normal HTML
         if (page == 1) {
-            val document = app.get(pageUrl).document
-            val home = document.select("article").mapNotNull { it.toSearchResult() }
+            val doc = app.get(baseUrl).document
+            val home = doc.select("article").mapNotNull { it.toSearchResult() }
             return newHomePageResponse(request.name, home, true)
         }
 
-        // Page 2+: AJAX POST
-        val pageDoc = app.get(pageUrl).document
-        val nonce = Regex("\"nonce\":\"([^\"]+)\"")
-            .find(pageDoc.html())?.groupValues?.get(1) ?: ""
+        // Page 2+: nonce fetch + AJAX
+        val nonce = try {
+            val html = app.get(baseUrl).text
+            Regex(""""nonce"\s*:\s*"([^"]+)"""")
+                .find(html)?.groupValues?.get(1) ?: ""
+        } catch (e: Exception) {
+            Log.e("AnimeDekho", "Nonce fetch failed: ${e.message}")
+            ""
+        }
 
-        val filterEl = pageDoc.selectFirst("[data-taxonomy]")
-        val taxonomy = filterEl?.attr("data-taxonomy") ?: "none"
-        val termVal = filterEl?.attr("data-term") ?: "none"
-        val searchVal = filterEl?.attr("data-search") ?: "none"
-        val typeVal = filterEl?.attr("data-type") ?: "none"
+        val vars = """{"_wpsearch":"$nonce","taxonomy":"none","search":"none","term":"none","type":"$typeVal","genres":[],"years":[],"sort":1,"page":$page}"""
 
-        val vars = """{"_wpsearch":"$nonce","taxonomy":"$taxonomy","search":"$searchVal","term":"$termVal","type":"$typeVal","genres":[],"years":[],"sort":1,"page":$page}"""
+        val responseText = try {
+            app.post(
+                "$mainUrl/wp-admin/admin-ajax.php",
+                data = mapOf(
+                    "action" to "action_search",
+                    "vars" to vars
+                ),
+                headers = mapOf(
+                    "Content-Type" to "application/x-www-form-urlencoded",
+                    "X-WP-Nonce" to nonce,
+                    "X-Requested-With" to "XMLHttpRequest",
+                    "Referer" to baseUrl
+                )
+            ).text
+        } catch (e: Exception) {
+            Log.e("AnimeDekho", "AJAX failed: ${e.message}")
+            return newHomePageResponse(request.name, emptyList(), false)
+        }
 
-        val response = app.post(
-            "$mainUrl/wp-admin/admin-ajax.php",
-            data = mapOf("action" to "action_search", "vars" to vars),
-            headers = mapOf(
-                "Content-Type" to "application/x-www-form-urlencoded",
-                "X-WP-Nonce" to nonce,
-                "X-Requested-With" to "XMLHttpRequest",
-                "Referer" to pageUrl
-            )
-        ).text
-
-        // JSON parse
-        val json = parseJson<AjaxResponse>(response)
-        val htmlDoc = Jsoup.parse(json.html)
-        val home = htmlDoc.select("article").mapNotNull { it.toSearchResult() }
-
-        // "next": true/false for hasNextPage
-        return newHomePageResponse(request.name, home, json.next)
+        // JSON parse: {"next": true/false, "html": "..."}
+        return try {
+            val json = parseJson<AjaxResponse>(responseText)
+            val htmlDoc = Jsoup.parse(json.html)
+            val home = htmlDoc.select("article").mapNotNull { it.toSearchResult() }
+            newHomePageResponse(request.name, home, json.next)
+        } catch (e: Exception) {
+            Log.e("AnimeDekho", "Parse failed: $responseText")
+            newHomePageResponse(request.name, emptyList(), false)
+        }
     }
 
     private fun Element.toSearchResult(): AnimeSearchResponse? {
@@ -275,7 +287,7 @@ open class AnimeDekhoProvider : MainAPI() {
     data class Media(val url: String, val poster: String? = null, val mediaType: Int? = null)
 
     data class AjaxResponse(
-        val next: Boolean,
-        val html: String
+        val next: Boolean = false,
+        val html: String = ""
     )
 }
