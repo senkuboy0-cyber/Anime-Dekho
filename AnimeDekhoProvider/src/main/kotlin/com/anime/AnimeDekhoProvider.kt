@@ -152,8 +152,7 @@ open class AnimeDekhoProvider : MainAPI() {
                 .substringBefore("| AnimeDekho")
                 .substringAfter("AnimeDekho - ")
                 .substringAfter("AnimeDekho \u2013 ")
-                .trim()
-                .takeIf {
+                .trim() .takeIf {
                     it.isNotEmpty() &&
                     it.length > 2 &&
                     !it.equals("AnimeDekho", ignoreCase = true) &&
