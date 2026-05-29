@@ -1,11 +1,11 @@
 [
     {
         "iconUrl": "https://animedekho.app/wp-content/uploads/2023/07/AnimeDekho-Logo-300x-1.png",
-        "jarFileSize": 258184,
-        "fileHash": "sha256-2512eb41acb016a91dc6891e135f35fa885c77ae26fd80e4473018c4c2c9e673",
+        "jarFileSize": 253122,
+        "fileHash": "sha256-1f807c0d3494d6689c2996353706b2a2cf89f13965776a22c24665e70eef25c2",
         "apiVersion": 1,
         "repositoryUrl": "https://github.com/senkuboy0-cyber/Anime-Dekho",
-        "fileSize": 56549,
+        "fileSize": 54584,
         "status": 1,
         "language": "hi",
         "authors": [
@@ -22,6 +22,6 @@
         "description": "Includes AnimeDekho,OnePace(DUB,SUB) and HindiSubAnime",
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/AnimeDekhoProvider.cs3",
         "name": "AnimeDekhoProvider",
-        "jarHash": "sha256-a3ec2ce7d6b48f7546e6353f218aad61798448e8ea3aaea618b926681dd9bfda"
+        "jarHash": "sha256-f4029ae2b020b6f06f73d04f71ad7a9e4a1a22cbf8676db25ded8cc3cddb329b"
     }
 ]
