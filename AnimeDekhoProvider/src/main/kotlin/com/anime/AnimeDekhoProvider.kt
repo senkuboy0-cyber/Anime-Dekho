@@ -4,8 +4,6 @@ import com.google.gson.Gson
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import com.lagradost.cloudstream3.utils.AppUtils.parseJson
-import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import org.jsoup.nodes.Element
 
 open class AnimeDekhoProvider : MainAPI() {
@@ -56,7 +54,7 @@ open class AnimeDekhoProvider : MainAPI() {
         {
             posterUrl=this.selectFirst("div figure img")?.attr("data-lazy-src")
         }
-        return newAnimeSearchResponse(title, Media(href, posterUrl).toJson(), TvType.Anime, false) {
+        return newAnimeSearchResponse(title, Gson().toJson(Media(href, posterUrl)), TvType.Anime, false) {
             this.posterUrl = posterUrl
         }
     }
@@ -69,7 +67,7 @@ open class AnimeDekhoProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val media = parseJson<Media>(url)
+        val media = Gson().fromJson(url, Media::class.java)
         val document = app.get(media.url).document
         val title = document.selectFirst("h1.entry-title")?.text()?.trim()?.substringAfter("Watch Online ")
             ?: document.selectFirst("meta[property=og:title]")?.attr("content")?.substringAfter("Watch Online ")?.substringBefore(" Movie in Hindi Dubbed Free") ?: "No Title"
@@ -82,10 +80,10 @@ open class AnimeDekhoProvider : MainAPI() {
         val lst = document.select("ul.seasons-lst li")
 
         return if (lst.isEmpty()) {
-            newMovieLoadResponse(title, url, TvType.Movie, Media(
+            newMovieLoadResponse(title, url, TvType.Movie, Gson().toJson(Media(
                 media.url,
                 mediaType = 1
-            ).toJson()) {
+            ))) {
                 this.posterUrl = poster
                 this.plot = plot
                 this.year = year
@@ -97,7 +95,7 @@ open class AnimeDekhoProvider : MainAPI() {
                 val poster=it.selectFirst("div > div > figure > img")?.attr("src")
                 val seasonnumber = it.selectFirst("h3.title > span")?.text().toString().substringAfter("S").substringBefore("-")
                 val season=seasonnumber.toIntOrNull()
-                newEpisode(Media(href, mediaType = 2).toJson())
+                newEpisode(Gson().toJson(Media(href, mediaType = 2)))
                 {
                     this.name=name
                     this.posterUrl=poster
@@ -133,7 +131,7 @@ open class AnimeDekhoProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
-        val media = runCatching { parseJson<Media>(data) }.getOrElse {
+        val media = runCatching { Gson().fromJson(data, Media::class.java) }.getOrElse {
             Log.e("Error:", "Failed to parse media JSON $it" )
             return false
         }
