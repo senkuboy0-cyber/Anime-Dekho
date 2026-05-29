@@ -22,12 +22,12 @@ open class AnimeDekhoProvider : MainAPI() {
         )
 
     override val mainPage = mainPageOf(
-        """{"taxonomy":"none","search":"none","term":"none","type":"series"}""" to "Series",
-        """{"taxonomy":"none","search":"none","term":"none","type":"movie"}""" to "Movies",
-        """{"taxonomy":"categorysearch,"anime","type":"none"}""""",none"":"none"}""" to "Cartoon
-        """{"taxonomy":"category","search":"none","term":"hindi-dub","type":"none"}""" to "Hindi Dub",
-        """{"taxonomy":"category","search":"none","term":"tamil","type":"none"}""" to "Tamil",
-        """{"taxonomy":"category","search":"none","term":"telugu","type":"none"}""" to "Telugu",
+        "{\"taxonomy\":\"none\",\"search\":\"none\",\"term\":\"none\",\"type\":\"series\"}" to "Series",
+        "{\"taxonomy\":\"none\",\"search\":\"none\",\"term\":\\":\""{\"none\",\"term\":\"anime\",\"type\":\"none\"}" to "Anime",
+        "{\"taxonomy\":\"category\",\"search\":\"none\",\"term\":\"cartoon\",\"type\":\"none\"}" to "Cartoon",
+        "{\"taxonomy\":\"category\",\"search\":\"none\",\"term\":\"hindi-dub\",\"type\":\"none\"}" to "Hindi Dub",
+        "{\"taxonomy\":\"category\",\"search\":\"none\",\"term\":\"tamil\",\"type\":\"none\"}" to "Tamil",
+        "{\"taxonomy\":\"category\",\"search\":\"none\",\"term\":\"telugu\",\"type\":\"none\"}" to "Telugu"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -51,7 +51,7 @@ open class AnimeDekhoProvider : MainAPI() {
         val searchVal = filterEl?.attr("data-search") ?: "none"
         val typeVal = filterEl?.attr("data-type") ?: "none"
 
-        val vars = """{"_wpsearch":"$nonce","taxonomy":"$taxonomy","search":"$searchVal","term":"$termVal","type":"$typeVal","genres":[],"years":[],"sort":1,"page":$page}"""
+        val vars = "{\"_wpsearch\":\"$nonce\",\"taxonomy\":\"$taxonomy\",\"search\":\"$searchVal\",\"term\":\"$termVal\",\"type\":\"$typeVal\",\"genres\":[],\"years\":[],\"sort\":1,\"page\":$page}"
 
         val response = app.post(
             "$mainUrl/wp-admin/admin-ajax.php",
@@ -60,17 +60,32 @@ open class AnimeDekhoProvider : MainAPI() {
                 "vars" to vars
             ),
             headers = mapOf(
-                -Type-urlencodedX-WP-,
-                "XMLHttpRequest,Referer
-        = response.documentarticle it.toSearchResult
-        val1) {""Result() }
-            = home.isNotEmpty() {
+                "Content-Type" to "application/x-www-form-urlencoded",
+                "X-WP-Nonce" to nonce,
+                "X-Requested-With" to "XMLHttpRequest",
+                "Referer" to pageUrl
+            )
+        )
+
+        val document = response.document
+        val home = document.select("article").mapNotNull { it.toSearchResult() }
+
+        val finalHome = if (page == 1) {
+            pageDoc.select("article").mapNotNull { it.toSearchResult() }
+        } else {
+            home
+        }
+
+        val hasNextPage = home.isNotEmpty()
+        return newHomePageResponse(request.name, finalHome, hasNextPage)
+    }
+
+    private fun Element.toSearchResult(): AnimeSearchResponse? {
         val href = this.selectFirst("a.lnk-blk")?.attr("href") ?: return null
         val title = this.selectFirst("header h2")?.text() ?: "null"
         var posterUrl = this.selectFirst("div figure img")?.attr("src")
-        if (posterUrl!!.contains("data:image"))
-        {
-            posterUrl=this.selectFirst("div figure img")?.attr("data-lazy-src")
+        if (posterUrl!!.contains("data:image")) {
+            posterUrl = this.selectFirst("div figure img")?.attr("data-lazy-src")
         }
         return newAnimeSearchResponse(title, Gson().toJson(Media(href, posterUrl)), TvType.Anime, false) {
             this.posterUrl = posterUrl
@@ -110,13 +125,13 @@ open class AnimeDekhoProvider : MainAPI() {
             val episodes = document.select("ul.seasons-lst li").mapNotNull {
                 val name = it.selectFirst("h3.title")?.ownText() ?: "null"
                 val href = it.selectFirst("a")?.attr("href") ?: return@mapNotNull null
-                val poster=it.selectFirst("div > div > figure > img" = it.selectFirst spansubstringAfter("S").substringBefore("-")
-                val season=seasonnumber.toIntOrNull()
-                newEpisode(Gson().toJson(Media(href, mediaType = 2)))
-                {
-                    this.name=name
-                    this.posterUrl=poster
-                    this.season=season
+                val poster = it.selectFirst("div > div > figure > img")?.attr("src")
+                val seasonnumber = it.selectFirst("h3.title > span")?.text().toString().substringAfter("S").substringBefore("-")
+                val season = seasonnumber.toIntOrNull()
+                newEpisode(Gson().toJson(Media(href, mediaType = 2))) {
+                    this.name = name
+                    this.posterUrl = poster
+                    this.season = season
                 }
             }
             val recommendations = document.select("div.swiper-wrapper article").map {
@@ -149,11 +164,10 @@ open class AnimeDekhoProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
         val media = runCatching { Gson().fromJson(data, Media::class.java) }.getOrElse {
-            Log.e("Error:", "Failed to parse media JSON $it" )
+            Log.e("Error:", "Failed to parse media JSON $it")
             return false
         }
 
-        //VidStream
         val headers = mapOf("Cookie" to "toronites_server=vidstream")
         val doc = app.get(media.url, headers = headers).document
         doc.select("iframe.serversel[src]").forEach { iframe ->
@@ -170,13 +184,12 @@ open class AnimeDekhoProvider : MainAPI() {
                 loadExtractor(innerIframeUrl, subtitleCallback, callback)
             }
         }
-        //
 
         val bodyClass = runCatching {
             app.get(media.url).document.selectFirst("body")?.attr("class")
         }.getOrNull()
 
-        val term = Regex("""(?:term|postid)-(\d+)""").find(bodyClass ?: "")
+        val term = Regex("(?:term|postid)-(\\d+)").find(bodyClass ?: "")
             ?.groupValues?.getOrNull(1)
 
         if (term.isNullOrEmpty()) {
