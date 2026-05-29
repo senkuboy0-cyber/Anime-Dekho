@@ -28,36 +28,32 @@ open class AnimeDekhoProvider : MainAPI() {
         """{"taxonomy":"none","search":"none","term":"none","type":"movie"}""" to "Movies",
         """{"taxonomy":"category","search":"none","term":"anime","type":"none"}""" to "Anime",
         """{"taxonomy":"category","search":"none","term":"cartoon","type":"none"}""" to "Cartoon",
-        """{"taxonomy":"category",search:"",term:"ub,type:"none"}""" to "Hindi Dub",
+        """{"taxonomy":"category","search":"none","term":"hindi-dub","type":"none"}""" to "Hindi Dub",
         """{"taxonomy":"category","search":"none","term":"tamil","type":"none"}""" to "Tamil",
         """{"taxonomy":"category","search":"none","term":"telugu","type":"none"}""" to "Telugu",
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // Resolve the actual page URL from request.data JSON
         val pageUrl = when {
             request.data.contains("\"type\":\"series\"") -> "$mainUrl/serie/"
             request.data.contains("\"type\":\"movie\"") -> "$mainUrl/movie/"
             else -> {
-                val term = Regex(""""term":"([^"]+)"""").find(request.data)?.groupValues?.get(1) ?: ""
+                val term = Regex("\"term\":\"([^\"]+)\"").find(request.data)?.groupValues?.get(1) ?: ""
                 "$mainUrl/category/$term/"
             }
         }
 
         val pageDoc = app.get(pageUrl).document
 
-        // Extract nonce from the page HTML
-        val nonce = Regex(""""nonce":"([^"]+)"""")
+        val nonce = Regex("\"nonce\":\"([^\"]+)\"")
             .find(pageDoc.html())?.groupValues?.get(1) ?: ""
 
-        // Extract query vars from data attributes
         val filterEl = pageDoc.selectFirst("[data-taxonomy]")
         val taxonomy = filterEl?.attr("data-taxonomy") ?: "none"
         val termVal = filterEl?.attr("data-term") ?: "none"
         val searchVal = filterEl?.attr("data-search") ?: "none"
         val typeVal = filterEl?.attr("data-type") ?: "none"
 
-        // Build AJAX POST request vars
         val vars = """{"_wpsearch":"$nonce","taxonomy":"$taxonomy","search":"$searchVal","term":"$termVal","type":"$typeVal","genres":[],"years":[],"sort":1,"page":$page}"""
 
         val response = app.post(
@@ -67,18 +63,9 @@ open class AnimeDekhoProvider : MainAPI() {
                 "vars" to vars
             ),
             headers = mapOf(
-                "Content-Type" to "application/x-www-form-urlencoded",
-                "X-WP-Nonce" to nonce,
-                "X-Requested-With" to "XMLHttpRequest",
-                "Referer" to pageUrl
-            )
-        )
-
-        val document = response.document
-        val home = document.select("article").mapNotNull { it.toSearchResult() }
-
-        // For page 1 use the initial page scrape, for subsequent pages use AJAX results
-        val finalHome = if (page == 1) {
+                "Content-Type" to "application/x-www-form-urlencoded", X-WP to
+                 to ""
+        )).mapNotNull if (page == 1) {
             pageDoc.select("article").mapNotNull { it.toSearchResult() }
         } else {
             home
@@ -113,7 +100,7 @@ open class AnimeDekhoProvider : MainAPI() {
         val document = app.get(media.url).document
         val title = document.selectFirst("h1.entry-title")?.text()?.trim()?.substringAfter("Watch Online ")
             ?: document.selectFirst("meta[property=og:title]")?.attr("content")?.substringAfter("Watch Online ")?.substringBefore(" Movie in Hindi Dubbed Free") ?: "No Title"
-        val poster = fixUrlNull(document.selectFirst("div.post-thumbnail figure img")?.attr("src") ?: media.poster)
+        val poster = fixUrlNull(document.select"-thumbnail figure img")?.attr("src") ?: media.poster)
         val plot = document.selectFirst("div.entry-content p")?.text()?.trim()
             ?: document.selectFirst("meta[name=twitter:description]")?.attr("content")
         val year = (document.selectFirst("span.year")?.text()?.trim()
@@ -195,13 +182,12 @@ open class AnimeDekhoProvider : MainAPI() {
                 loadExtractor(innerIframeUrl, subtitleCallback, callback)
             }
         }
-        //
 
         val bodyClass = runCatching {
             app.get(media.url).document.selectFirst("body")?.attr("class")
         }.getOrNull()
 
-        val term = Regex("""(?:term|postid)-(\d+)""").find(bodyClass ?: "")
+        val term = Regex("(?:term|postid)-(\\d+)").find(bodyClass ?: "")
             ?.groupValues?.getOrNull(1)
 
         if (term.isNullOrEmpty()) {
