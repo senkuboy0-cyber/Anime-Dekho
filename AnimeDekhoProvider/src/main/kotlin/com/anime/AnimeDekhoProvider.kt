@@ -13,13 +13,12 @@ open class AnimeDekhoProvider : MainAPI() {
     override var lang = "hi"
     override val hasDownloadSupport = true
 
-    override val supportedTypes =
-        setOf(
-            TvType.Cartoon,
-            TvType.Anime,
-            TvType.AnimeMovie,
-            TvType.Movie,
-        )
+    override val supportedTypes = setOf(
+        TvType.Cartoon,
+        TvType.Anime,
+        TvType.AnimeMovie,
+        TvType.Movie,
+    )
 
     private fun mainPageJson(taxonomy: String, search: String, term: String, type: String): String {
         return "{\"taxonomy\":\"$taxonomy\",\"search\":\"$search\",\"term\":\"$term\",\"type\":\"$type\"}"
@@ -29,7 +28,13 @@ open class AnimeDekhoProvider : MainAPI() {
         mainPageJson("none", "none", "none", "series") to "Series",
         mainPageJson("none", "none", "none", "movie") to "Movies",
         mainPageJson("category", "none", "anime", "none") to "Anime",
-        mainPageJson("category", "none",  to  , PageJson(,(none getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        mainPageJson("category", "none", "cartoon", "none") to "Cartoon",
+        mainPageJson("category", "none", "hindi-dub", "none") to "Hindi Dub",
+        mainPageJson("category", "none", "tamil", "none") to "Tamil",
+        mainPageJson("category", "none", "telugu", "none") to "Telugu"
+    )
+
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val pageUrl = when {
             request.data.contains("type\":\"series") -> "$mainUrl/serie/"
             request.data.contains("type\":\"movie") -> "$mainUrl/movie/"
@@ -40,10 +45,7 @@ open class AnimeDekhoProvider : MainAPI() {
         }
 
         val pageDoc = app.get(pageUrl).document
-
-        val nonce = Regex("nonce\":\"([^\"]+)\"")
-            .find(pageDoc.html())?.groupValues?.get(1) ?: ""
-
+        val nonce = Regex("nonce\":\"([^\"]+)\"").find(pageDoc.html())?.groupValues?.get(1) ?: ""
         val filterEl = pageDoc.selectFirst("[data-taxonomy]")
         val taxonomy = filterEl?.attr("data-taxonomy") ?: "none"
         val termVal = filterEl?.attr("data-term") ?: "none"
@@ -54,10 +56,7 @@ open class AnimeDekhoProvider : MainAPI() {
 
         val response = app.post(
             "$mainUrl/wp-admin/admin-ajax.php",
-            data = mapOf(
-                "action" to "action_search",
-                "vars" to vars
-            ),
+            data = mapOf("action" to "action_search", "vars" to vars),
             headers = mapOf(
                 "Content-Type" to "application/x-www-form-urlencoded",
                 "X-WP-Nonce" to nonce,
@@ -68,15 +67,12 @@ open class AnimeDekhoProvider : MainAPI() {
 
         val document = response.document
         val home = document.select("article").mapNotNull { it.toSearchResult() }
-
         val finalHome = if (page == 1) {
             pageDoc.select("article").mapNotNull { it.toSearchResult() }
         } else {
             home
         }
-
-        val hasNextPage = home.isNotEmpty()
-        return newHomePageResponse(request.name, finalHome, hasNextPage)
+        return newHomePageResponse(request.name, finalHome, home.isNotEmpty())
     }
 
     private fun Element.toSearchResult(): AnimeSearchResponse? {
@@ -93,9 +89,7 @@ open class AnimeDekhoProvider : MainAPI() {
 
     override suspend fun search(query: String): List<AnimeSearchResponse> {
         val document = app.get("$mainUrl/?s=$query").document
-        return document.select("ul[data-results] li article").mapNotNull {
-            it.toSearchResult()
-        }
+        return document.select("ul[data-results] li article").mapNotNull { it.toSearchResult() }
     }
 
     override suspend fun load(url: String): LoadResponse {
@@ -107,15 +101,11 @@ open class AnimeDekhoProvider : MainAPI() {
         val plot = document.selectFirst("div.entry-content p")?.text()?.trim()
             ?: document.selectFirst("meta[name=twitter:description]")?.attr("content")
         val year = (document.selectFirst("span.year")?.text()?.trim()
-            ?: document.selectFirst("meta[property=og:updated_time]")?.attr("content")
-                ?.substringBefore("-"))?.toIntOrNull()
+            ?: document.selectFirst("meta[property=og:updated_time]")?.attr("content")?.substringBefore("-"))?.toIntOrNull()
         val lst = document.select("ul.seasons-lst li")
 
         return if (lst.isEmpty()) {
-            newMovieLoadResponse(title, url, TvType.Movie, Gson().toJson(Media(
-                media.url,
-                mediaType = 1
-            ))) {
+            newMovieLoadResponse(title, url, TvType.Movie, Gson().toJson(Media(media.url, mediaType = 1))) {
                 this.posterUrl = poster
                 this.plot = plot
                 this.year = year
@@ -137,13 +127,8 @@ open class AnimeDekhoProvider : MainAPI() {
                 val recName = it.selectFirst("h2")?.text() ?: "Unknown"
                 val recHref = it.selectFirst("a")!!.attr("href")
                 val recPosterUrl = it.selectFirst("figure img")?.attr("src")
-                val mediadata = Media(
-                    url = recHref,
-                    poster = recPosterUrl,
-                    mediaType = 0
-                )
-                val mediaJson = Gson().toJson(mediadata)
-                newTvSeriesSearchResponse(recName, mediaJson, TvType.TvSeries) {
+                val mediadata = Media(url = recHref, poster = recPosterUrl, mediaType = 0)
+                newTvSeriesSearchResponse(recName, Gson().toJson(mediadata), TvType.TvSeries) {
                     this.posterUrl = mediadata.poster
                 }
             }
@@ -172,13 +157,9 @@ open class AnimeDekhoProvider : MainAPI() {
         doc.select("iframe.serversel[src]").forEach { iframe ->
             val serverUrl = iframe.attr("src")
             if (serverUrl.isBlank()) return@forEach
-
             val innerIframeUrl = runCatching {
-                app.get(serverUrl).document
-                    .selectFirst("iframe[src]")
-                    ?.attr("src")
+                app.get(serverUrl).document.selectFirst("iframe[src]")?.attr("src")
             }.getOrNull()
-
             if (!innerIframeUrl.isNullOrBlank()) {
                 loadExtractor(innerIframeUrl, subtitleCallback, callback)
             }
@@ -188,9 +169,7 @@ open class AnimeDekhoProvider : MainAPI() {
             app.get(media.url).document.selectFirst("body")?.attr("class")
         }.getOrNull()
 
-        val term = Regex("(?:term|postid)-(\\d+)").find(bodyClass ?: "")
-            ?.groupValues?.getOrNull(1)
-
+        val term = Regex("(?:term|postid)-(\\d+)").find(bodyClass ?: "")?.groupValues?.getOrNull(1)
         if (term.isNullOrEmpty()) {
             Log.e("Error:", "No postid/term ID found in body class: $bodyClass")
             return false
@@ -210,14 +189,10 @@ open class AnimeDekhoProvider : MainAPI() {
                 }.onFailure {
                     Log.e("Error:", "Failed to load extractor for $iframeUrl $it")
                 }
-            } else {
-                Log.w("Error:", "No iframe found for iteration $i")
             }
         }
-
         return success
     }
 
     data class Media(val url: String, val poster: String? = null, val mediaType: Int? = null)
-
 }
