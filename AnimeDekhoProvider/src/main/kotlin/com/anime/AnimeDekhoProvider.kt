@@ -100,35 +100,67 @@ open class AnimeDekhoProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse {
         val media = Gson().fromJson(url, Media::class.java)
-        val document = app.get(media.url).document
-        val title = run {
-            val h1 = document.selectFirst("h1.entry-title")?.text()?.trim()
-            val ogTitle = document.selectFirst("meta[property=og:title]")?.attr("content")?.trim()
-            val twitterTitle = document.selectFirst("meta[name=twitter:title]")?.attr("content")?.trim()
 
-            fun String.cleanTitle(): String? {
-                val cleaned = this
-                    .substringAfter("Watch Online ").takeIf { it != this }
-                    ?: this
-                return cleaned
-                    .substringBefore(" Movie in Hindi")
-                    .substringBefore(" in Hindi")
-                    .substringBefore(" | AnimeDekho")
-                    .substringBefore("| AnimeDekho")
-                    .trim()
-                    .takeIf { it.isNotEmpty() && !it.contains("AnimeDekho", ignoreCase = true) }
+        val document = try {
+            app.get(
+                media.url,
+                headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                    "Referer" to mainUrl,
+                    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language" to "en-US,en;q=0.5",
+                ),
+                timeout = 30
+            ).document
+        } catch (e: Exception) {
+            Log.e("AnimeDekho", "Failed to load page: ${e.message}")
+            return newMovieLoadResponse("Error", url, TvType.Movie, url) {
+                this.posterUrl = media.poster
             }
-
-            h1?.cleanTitle()
-                ?: ogTitle?.cleanTitle()
-                ?: twitterTitle?.cleanTitle()
-                ?: "No Title"
         }
-        val poster = fixUrlNull(document.selectFirst("div.post-thumbnail figure img")?.attr("src") ?: media.poster)
+
+        // Clean title helper
+        fun String.cleanTitle(): String? {
+            return this
+                .substringAfter("Watch Online ").let { if (it != this) it else this }
+                .substringBefore(" Movie in Hindi")
+                .substringBefore(" Series in Hindi")
+                .substringBefore(" in Hindi")
+                .substringBefore(" in Tamil")
+                .substringBefore(" in Telugu")
+                .substringBefore(" | AnimeDekho")
+                .substringBefore("| AnimeDekho")
+                .substringAfter("AnimeDekho - ")
+                .substringAfter("AnimeDekho \u2013 ")
+                .trim()
+                .takeIf {
+                    it.isNotEmpty() &&
+                    it.length > 2 &&
+                    !it.equals("AnimeDekho", ignoreCase = true) &&
+                    !it.startsWith("|")
+                }
+        }
+
+        val title = listOfNotNull(
+            document.selectFirst("h1.entry-title")?.text()?.trim(),
+            document.selectFirst("h1")?.text()?.trim(),
+            document.selectFirst("meta[property=og:title]")?.attr("content")?.trim(),
+            document.selectFirst("meta[name=twitter:title]")?.attr("content")?.trim(),
+            document.selectFirst("title")?.text()?.trim()
+        ).firstNotNullOfOrNull { it.cleanTitle() }
+            ?: media.url.trimEnd('/').substringAfterLast("/")
+                .replace("-", " ")
+                .replaceFirstChar { it.uppercase() }
+
+        val poster = fixUrlNull(
+            document.selectFirst("div.post-thumbnail figure img")?.attr("src") ?: media.poster
+        )
         val plot = document.selectFirst("div.entry-content p")?.text()?.trim()
             ?: document.selectFirst("meta[name=twitter:description]")?.attr("content")
         val year = (document.selectFirst("span.year")?.text()?.trim()
-            ?: document.selectFirst("meta[property=og:updated_time]")?.attr("content")?.substringBefore("-"))?.toIntOrNull()
+            ?: document.selectFirst("meta[property=og:updated_time]")
+                ?.attr("content")?.substringBefore("-"))?.toIntOrNull()
+
         val lst = document.select("ul.seasons-lst li")
 
         return if (lst.isEmpty()) {
@@ -138,25 +170,24 @@ open class AnimeDekhoProvider : MainAPI() {
                 this.year = year
             }
         } else {
-            val episodes = document.select("ul.seasons-lst li").mapNotNull {
+            val episodes = lst.mapNotNull {
                 val name = it.selectFirst("h3.title")?.ownText() ?: "null"
                 val href = it.selectFirst("a")?.attr("href") ?: return@mapNotNull null
-                val poster = it.selectFirst("div > div > figure > img")?.attr("src")
-                val seasonnumber = it.selectFirst("h3.title > span")?.text().toString().substringAfter("S").substringBefore("-")
-                val season = seasonnumber.toIntOrNull()
+                val epPoster = it.selectFirst("div > div > figure > img")?.attr("src")
+                val season = it.selectFirst("h3.title > span")?.text()
+                    .toString().substringAfter("S").substringBefore("-").toIntOrNull()
                 newEpisode(Gson().toJson(Media(href, mediaType = 2))) {
                     this.name = name
-                    this.posterUrl = poster
+                    this.posterUrl = epPoster
                     this.season = season
                 }
             }
-            val recommendations = document.select("div.swiper-wrapper article").map {
-                val recName = it.selectFirst("h2")?.text() ?: "Unknown"
-                val recHref = it.selectFirst("a")!!.attr("href")
-                val recPosterUrl = it.selectFirst("figure img")?.attr("src")
-                val mediadata = Media(url = recHref, poster = recPosterUrl, mediaType = 0)
-                newTvSeriesSearchResponse(recName, Gson().toJson(mediadata), TvType.TvSeries) {
-                    this.posterUrl = mediadata.poster
+            val recommendations = document.select("div.swiper-wrapper article").mapNotNull {
+                val recName = it.selectFirst("h2")?.text() ?: return@mapNotNull null
+                val recHref = it.selectFirst("a")?.attr("href") ?: return@mapNotNull null
+                val recPoster = it.selectFirst("figure img")?.attr("src")
+                newTvSeriesSearchResponse(recName, Gson().toJson(Media(recHref, recPoster, 0)), TvType.TvSeries) {
+                    this.posterUrl = recPoster
                 }
             }
             newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
