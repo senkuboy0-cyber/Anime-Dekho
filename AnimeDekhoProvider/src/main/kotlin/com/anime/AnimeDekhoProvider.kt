@@ -53,7 +53,7 @@ open class AnimeDekhoProvider : MainAPI() {
         }
 
         // Series & Movies: AJAX "Load more"
-        val pageUrl = if (isSeries) "$mainUrl/serie/" else "$mainUrl/movies/"
+        val pageUrl = if (isSeries) "$mainUrl/series-hindi/" else "$mainUrl/movie-hindi/"
 
         // Page 1: normal HTML scraping
         if (page == 1) {
@@ -151,7 +151,7 @@ open class AnimeDekhoProvider : MainAPI() {
                 .substringBefore(" | AnimeDekho")
                 .substringBefore("| AnimeDekho")
                 .substringAfter("AnimeDekho - ")
-                .substringAfter("AnimeDekho \u2013 ")
+                .substringAfter("AnimeDekho \\u2013 ")
                 .trim() .takeIf {
                     it.isNotEmpty() &&
                     it.length > 2 &&
