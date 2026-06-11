@@ -48,7 +48,14 @@ class Toonstream : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val document = app.get("$mainUrl/${request.data}/page/$page/").document
+        val url = if (request.data.contains("?")) {
+            // URL with query parameters (e.g. ?type=series)
+            "$mainUrl/${request.data}&page=$page/"
+        } else {
+            // Standard URL without query
+            "$mainUrl/${request.data}/page/$page/"
+        }
+        val document = app.get(url).document
         val home     = document.select("#movies-a > ul > li").mapNotNull { it.toSearchResult() }
         return newHomePageResponse(
             list    = HomePageList(
