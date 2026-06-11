@@ -32,8 +32,11 @@ jobs:
       - name: Build and Generate
         run: |
           ./gradlew AnimeDekhoProvider:make
+          ./gradlew Toonstream:make
           ./gradlew makePluginsJson
-          cp AnimeDekhoProvider/build/AnimeDekhoProvider.cs3 build/
+          cp AnimeDekhoProvider/build/*.cs3 build/
+          cp Toonstream/build/*.cs3 build/
+          cp build/plugins.json build/
           echo '{
             "name": "AnimeDekho Provider",
             "description": "AnimeDekho - Hindi Anime, Cartoon and Movies Streaming Extension",
