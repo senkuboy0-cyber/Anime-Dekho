@@ -34,9 +34,10 @@ jobs:
           ./gradlew AnimeDekhoProvider:make
           ./gradlew Toonstream:make
           ./gradlew makePluginsJson
-          cp AnimeDekhoProvider/build/*.cs3 build/
-          cp Toonstream/build/*.cs3 build/
-          cp build/plugins.json build/
+          mkdir -p build_output
+          cp AnimeDekhoProvider/build/*.cs3 build_output/ || true
+          cp Toonstream/build/*.cs3 build_output/ || true
+          cp build/plugins.json build_output/plugins.json
           echo '{
             "name": "AnimeDekho Provider",
             "description": "AnimeDekho - Hindi Anime, Cartoon and Movies Streaming Extension",
@@ -44,12 +45,12 @@ jobs:
             "pluginLists": [
               "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/plugins.json"
             ]
-          }' > build/repo.json
+          }' > build_output/repo.json
 
       - name: Deploy to builds branch
         uses: JamesIves/github-pages-deploy-action@v4
         with:
           branch: builds
-          folder: build
+          folder: build_output
           clean: false
           token: ${{ secrets.GITHUB_TOKEN }}
