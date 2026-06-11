@@ -2,7 +2,7 @@ version = 2
 
 cloudstream {
     language = "hi"
-    authors = listOf("Hindi Provider")
+    authors = listOf("senkuboy0-cyber")
     description = "Includes AnimeDekho,OnePace(DUB,SUB) and HindiSubAnime"
     /**
      * Status int as the following:
