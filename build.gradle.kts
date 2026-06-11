@@ -56,6 +56,7 @@ subprojects {
 
     cloudstream {
         setRepo(System.getenv("GITHUB_REPOSITORY") ?: "https://github.com/senkuboy0-cyber/Anime-Dekho")
+        authors = listOf("senkuboy0-cyber")
     }
 
     android {
