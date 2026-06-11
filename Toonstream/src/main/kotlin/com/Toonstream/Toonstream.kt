@@ -49,8 +49,12 @@ class Toonstream : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = if (request.data.contains("?")) {
-            // URL with query parameters (e.g. ?type=series)
-            "$mainUrl/${request.data}&page=$page/"
+            // URL with query parameters: insert /page/X/ BEFORE the query string
+            // e.g. category/language/hindi-language/?type=series
+            //   -> category/language/hindi-language/page/2/?type=series
+            val basePath = request.data.substringBefore("?")
+            val query = request.data.substringAfter("?")
+            "$mainUrl/$basePath/page/$page/?$query"
         } else {
             // Standard URL without query
             "$mainUrl/${request.data}/page/$page/"
