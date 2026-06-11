@@ -40,10 +40,11 @@ class Toonstream : MainAPI() {
     override val mainPage = mainPageOf(
         "series" to "Series",
         "movies" to "Movies",
+        "category/cartoon" to "Cartoon",
+        "category/anime" to "Animes",
         "category/language/hindi-language/?type=series" to "Hindi Series",
         "category/language/hindi-language/?type=movies" to "Hindi Movies",
-        "category/language/hindi-language/" to "Hindi",
-        "category/cartoon/" to "Cartoon"
+        "category/language/hindi-language/" to "Hindi"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
