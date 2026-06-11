@@ -42,23 +42,11 @@ class Toonstream : MainAPI() {
         "movies" to "Movies",
         "category/cartoon" to "Cartoon",
         "category/anime" to "Animes",
-        "category/language/hindi-language/?type=series" to "Hindi Series",
-        "category/language/hindi-language/?type=movies" to "Hindi Movies",
         "category/language/hindi-language/" to "Hindi"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = if (request.data.contains("?")) {
-            // URL with query parameters: insert /page/X/ BEFORE the query string
-            // e.g. category/language/hindi-language/?type=series
-            //   -> category/language/hindi-language/page/2/?type=series
-            val basePath = request.data.substringBefore("?")
-            val query = request.data.substringAfter("?")
-            "$mainUrl/$basePath/page/$page/?$query"
-        } else {
-            // Standard URL without query
-            "$mainUrl/${request.data}/page/$page/"
-        }
+        val url = "$mainUrl/${request.data}/page/$page/"
         val document = app.get(url).document
         val home     = document.select("#movies-a > ul > li").mapNotNull { it.toSearchResult() }
         return newHomePageResponse(
