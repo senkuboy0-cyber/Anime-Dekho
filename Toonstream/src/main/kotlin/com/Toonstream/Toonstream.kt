@@ -41,10 +41,6 @@ class Toonstream : MainAPI() {
 
     override val mainPage = mainPageOf(
         "fresh-drop"                              to "Fresh Drop",
-        "series"                                  to "Series",
-        "movies"                                  to "Movies",
-        "category/cartoon"                        to "Cartoon",
-        "category/anime"                          to "Animes",
         "category/anime-series"                   to "Anime Series",
         "category/anime-movies"                   to "Anime Movies",
         "category/language/hindi-language"        to "Hindi",
