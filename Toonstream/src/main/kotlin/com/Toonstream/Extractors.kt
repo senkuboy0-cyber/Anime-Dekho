@@ -27,9 +27,9 @@ class StreamSB8 : StreamSB() {
 }
 
 // ─── Cloudy / VidStack ───────────────────────────────────────────
-// NOTE: Cloudy (cloudy.upns.one) VidStack CDN মাঝে মাঝে 403 দেয়।
-// কারণ: CDN token IP-bound বা দ্রুত expire হয়।
-// Extractor-এর বাইরে থেকে fix করা সম্ভব না।
+// NOTE: Cloudy (cloudy.upns.one) VidStack CDN occasionally returns 403.
+// Cause: CDN token is IP-bound or expires quickly.
+// Not fixable from the extractor side.
 class Cloudy : VidStack() {
     override var mainUrl = "https://cloudy.upns.one"
 }
@@ -124,10 +124,10 @@ class Techinmind : GDMirrorbot() {
 }
 
 // ─── Streamruby ──────────────────────────────────────────────────
-// FIX: mainUrl ছিল "streamruby.com" → সাইট এখন rubystm.com ব্যবহার করে
+// FIX: mainUrl was "streamruby.com" — site now uses rubystm.com
 open class Streamruby : ExtractorApi() {
     override var name            = "Streamruby"
-    override var mainUrl         = "rubystm.com"   // আগে: "streamruby.com"
+    override var mainUrl         = "rubystm.com"   // was: "streamruby.com"
     override val requiresReferer = false
 
     override suspend fun getUrl(url: String, referer: String?): List<ExtractorLink>? {
@@ -165,8 +165,8 @@ class FileMoonnl : Filesim() {
 }
 
 // ─── VidMolyNet ──────────────────────────────────────────────────
-// NEW: Server 6 (Moly) → vidmoly.net — আলাদা domain, আলাদা extractor দরকার
-// Vidmolyme (vidmoly.me) match করে না, তাই নতুন class
+// NEW: Server 6 (Moly) -> vidmoly.net uses a different domain from vidmoly.me
+// Vidmolyme targets vidmoly.me and does not match vidmoly.net, so a new class is needed
 class VidMolyNet : ExtractorApi() {
     override var name            = "VidMolyNet"
     override var mainUrl         = "https://vidmoly.net"
@@ -174,10 +174,10 @@ class VidMolyNet : ExtractorApi() {
 
     override suspend fun getUrl(url: String, referer: String?): List<ExtractorLink>? {
         val txt = app.get(url, referer = referer ?: mainUrl).text
-        // jwplayer file key দিয়ে খোঁজা
+        // Search by jwplayer file key first
         val m3u8 = Regex("""["']file["']\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']""")
             .find(txt)?.groupValues?.getOrNull(1)
-            // না পেলে raw m3u8 URL খোঁজা
+            // Fallback: search for raw m3u8 URL in page source
             ?: Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""").find(txt)?.value
 
         return m3u8?.takeIf { it.isNotEmpty() }?.let {
@@ -192,7 +192,7 @@ class VidMolyNet : ExtractorApi() {
 }
 
 // ─── EmTurboVid ──────────────────────────────────────────────────
-// NEW: Server 9 (Turbo) → m3u8 সরাসরি data-hash attribute-এ থাকে
+// NEW: Server 9 (Turbo) -> m3u8 is stored directly in the data-hash attribute
 open class EmTurboVid : ExtractorApi() {
     override var name            = "EmTurboVid"
     override var mainUrl         = "https://emturbovid.com"
@@ -224,11 +224,11 @@ class TurboViPlay : EmTurboVid() {
 }
 
 // ─── AsCdn21 (Server 8 — Zephyrflick) ───────────────────────────
-// NEW: Server 8 (Play) → as-cdn21.top — AWSStream-এর মতো POST করলে m3u8 পাওয়া যায়
-// POST /player/index.php?data={hash}&do=getVideo → { videoSource: "...m3u8..." }
-// এই extractor-ই Zephyrflick 1080p নামে sources-এ দেখাবে
+// NEW: Server 8 (Play) -> as-cdn21.top — POST to player API returns m3u8 (same approach as AWSStream)
+// POST /player/index.php?data={hash}&do=getVideo -> { videoSource: "...m3u8..." }
+// This extractor shows up as "Zephyrflick 1080p" in the sources list
 open class AsCdn21 : ExtractorApi() {
-    override var name            = "Zephyrflick"   // Sources-এ এই নামে দেখাবে
+    override var name            = "Zephyrflick"   // displayed as this name in the sources list
     override var mainUrl         = "https://as-cdn21.top"
     override val requiresReferer = true
 
@@ -257,7 +257,7 @@ open class AsCdn21 : ExtractorApi() {
     }
 }
 
-// as-cdn23.top মিরর (একই CDN, আলাদা hostname)
+// as-cdn23.top mirror (same CDN, different hostname)
 class AsCdn23 : AsCdn21() {
     override var name    = "Zephyrflick"
     override var mainUrl = "https://as-cdn23.top"
