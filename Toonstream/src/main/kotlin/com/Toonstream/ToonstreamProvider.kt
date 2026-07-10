@@ -17,7 +17,7 @@ class ToonstreamProvider : BasePlugin() {
         registerExtractorAPI(StreamSB8())
         registerExtractorAPI(Vidmolyme())          // vidmoly.me
         registerExtractorAPI(VidMolyNet())         // NEW: vidmoly.net (Server 6)
-        registerExtractorAPI(Streamruby())         // FIX: rubystm.com (আগে streamruby.com)
+        registerExtractorAPI(Streamruby())         // FIX: rubystm.com (was streamruby.com)
         registerExtractorAPI(D000d())
         registerExtractorAPI(vidhidevip())
         registerExtractorAPI(Cdnwish())
@@ -28,7 +28,7 @@ class ToonstreamProvider : BasePlugin() {
         registerExtractorAPI(EmturbovidExtractor()) // built-in fallback
         registerExtractorAPI(EmTurboVid())         // NEW: data-hash extractor (Server 9)
         registerExtractorAPI(TurboViPlay())        // NEW: turboviplay.com mirror
-        registerExtractorAPI(AsCdn21())            // NEW: as-cdn21.top → Zephyrflick (Server 8)
+        registerExtractorAPI(AsCdn21())            // NEW: as-cdn21.top -> Zephyrflick (Server 8)
         registerExtractorAPI(AsCdn23())            // NEW: as-cdn23.top mirror
         registerExtractorAPI(Zephyrflick())        // play.zephyrflick.top
     }
