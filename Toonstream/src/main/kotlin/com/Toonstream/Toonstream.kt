@@ -39,7 +39,7 @@ class Toonstream : MainAPI() {
     override val hasDownloadSupport   = true
     override val supportedTypes       = setOf(TvType.Movie, TvType.Anime, TvType.Cartoon)
 
-    // Fresh Drop তারপর সরাসরি Anime Series — Series/Movies/Cartoon/Animes বাদ
+    // Fresh Drop first, then directly Anime Series — removed Series/Movies/Cartoon/Animes
     override val mainPage = mainPageOf(
         "fresh-drop"                              to "Fresh Drop",
         "category/anime-series"                   to "Anime Series",
@@ -59,7 +59,7 @@ class Toonstream : MainAPI() {
         }
 
         val path = request.data
-        // FIX: সাইট এখন ?page=N ব্যবহার করে — ?paged=N কাজ করে না
+        // FIX: site now uses ?page=N for pagination — ?paged=N always returns page 1
         val url = if (page == 1) "$mainUrl/$path/" else "$mainUrl/$path/?page=$page"
 
         val document = app.get(url).document
@@ -226,7 +226,7 @@ class Toonstream : MainAPI() {
     }
 
     // ─────────────────────────────────────────────────────────────
-    // loadLinks — সব bug fix + Zephyrflick সবার আগে
+    // loadLinks — all bugs fixed + Zephyrflick plays first
     // ─────────────────────────────────────────────────────────────
     override suspend fun loadLinks(
         data: String,
@@ -236,18 +236,18 @@ class Toonstream : MainAPI() {
     ): Boolean {
         val document = app.get(data).document
 
-        // প্রতিটা server-এর true link collect করি আগে
+        // Collect true links from all servers first, then sort by priority
         data class ServerInfo(val truelink: String, val referer: String, val priority: Int)
 
         val servers = document.select("#aa-options > div > iframe").mapNotNull { iframe ->
-            // FIX 1: প্রথম iframe সবসময় src ব্যবহার করে, বাকিরা data-src
+            // FIX 1: first iframe uses src, the rest use data-src
             val rawSrc = iframe.attr("data-src").ifEmpty { iframe.attr("src") }
             if (rawSrc.isEmpty()) return@mapNotNull null
 
-            // FIX 2: Relative URL (/embed/xxx) → absolute URL
+            // FIX 2: relative URL (/embed/xxx) -> absolute URL
             val serverlink = if (rawSrc.startsWith("http")) rawSrc else "$mainUrl$rawSrc"
 
-            // Embed page থেকে actual provider iframe বের করি
+            // Fetch the embed page and extract the actual provider iframe src
             val truelink = try {
                 app.get(serverlink, referer = mainUrl)
                     .document
@@ -257,7 +257,7 @@ class Toonstream : MainAPI() {
 
             if (truelink.isEmpty()) return@mapNotNull null
 
-            // FIX 3: Priority — as-cdn21.top (Zephyrflick) সবার আগে
+            // FIX 3: priority order — as-cdn21.top (Zephyrflick) always first
             val priority = when {
                 truelink.contains("as-cdn21.top")    -> 0  // Zephyrflick 1080p — FIRST
                 truelink.contains("emturbovid.com")  -> 1  // EmTurboVid 1080p
@@ -265,14 +265,14 @@ class Toonstream : MainAPI() {
                 truelink.contains("rubystm.com")     -> 3  // Streamruby
                 truelink.contains("vidmoly.net")     -> 4  // VidMoly
                 truelink.contains("abyssplayer.com") -> 5  // AbyssPlayer
-                truelink.contains("cloudy.upns.one") -> 6  // VidStack (CDN token সমস্যা আছে)
+                truelink.contains("cloudy.upns.one") -> 6  // VidStack (CDN token expiry known issue)
                 else                                 -> 7
             }
             ServerInfo(truelink, serverlink, priority)
         }
 
-        // Priority অনুযায়ী sort করে callback fire করি
-        // as-cdn21.top (priority=0) সবার আগে → Zephyrflick সবার আগে sources-এ দেখাবে
+        // Sort by priority and fire callbacks in order
+        // as-cdn21.top (priority=0) fires first -> Zephyrflick appears first in sources list
         servers.sortedBy { it.priority }.forEach { server ->
             loadExtractor(server.truelink, server.referer, subtitleCallback, callback)
         }
@@ -280,7 +280,7 @@ class Toonstream : MainAPI() {
     }
 }
 
-// ─── AWSStream / Zephyrflick (অপরিবর্তিত) ───────────────────────
+// ─── AWSStream / Zephyrflick ──────────────────────────────────
 class Zephyrflick : AWSStream() {
     override val name    = "Zephyrflick"
     override val mainUrl = "https://play.zephyrflick.top"
