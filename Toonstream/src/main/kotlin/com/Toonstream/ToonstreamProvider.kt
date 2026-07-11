@@ -10,7 +10,6 @@ import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 @CloudstreamPlugin
 class ToonstreamProvider : BasePlugin() {
     override fun load() {
-        pingAnalytics("Toonstream")
         registerMainAPI(Toonstream())
 
         // ─── Video extractors ─────────────────────────────────────
