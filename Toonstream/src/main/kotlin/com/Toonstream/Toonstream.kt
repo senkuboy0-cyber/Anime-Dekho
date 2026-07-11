@@ -275,19 +275,9 @@ class Toonstream : MainAPI() {
         // to bypass bot/cache filters. The player won't recognise them as HLS,
         // so we intercept every link and force M3U8 type when the URL ends in .txt.
         val fixedCallback: (ExtractorLink) -> Unit = { link ->
-            val isTxtHls = link.url.substringBefore("?").endsWith(".txt")
-            if (isTxtHls) {
-                callback(
-                    newExtractorLink(
-                        source = link.source,
-                        name   = link.name,
-                        url    = link.url,
-                        type   = ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = link.referer
-                        this.quality = link.quality
-                    }
-                )
+            // .txt URLs contain real HLS content — force M3U8 type so the player handles them correctly
+            if (link.url.substringBefore("?").endsWith(".txt")) {
+                callback(link.copy(type = ExtractorLinkType.M3U8))
             } else {
                 callback(link)
             }
