@@ -277,7 +277,18 @@ class Toonstream : MainAPI() {
         val fixedCallback: (ExtractorLink) -> Unit = { link ->
             // .txt URLs contain real HLS content — force M3U8 type so the player handles them correctly
             if (link.url.substringBefore("?").endsWith(".txt")) {
-                callback(link.copy(type = ExtractorLinkType.M3U8))
+                callback(
+                    ExtractorLink(
+                        source          = link.source,
+                        name            = link.name,
+                        url             = link.url,
+                        referer         = link.referer,
+                        quality         = link.quality,
+                        type            = ExtractorLinkType.M3U8,
+                        headers         = link.headers,
+                        extractorData   = link.extractorData
+                    )
+                )
             } else {
                 callback(link)
             }
