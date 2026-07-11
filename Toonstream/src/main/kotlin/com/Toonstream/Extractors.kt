@@ -124,25 +124,55 @@ class Techinmind : GDMirrorbot() {
 }
 
 // ─── Streamruby ──────────────────────────────────────────────────
-// FIX: mainUrl was "streamruby.com" — site now uses rubystm.com
+// FIX: rubystm.com requires GET (cookie setup) then POST to /dl
+// CloudStream3 app object preserves cookies between requests automatically
 open class Streamruby : ExtractorApi() {
     override var name            = "Streamruby"
-    override var mainUrl         = "rubystm.com"   // was: "streamruby.com"
-    override val requiresReferer = false
+    override var mainUrl         = "https://rubystm.com"
+    override val requiresReferer = true
 
-    override suspend fun getUrl(url: String, referer: String?): List<ExtractorLink>? {
-        val newUrl = if (url.contains("/e/")) url.replace("/e/", "/") else url
-        val txt    = app.get(newUrl, referer = referer).text
-        val m3u8   = Regex("""["']file["']\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']""")
-            .find(txt)?.groupValues?.getOrNull(1)
-        return m3u8?.takeIf { it.isNotEmpty() }?.let {
-            listOf(
-                newExtractorLink(name, name, url = it, type = INFER_TYPE) {
-                    this.referer = mainUrl
-                    this.quality = Qualities.Unknown.value
-                }
-            )
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val fileCode = url.substringAfterLast("/e/").substringBefore(".html")
+        if (fileCode.isBlank()) return
+
+        // Step 1: GET embed page — lets server set session cookies
+        app.get("$mainUrl/e/$fileCode.html", referer = referer ?: mainUrl)
+
+        // Step 2: POST to /dl with the file code (cookies from step 1 carried over)
+        val html = app.post(
+            url     = "$mainUrl/dl",
+            data    = mapOf(
+                "op"        to "embed",
+                "file_code" to fileCode,
+                "auto"      to "1",
+                "referer"   to (referer ?: "")
+            ),
+            referer = "$mainUrl/e/$fileCode.html"
+        ).text
+
+        val m3u8 = Regex(
+            """file\s*:\s*["']([^"']+\.m3u8[^"']*)["']""",
+            RegexOption.IGNORE_CASE
+        ).find(html)?.groupValues?.get(1) ?: return
+
+        Regex(
+            """(https?://[^\s"'<>]+_([a-z]{2,3})\.vtt[^\s"'<>]*)""",
+            RegexOption.IGNORE_CASE
+        ).findAll(html).forEach { match ->
+            subtitleCallback(SubtitleFile(match.groupValues[2], match.groupValues[1]))
         }
+
+        callback(
+            newExtractorLink(source = name, name = name, url = m3u8, type = ExtractorLinkType.M3U8) {
+                this.referer = mainUrl
+                this.quality = Qualities.Unknown.value
+            }
+        )
     }
 }
 
