@@ -271,10 +271,32 @@ class Toonstream : MainAPI() {
             ServerInfo(truelink, serverlink, priority)
         }
 
+        // Some CDNs (e.g. VidHidePro) serve real HLS playlists with a .txt extension
+        // to bypass bot/cache filters. The player won't recognise them as HLS,
+        // so we intercept every link and force M3U8 type when the URL ends in .txt.
+        val fixedCallback: (ExtractorLink) -> Unit = { link ->
+            val isTxtHls = link.url.substringBefore("?").endsWith(".txt")
+            if (isTxtHls) {
+                callback(
+                    newExtractorLink(
+                        source = link.source,
+                        name   = link.name,
+                        url    = link.url,
+                        type   = ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = link.referer
+                        this.quality = link.quality
+                    }
+                )
+            } else {
+                callback(link)
+            }
+        }
+
         // Sort by priority and fire callbacks in order
         // as-cdn21.top (priority=0) fires first -> Zephyrflick appears first in sources list
         servers.sortedBy { it.priority }.forEach { server ->
-            loadExtractor(server.truelink, server.referer, subtitleCallback, callback)
+            loadExtractor(server.truelink, server.referer, subtitleCallback, fixedCallback)
         }
         return true
     }
