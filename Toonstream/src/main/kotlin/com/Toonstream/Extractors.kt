@@ -124,8 +124,7 @@ class Techinmind : GDMirrorbot() {
 }
 
 // ─── Streamruby ──────────────────────────────────────────────────
-// FIX: rubystm.com requires GET (cookie setup) then POST to /dl
-// CloudStream3 app object preserves cookies between requests automatically
+// Streamruby: POST /dl returns P.A.C.K.E.R. obfuscated JS — JsUnpacker decodes it to get m3u8
 open class Streamruby : ExtractorApi() {
     override var name            = "Streamruby"
     override var mainUrl         = "https://rubystm.com"
@@ -140,10 +139,10 @@ open class Streamruby : ExtractorApi() {
         val fileCode = url.substringAfterLast("/e/").substringBefore(".html")
         if (fileCode.isBlank()) return
 
-        // Step 1: GET embed page — lets server set session cookies
+        // Step 1: GET embed page to initialize the session
         app.get("$mainUrl/e/$fileCode.html", referer = referer ?: mainUrl)
 
-        // Step 2: POST to /dl with the file code (cookies from step 1 carried over)
+        // Step 2: POST to /dl — returns HTML with P.A.C.K.E.R. obfuscated JS inside
         val html = app.post(
             url     = "$mainUrl/dl",
             data    = mapOf(
@@ -155,17 +154,19 @@ open class Streamruby : ExtractorApi() {
             referer = "$mainUrl/e/$fileCode.html"
         ).text
 
-        val m3u8 = Regex(
-            """file\s*:\s*["']([^"']+\.m3u8[^"']*)["']""",
-            RegexOption.IGNORE_CASE
-        ).find(html)?.groupValues?.get(1) ?: return
+        // Step 3: Find and decode packed JS — the m3u8 URL is hidden inside it
+        val packed = Regex("""eval\(function\(p,a,c,k,e,d\)[\s\S]+?'\|'\)\)""")
+            .find(html)?.value ?: return
+        val unpacked = JsUnpacker(packed).unpack() ?: return
 
-        Regex(
-            """(https?://[^\s"'<>]+_([a-z]{2,3})\.vtt[^\s"'<>]*)""",
-            RegexOption.IGNORE_CASE
-        ).findAll(html).forEach { match ->
-            subtitleCallback(SubtitleFile(match.groupValues[2], match.groupValues[1]))
-        }
+        val m3u8 = Regex("""file\s*:\s*"(https?://[^"]+\.m3u8[^"]*)"""")
+            .find(unpacked)?.groupValues?.get(1) ?: return
+
+        // Extract subtitle tracks if present
+        Regex("""file\s*:\s*"(https?://[^"]+_([a-z]{2,3})\.vtt[^"]*)"[\s\S]+?kind\s*:\s*"captions"""")
+            .findAll(unpacked).forEach { match ->
+                subtitleCallback(SubtitleFile(match.groupValues[2], match.groupValues[1]))
+            }
 
         callback(
             newExtractorLink(source = name, name = name, url = m3u8, type = ExtractorLinkType.M3U8) {
@@ -204,20 +205,19 @@ class VidMolyNet : ExtractorApi() {
 
     override suspend fun getUrl(url: String, referer: String?): List<ExtractorLink>? {
         val txt = app.get(url, referer = referer ?: mainUrl).text
-        // Search by jwplayer file key first
-        val m3u8 = Regex("""["']file["']\s*:\s*["'](https?://[^"']+\.m3u8[^"']*)["']""")
-            .find(txt)?.groupValues?.getOrNull(1)
-            // Fallback: search for raw m3u8 URL in page source
+        // file: '...' — key is unquoted in JS object, value uses single quotes
+        val m3u8 = Regex("""file\s*:\s*['"]([^'"]+\.m3u8[^'"]*)['"]""")
+            .find(txt)?.groupValues?.get(1)
+            // Fallback: raw m3u8 URL anywhere in the page
             ?: Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""").find(txt)?.value
+            ?: return null
 
-        return m3u8?.takeIf { it.isNotEmpty() }?.let {
-            listOf(
-                newExtractorLink(name, name, url = it, type = INFER_TYPE) {
-                    this.referer = mainUrl
-                    this.quality = Qualities.Unknown.value
-                }
-            )
-        }
+        return listOf(
+            newExtractorLink(name, name, url = m3u8, type = ExtractorLinkType.M3U8) {
+                this.referer = mainUrl
+                this.quality = Qualities.Unknown.value
+            }
+        )
     }
 }
 
