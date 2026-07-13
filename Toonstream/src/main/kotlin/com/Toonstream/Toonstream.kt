@@ -72,15 +72,15 @@ private fun cleanTitleText(title: String): String {
     
     // Rule 1: Remove episode patterns like " 2x11", " 1×54" and everything after it
     // Matches both English 'x' and multiplication sign '×' only if surrounded by numbers
-    clean = clean.replace(Regex("(?i)\\s+\\d+[x×]\\d+.*"), "")
+    clean = clean.replace(Regex("\\s+\\d+[x×]\\d+.*", RegexOption.IGNORE_CASE), "")
     
     // Rule 2: Remove "fan dub" or "fandub" and everything after it
-    clean = clean.replace(Regex("(?i)\\s*fan\\s*dub.*"), "")
-    clean = clean.replace(Regex("(?i)\\s*fandub.*"), "")
+    clean = clean.replace(Regex("\\s*fan\\s*dub.*", RegexOption.IGNORE_CASE), "")
+    clean = clean.replace(Regex("\\s*fandub.*", RegexOption.IGNORE_CASE), "")
     
-    // Rule 3: Remove everything from the first open bracket '(' or '[' onwards
-    clean = clean.replace(Regex("\\(.*"), "")
-    clean = clean.replace(Regex("\\[.*"), "")
+    // Rule 3: Remove everything from the first open bracket '(' or '[' onwards safely
+    clean = clean.substringBefore("(")
+    clean = clean.substringBefore("[")
     
     // Final trim to ensure no trailing/leading whitespaces
     return clean.trim()
@@ -128,17 +128,17 @@ private suspend fun fetchLogoUrl(document: Document, title: String, isSeries: Bo
         
         if (tmdbId == null) {  
             // ── Method 2: TMDB Search using Cleaned Title ──  
-            val encodedTitle = java.net.URLEncoder.encode(title, "utf-8")
+            val safeTitle = title.replace(Regex("\\s+"), "+")
             
             // Step A: Search in the expected category
-            val searchRes = app.get("$TMDB_API/search/$actualMediaType?api_key=$TMDB_KEY&query=$encodedTitle")  
+            val searchRes = app.get("$TMDB_API/search/$actualMediaType?api_key=$TMDB_KEY&query=$safeTitle")  
                 .parsedSafe<TmdbSearch>()  
             tmdbId = searchRes?.results?.firstOrNull()?.id  
 
             // Step B: If not found, search in the opposite category
             if (tmdbId == null) {
                 actualMediaType = if (isSeries) "movie" else "tv"
-                val fallbackSearchRes = app.get("$TMDB_API/search/$actualMediaType?api_key=$TMDB_KEY&query=$encodedTitle")  
+                val fallbackSearchRes = app.get("$TMDB_API/search/$actualMediaType?api_key=$TMDB_KEY&query=$safeTitle")  
                     .parsedSafe<TmdbSearch>()  
                 tmdbId = fallbackSearchRes?.results?.firstOrNull()?.id
             }
@@ -490,4 +490,4 @@ data class Response(
     val ck: String,  
 )
 
-                  }
+}
