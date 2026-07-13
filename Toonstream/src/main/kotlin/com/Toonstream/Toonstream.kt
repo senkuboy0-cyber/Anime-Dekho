@@ -71,7 +71,7 @@ private fun cleanTitleText(title: String): String {
     var clean = title.replace("Watch Online", "", ignoreCase = true)
     
     // Rule 1: Remove episode patterns like " 2x11", " 1×54" and everything after it
-    // Note: Matches both English 'x' and multiplication sign '×' only if surrounded by numbers
+    // Matches both English 'x' and multiplication sign '×' only if surrounded by numbers
     clean = clean.replace(Regex("(?i)\\s+\\d+[x×]\\d+.*"), "")
     
     // Rule 2: Remove "fan dub" or "fandub" and everything after it
@@ -88,11 +88,12 @@ private fun cleanTitleText(title: String): String {
 
 /**  
  * Fetches Title Logo URL from TMDB.  
- * First searches for IMDB ID on the page, if not found, searches TMDB using the cleaned title.  
+ * First searches for IMDB ID on the page, if not found, searches TMDB using the cleaned title.
+ * Automatically fallbacks to search the opposite media type (movie <-> tv) if not found.
  */  
 private suspend fun fetchLogoUrl(document: Document, title: String, isSeries: Boolean): String? {  
     return try {  
-        val mediaType = if (isSeries) "tv" else "movie"  
+        var actualMediaType = if (isSeries) "tv" else "movie"  
 
         // ── Method 1: Search for IMDB link on the Page ──  
         val imdbId = document  
@@ -102,27 +103,52 @@ private suspend fun fetchLogoUrl(document: Document, title: String, isSeries: Bo
             .substringBefore("/")  
             .takeIf { it.startsWith("tt") }  
 
-        val tmdbId: Int? = if (imdbId != null) {  
+        var tmdbId: Int? = null
+
+        if (imdbId != null) {  
             // Get TMDB ID using IMDB ID  
             app.get("$TMDB_API/find/$imdbId?api_key=$TMDB_KEY&external_source=imdb_id")  
                 .parsedSafe<TmdbFind>()  
                 ?.let {  
-                    if (isSeries) it.tvShows?.firstOrNull()?.id  
-                    else          it.movies?.firstOrNull()?.id  
+                    if (isSeries) {
+                        tmdbId = it.tvShows?.firstOrNull()?.id
+                        if (tmdbId == null) {
+                            tmdbId = it.movies?.firstOrNull()?.id
+                            if (tmdbId != null) actualMediaType = "movie"
+                        }
+                    } else {
+                        tmdbId = it.movies?.firstOrNull()?.id
+                        if (tmdbId == null) {
+                            tmdbId = it.tvShows?.firstOrNull()?.id
+                            if (tmdbId != null) actualMediaType = "tv"
+                        }
+                    } 
                 }  
-        } else {  
+        } 
+        
+        if (tmdbId == null) {  
             // ── Method 2: TMDB Search using Cleaned Title ──  
             val encodedTitle = java.net.URLEncoder.encode(title, "utf-8")
-            app.get("$TMDB_API/search/$mediaType?api_key=$TMDB_KEY&query=$encodedTitle")  
+            
+            // Step A: Search in the expected category
+            val searchRes = app.get("$TMDB_API/search/$actualMediaType?api_key=$TMDB_KEY&query=$encodedTitle")  
                 .parsedSafe<TmdbSearch>()  
-                ?.results?.firstOrNull()?.id  
+            tmdbId = searchRes?.results?.firstOrNull()?.id  
+
+            // Step B: If not found, search in the opposite category
+            if (tmdbId == null) {
+                actualMediaType = if (isSeries) "movie" else "tv"
+                val fallbackSearchRes = app.get("$TMDB_API/search/$actualMediaType?api_key=$TMDB_KEY&query=$encodedTitle")  
+                    .parsedSafe<TmdbSearch>()  
+                tmdbId = fallbackSearchRes?.results?.firstOrNull()?.id
+            }
         }  
 
         if (tmdbId == null) return null  
 
-        // ── Fetch Logo Image from TMDB (No language restriction in URL) ──  
+        // ── Fetch Logo Image from TMDB ──  
         val images = app.get(  
-            "$TMDB_API/$mediaType/$tmdbId/images?api_key=$TMDB_KEY"  
+            "$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY"  
         ).parsedSafe<TmdbImages>()  
 
         // Priority: English -> No Language -> Japanese -> Any fallback
