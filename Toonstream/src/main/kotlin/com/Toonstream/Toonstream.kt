@@ -70,14 +70,15 @@ data class TmdbSearch(
 private fun cleanTitleText(title: String): String {
     var clean = title.replace("Watch Online", "", ignoreCase = true)
     
-    // Remove episode patterns like " 2x11", " 1x54" and everything after it
-    clean = clean.replace(Regex("(?i)\\s+\\d+x\\d+.*"), "")
+    // Rule 1: Remove episode patterns like " 2x11", " 1×54" and everything after it
+    // Note: Matches both English 'x' and multiplication sign '×' only if surrounded by numbers
+    clean = clean.replace(Regex("(?i)\\s+\\d+[x×]\\d+.*"), "")
     
-    // Remove "fan dub" or "fandub" and everything after it
+    // Rule 2: Remove "fan dub" or "fandub" and everything after it
     clean = clean.replace(Regex("(?i)\\s*fan\\s*dub.*"), "")
     clean = clean.replace(Regex("(?i)\\s*fandub.*"), "")
     
-    // Remove everything from the first open bracket '(' or '[' onwards
+    // Rule 3: Remove everything from the first open bracket '(' or '[' onwards
     clean = clean.replace(Regex("\\(.*"), "")
     clean = clean.replace(Regex("\\[.*"), "")
     
@@ -110,7 +111,7 @@ private suspend fun fetchLogoUrl(document: Document, title: String, isSeries: Bo
                     else          it.movies?.firstOrNull()?.id  
                 }  
         } else {  
-            // ── Method 2: TMDB Search using Title ──  
+            // ── Method 2: TMDB Search using Cleaned Title ──  
             val encodedTitle = java.net.URLEncoder.encode(title, "utf-8")
             app.get("$TMDB_API/search/$mediaType?api_key=$TMDB_KEY&query=$encodedTitle")  
                 .parsedSafe<TmdbSearch>()  
