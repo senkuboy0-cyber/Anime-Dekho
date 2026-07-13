@@ -70,14 +70,16 @@ data class TmdbSearch(
 private fun cleanTitleText(title: String): String {
     var clean = title.replace("Watch Online", "", ignoreCase = true)
     
-    // Rule 1: Remove episode patterns like " 2x11", " 1x54" and everything after it
+    // Remove episode patterns like " 2x11", " 1x54" and everything after it
     clean = clean.replace(Regex("(?i)\\s+\\d+x\\d+.*"), "")
     
-    // Rule 2: Remove "fan dub" or "fandub" and everything after it
+    // Remove "fan dub" or "fandub" and everything after it
     clean = clean.replace(Regex("(?i)\\s*fan\\s*dub.*"), "")
+    clean = clean.replace(Regex("(?i)\\s*fandub.*"), "")
     
-    // Rule 3: Remove everything from the first open bracket '(' onwards
-    clean = clean.substringBefore("(")
+    // Remove everything from the first open bracket '(' or '[' onwards
+    clean = clean.replace(Regex("\\(.*"), "")
+    clean = clean.replace(Regex("\\[.*"), "")
     
     // Final trim to ensure no trailing/leading whitespaces
     return clean.trim()
@@ -109,21 +111,24 @@ private suspend fun fetchLogoUrl(document: Document, title: String, isSeries: Bo
                 }  
         } else {  
             // ── Method 2: TMDB Search using Title ──  
-            app.get("$TMDB_API/search/$mediaType?api_key=$TMDB_KEY&query=${title.replace(" ", "+")}")  
+            val encodedTitle = java.net.URLEncoder.encode(title, "utf-8")
+            app.get("$TMDB_API/search/$mediaType?api_key=$TMDB_KEY&query=$encodedTitle")  
                 .parsedSafe<TmdbSearch>()  
                 ?.results?.firstOrNull()?.id  
         }  
 
         if (tmdbId == null) return null  
 
-        // ── Fetch Logo Image from TMDB ──  
+        // ── Fetch Logo Image from TMDB (No language restriction in URL) ──  
         val images = app.get(  
-            "$TMDB_API/$mediaType/$tmdbId/images?api_key=$TMDB_KEY&include_image_language=en,null"  
+            "$TMDB_API/$mediaType/$tmdbId/images?api_key=$TMDB_KEY"  
         ).parsedSafe<TmdbImages>()  
 
-        // English logo first, if not found then any logo  
+        // Priority: English -> No Language -> Japanese -> Any fallback
         val logo = images?.logos?.firstOrNull { it.lang == "en" }  
-            ?: images?.logos?.firstOrNull()  
+            ?: images?.logos?.firstOrNull { it.lang == null }
+            ?: images?.logos?.firstOrNull { it.lang == "ja" }
+            ?: images?.logos?.firstOrNull()
 
         logo?.filePath?.let { "$TMDB_IMG$it" }  
 
