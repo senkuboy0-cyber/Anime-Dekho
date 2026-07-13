@@ -64,9 +64,28 @@ data class TmdbSearch(
     @JsonProperty("results") val results: List<TmdbResult>? = null  
 )  
 
+/**
+ * A helper function to deeply clean the title for better UI display and TMDB searching.
+ */
+private fun cleanTitleText(title: String): String {
+    var clean = title.replace("Watch Online", "", ignoreCase = true)
+    
+    // Rule 1: Remove episode patterns like " 2x11", " 1x54" and everything after it
+    clean = clean.replace(Regex("(?i)\\s+\\d+x\\d+.*"), "")
+    
+    // Rule 2: Remove "fan dub" or "fandub" and everything after it
+    clean = clean.replace(Regex("(?i)\\s*fan\\s*dub.*"), "")
+    
+    // Rule 3: Remove everything from the first open bracket '(' onwards
+    clean = clean.substringBefore("(")
+    
+    // Final trim to ensure no trailing/leading whitespaces
+    return clean.trim()
+}
+
 /**  
  * Fetches Title Logo URL from TMDB.  
- * First searches for IMDB ID on the page, if not found, cleans the title and searches TMDB.  
+ * First searches for IMDB ID on the page, if not found, searches TMDB using the cleaned title.  
  */  
 private suspend fun fetchLogoUrl(document: Document, title: String, isSeries: Boolean): String? {  
     return try {  
@@ -89,24 +108,8 @@ private suspend fun fetchLogoUrl(document: Document, title: String, isSeries: Bo
                     else          it.movies?.firstOrNull()?.id  
                 }  
         } else {  
-            // ── Method 2: TMDB Search using Cleaned Title ──  
-            
-            // Clean the title based on specific rules
-            var cleanTitle = title
-            
-            // Rule 1: Remove episode numbers like " 2x11"
-            cleanTitle = cleanTitle.replace(Regex("(?i)\\s*\\d+x\\d+.*"), "")
-            
-            // Rule 2: Remove anything that says "fan dub"
-            cleanTitle = cleanTitle.replace(Regex("(?i)fan\\s*dub"), "")
-            
-            // Rule 3: Remove everything from the first bracket '(' onwards
-            cleanTitle = cleanTitle.substringBefore("(")
-            
-            // Final trim to remove extra spaces
-            cleanTitle = cleanTitle.trim()
-
-            app.get("$TMDB_API/search/$mediaType?api_key=$TMDB_KEY&query=${cleanTitle.replace(" ", "+")}")  
+            // ── Method 2: TMDB Search using Title ──  
+            app.get("$TMDB_API/search/$mediaType?api_key=$TMDB_KEY&query=${title.replace(" ", "+")}")  
                 .parsedSafe<TmdbSearch>()  
                 ?.results?.firstOrNull()?.id  
         }  
@@ -172,8 +175,9 @@ private suspend fun fetchFreshDrop(): List<SearchResponse> {
     } ?: return emptyList()  
 
     return section.select("article.post.dfx").mapNotNull { el ->  
-        val title = el.selectFirst("h2.entry-title")?.text()?.trim()  
-            ?.replace("Watch Online", "")?.trim() ?: return@mapNotNull null  
+        val rawTitle = el.selectFirst("h2.entry-title")?.text() ?: return@mapNotNull null
+        val title = cleanTitleText(rawTitle).ifBlank { return@mapNotNull null }
+        
         val href  = el.selectFirst("a.lnk-blk")?.attr("href")?.let { fixUrl(it) }  
             ?: return@mapNotNull null  
         val posterRaw = el.selectFirst("img")?.attr("src")  
@@ -191,9 +195,9 @@ private suspend fun fetchFreshDrop(): List<SearchResponse> {
 }  
 
 private fun Element.toSearchResult(): SearchResponse? {  
-    val title = this.selectFirst("article > header > h2, article h2.entry-title")  
-        ?.text()?.trim()?.replace("Watch Online", "")  
-        ?.ifBlank { return null } ?: return null  
+    val rawTitle = this.selectFirst("article > header > h2, article h2.entry-title")?.text() ?: return null
+    val title = cleanTitleText(rawTitle).ifBlank { return null }
+    
     val href  = fixUrl(  
         this.selectFirst("article > a.lnk-blk, article a.lnk-blk")  
             ?.attr("href") ?: return null  
@@ -218,7 +222,6 @@ private fun Element.toSearchResult(): SearchResponse? {
 override suspend fun search(query: String): List<SearchResponse> {  
     val results = mutableListOf<SearchResponse>()  
     for (i in 1..3) {  
-        // Modified search URL to match the new format: https://toon-stream.site/s?q=...
         val searchUrl = if (i == 1) {
             "$mainUrl/s?q=$query"
         } else {
@@ -227,7 +230,6 @@ override suspend fun search(query: String): List<SearchResponse> {
         
         val doc = app.get(searchUrl).document  
         
-        // Sometimes the search result structure changes, added fallback selectors just in case
         var page = doc.select("#movies-a ul > li").mapNotNull { it.toSearchResult() }  
         if (page.isEmpty()) {
             page = doc.select("article, .result-item, .item").mapNotNull { it.toSearchResult() }
@@ -241,8 +243,11 @@ override suspend fun search(query: String): List<SearchResponse> {
 
 override suspend fun load(url: String): LoadResponse {  
     val document    = app.get(url).document  
-    val title       = document.selectFirst("header.entry-header > h1")?.text()?.trim()  
-        .toString().replace("Watch Online", "")  
+    
+    // Fetch and Clean the Title for UI & TMDB
+    val rawTitle    = document.selectFirst("header.entry-header > h1")?.text() ?: ""
+    val title       = cleanTitleText(rawTitle)
+        
     val posterRaw   = document.select("div.bghd > img").attr("src")  
     val poster      = if (posterRaw.startsWith("http")) posterRaw else "https:$posterRaw"  
     val description = document.selectFirst("div.description > p")?.text()?.trim()  
