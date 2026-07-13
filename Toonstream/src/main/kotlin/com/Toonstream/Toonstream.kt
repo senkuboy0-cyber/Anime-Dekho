@@ -66,7 +66,7 @@ data class TmdbSearch(
 
 /**  
  * Fetches Title Logo URL from TMDB.  
- * First searches for IMDB ID on the page, if not found, searches TMDB using the title.  
+ * First searches for IMDB ID on the page, if not found, cleans the title and searches TMDB.  
  */  
 private suspend fun fetchLogoUrl(document: Document, title: String, isSeries: Boolean): String? {  
     return try {  
@@ -89,8 +89,23 @@ private suspend fun fetchLogoUrl(document: Document, title: String, isSeries: Bo
                     else          it.movies?.firstOrNull()?.id  
                 }  
         } else {  
-            // ── Method 2: TMDB Search using Title ──  
-            val cleanTitle = title.replace(Regex("\\s*\\(\\d{4}\\)"), "").trim()  
+            // ── Method 2: TMDB Search using Cleaned Title ──  
+            
+            // Clean the title based on specific rules
+            var cleanTitle = title
+            
+            // Rule 1: Remove episode numbers like " 2x11"
+            cleanTitle = cleanTitle.replace(Regex("(?i)\\s*\\d+x\\d+.*"), "")
+            
+            // Rule 2: Remove anything that says "fan dub"
+            cleanTitle = cleanTitle.replace(Regex("(?i)fan\\s*dub"), "")
+            
+            // Rule 3: Remove everything from the first bracket '(' onwards
+            cleanTitle = cleanTitle.substringBefore("(")
+            
+            // Final trim to remove extra spaces
+            cleanTitle = cleanTitle.trim()
+
             app.get("$TMDB_API/search/$mediaType?api_key=$TMDB_KEY&query=${cleanTitle.replace(" ", "+")}")  
                 .parsedSafe<TmdbSearch>()  
                 ?.results?.firstOrNull()?.id  
@@ -203,8 +218,21 @@ private fun Element.toSearchResult(): SearchResponse? {
 override suspend fun search(query: String): List<SearchResponse> {  
     val results = mutableListOf<SearchResponse>()  
     for (i in 1..3) {  
-        val doc = app.get("$mainUrl/page/$i/?s=$query").document  
-        val page = doc.select("#movies-a ul > li").mapNotNull { it.toSearchResult() }  
+        // Modified search URL to match the new format: https://toon-stream.site/s?q=...
+        val searchUrl = if (i == 1) {
+            "$mainUrl/s?q=$query"
+        } else {
+            "$mainUrl/page/$i/s?q=$query"
+        }
+        
+        val doc = app.get(searchUrl).document  
+        
+        // Sometimes the search result structure changes, added fallback selectors just in case
+        var page = doc.select("#movies-a ul > li").mapNotNull { it.toSearchResult() }  
+        if (page.isEmpty()) {
+            page = doc.select("article, .result-item, .item").mapNotNull { it.toSearchResult() }
+        }
+        
         if (page.isEmpty() || results.containsAll(page)) break  
         results.addAll(page)  
     }  
@@ -424,4 +452,5 @@ data class Response(
     val attachmentLinks: List<Any?>,  
     val ck: String,  
 )
+
                   }
