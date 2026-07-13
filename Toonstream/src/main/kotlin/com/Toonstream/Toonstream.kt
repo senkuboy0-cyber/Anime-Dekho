@@ -45,7 +45,7 @@ private val TMDB_API = "https://api.themoviedb.org/3"
 private val TMDB_KEY = "1865f43a0549ca50d341dd9ab8b29f49"  
 private val TMDB_IMG = "https://image.tmdb.org/t/p/original"  
 
-// TMDB API response data classes  
+// TMDB API response data classes consolidated for safety
 data class TmdbImages(  
     @JsonProperty("logos") val logos: List<TmdbLogo>? = null  
 )  
@@ -58,15 +58,12 @@ data class TmdbFind(
     @JsonProperty("tv_results")    val tvShows: List<TmdbResult>? = null  
 )  
 data class TmdbResult(  
-    @JsonProperty("id") val id: Int? = null  
-)  
-data class TmdbSearch(  
-    @JsonProperty("results") val results: List<TmdbSearchResult>? = null  
-)  
-data class TmdbSearchResult(
     @JsonProperty("id") val id: Int? = null,
     @JsonProperty("media_type") val mediaType: String? = null
-)
+)  
+data class TmdbSearch(  
+    @JsonProperty("results") val results: List<TmdbResult>? = null  
+)  
 
 /**
  * A helper function to deeply clean the title for better UI display and TMDB searching.
@@ -74,16 +71,16 @@ data class TmdbSearchResult(
 private fun cleanTitleText(title: String): String {
     var clean = title.replace("Watch Online", "", ignoreCase = true)
     
-    // Rule 1: Remove episode patterns like " 1x11", " 1×54"
-    clean = clean.replace(Regex("\\s+\\d+[x×]\\d+.*", RegexOption.IGNORE_CASE), "")
+    // Rule 1: Remove episode patterns like " 1x11", " 1×54" safely using inline (?i)
+    clean = clean.replace(Regex("(?i)\\s+\\d+[x×]\\d+.*"), "")
     
     // Rule 2: Remove explicit "Episode 1" or "Season 1" texts just in case
-    clean = clean.replace(Regex("\\s+Episode\\s+\\d+.*", RegexOption.IGNORE_CASE), "")
-    clean = clean.replace(Regex("\\s+Season\\s+\\d+.*", RegexOption.IGNORE_CASE), "")
+    clean = clean.replace(Regex("(?i)\\s+Episode\\s+\\d+.*"), "")
+    clean = clean.replace(Regex("(?i)\\s+Season\\s+\\d+.*"), "")
     
     // Rule 3: Remove "fan dub" or "fandub"
-    clean = clean.replace(Regex("\\s*fan\\s*dub.*", RegexOption.IGNORE_CASE), "")
-    clean = clean.replace(Regex("\\s*fandub.*", RegexOption.IGNORE_CASE), "")
+    clean = clean.replace(Regex("(?i)\\s*fan\\s*dub.*"), "")
+    clean = clean.replace(Regex("(?i)\\s*fandub.*"), "")
     
     // Rule 4: Remove everything from the first open bracket '(' or '[' onwards safely
     clean = clean.substringBefore("(")
@@ -136,7 +133,7 @@ private suspend fun fetchLogoUrl(document: Document, title: String, isSeries: Bo
         
         if (tmdbId == null) {  
             // ── Method 2: TMDB Multi-Search (Searches both Movie & TV at once) ──  
-            val safeTitle = title.replace(" ", "%20")
+            val safeTitle = title.replace(Regex("\\s+"), "+")
             
             val searchRes = app.get("$TMDB_API/search/multi?api_key=$TMDB_KEY&query=$safeTitle")  
                 .parsedSafe<TmdbSearch>()  
