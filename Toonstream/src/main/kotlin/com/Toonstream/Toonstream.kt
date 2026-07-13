@@ -45,7 +45,7 @@ private val TMDB_API = "https://api.themoviedb.org/3"
 private val TMDB_KEY = "1865f43a0549ca50d341dd9ab8b29f49"  
 private val TMDB_IMG = "https://image.tmdb.org/t/p/original"  
 
-// TMDB API response data classes consolidated for safety
+// TMDB API response data classes
 data class TmdbImages(  
     @JsonProperty("logos") val logos: List<TmdbLogo>? = null  
 )  
@@ -71,10 +71,10 @@ data class TmdbSearch(
 private fun cleanTitleText(title: String): String {
     var clean = title.replace("Watch Online", "", ignoreCase = true)
     
-    // Rule 1: Remove episode patterns like " 1x11", " 1×54" safely using inline (?i)
+    // Rule 1: Remove episode patterns safely using inline (?i)
     clean = clean.replace(Regex("(?i)\\s+\\d+[x×]\\d+.*"), "")
     
-    // Rule 2: Remove explicit "Episode 1" or "Season 1" texts just in case
+    // Rule 2: Remove explicit "Episode 1" or "Season 1" texts
     clean = clean.replace(Regex("(?i)\\s+Episode\\s+\\d+.*"), "")
     clean = clean.replace(Regex("(?i)\\s+Season\\s+\\d+.*"), "")
     
@@ -82,7 +82,7 @@ private fun cleanTitleText(title: String): String {
     clean = clean.replace(Regex("(?i)\\s*fan\\s*dub.*"), "")
     clean = clean.replace(Regex("(?i)\\s*fandub.*"), "")
     
-    // Rule 4: Remove everything from the first open bracket '(' or '[' onwards safely
+    // Rule 4: Remove everything from the first open bracket safely
     clean = clean.substringBefore("(")
     clean = clean.substringBefore("[")
     
@@ -90,10 +90,24 @@ private fun cleanTitleText(title: String): String {
     return clean.trim()
 }
 
+/**
+ * Custom crash-proof URL encoder to safely handle special characters like & and :
+ */
+private fun encodeUri(text: String): String {
+    return text.replace("%", "%25")
+        .replace(" ", "%20")
+        .replace("&", "%26")
+        .replace("?", "%3F")
+        .replace("=", "%3D")
+        .replace("+", "%2B")
+        .replace(":", "%3A")
+        .replace("/", "%2F")
+        .replace("'", "%27")
+        .replace("\"", "%22")
+}
+
 /**  
- * Fetches Title Logo URL from TMDB.  
- * First searches for IMDB ID. If not found, uses TMDB "Multi-Search" to smartly 
- * detect if the cleaned title is a movie or a TV series automatically.
+ * Fetches Title Logo URL from TMDB.
  */  
 private suspend fun fetchLogoUrl(document: Document, title: String, isSeries: Boolean): String? {  
     return try {  
@@ -109,7 +123,6 @@ private suspend fun fetchLogoUrl(document: Document, title: String, isSeries: Bo
             .takeIf { it.startsWith("tt") }  
 
         if (imdbId != null) {  
-            // Get TMDB ID using IMDB ID  
             app.get("$TMDB_API/find/$imdbId?api_key=$TMDB_KEY&external_source=imdb_id")  
                 .parsedSafe<TmdbFind>()  
                 ?.let { findRes ->
@@ -132,8 +145,8 @@ private suspend fun fetchLogoUrl(document: Document, title: String, isSeries: Bo
         } 
         
         if (tmdbId == null) {  
-            // ── Method 2: TMDB Multi-Search (Searches both Movie & TV at once) ──  
-            val safeTitle = title.replace(Regex("\\s+"), "+")
+            // ── Method 2: TMDB Multi-Search ──  
+            val safeTitle = encodeUri(title)
             
             val searchRes = app.get("$TMDB_API/search/multi?api_key=$TMDB_KEY&query=$safeTitle")  
                 .parsedSafe<TmdbSearch>()  
@@ -163,7 +176,7 @@ private suspend fun fetchLogoUrl(document: Document, title: String, isSeries: Bo
         logo?.filePath?.let { "$TMDB_IMG$it" }  
 
     } catch (e: Exception) {  
-        null  // Return null quietly if no Logo is found  
+        null  
     }  
 }  
 // ─────────────────────────────────────────────────────────────  
@@ -493,4 +506,4 @@ data class Response(
     val ck: String,  
 )
 
-                  }
+}
