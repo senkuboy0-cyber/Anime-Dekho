@@ -61,8 +61,12 @@ data class TmdbResult(
     @JsonProperty("id") val id: Int? = null  
 )  
 data class TmdbSearch(  
-    @JsonProperty("results") val results: List<TmdbResult>? = null  
+    @JsonProperty("results") val results: List<TmdbSearchResult>? = null  
 )  
+data class TmdbSearchResult(
+    @JsonProperty("id") val id: Int? = null,
+    @JsonProperty("media_type") val mediaType: String? = null
+)
 
 /**
  * A helper function to deeply clean the title for better UI display and TMDB searching.
@@ -70,15 +74,18 @@ data class TmdbSearch(
 private fun cleanTitleText(title: String): String {
     var clean = title.replace("Watch Online", "", ignoreCase = true)
     
-    // Rule 1: Remove episode patterns like " 2x11", " 1×54" and everything after it
-    // Matches both English 'x' and multiplication sign '×' only if surrounded by numbers
+    // Rule 1: Remove episode patterns like " 1x11", " 1×54"
     clean = clean.replace(Regex("\\s+\\d+[x×]\\d+.*", RegexOption.IGNORE_CASE), "")
     
-    // Rule 2: Remove "fan dub" or "fandub" and everything after it
+    // Rule 2: Remove explicit "Episode 1" or "Season 1" texts just in case
+    clean = clean.replace(Regex("\\s+Episode\\s+\\d+.*", RegexOption.IGNORE_CASE), "")
+    clean = clean.replace(Regex("\\s+Season\\s+\\d+.*", RegexOption.IGNORE_CASE), "")
+    
+    // Rule 3: Remove "fan dub" or "fandub"
     clean = clean.replace(Regex("\\s*fan\\s*dub.*", RegexOption.IGNORE_CASE), "")
     clean = clean.replace(Regex("\\s*fandub.*", RegexOption.IGNORE_CASE), "")
     
-    // Rule 3: Remove everything from the first open bracket '(' or '[' onwards safely
+    // Rule 4: Remove everything from the first open bracket '(' or '[' onwards safely
     clean = clean.substringBefore("(")
     clean = clean.substringBefore("[")
     
@@ -88,11 +95,12 @@ private fun cleanTitleText(title: String): String {
 
 /**  
  * Fetches Title Logo URL from TMDB.  
- * First searches for IMDB ID on the page, if not found, searches TMDB using the cleaned title.
- * Automatically fallbacks to search the opposite media type (movie <-> tv) if not found.
+ * First searches for IMDB ID. If not found, uses TMDB "Multi-Search" to smartly 
+ * detect if the cleaned title is a movie or a TV series automatically.
  */  
 private suspend fun fetchLogoUrl(document: Document, title: String, isSeries: Boolean): String? {  
     return try {  
+        var tmdbId: Int? = null
         var actualMediaType = if (isSeries) "tv" else "movie"  
 
         // ── Method 1: Search for IMDB link on the Page ──  
@@ -103,44 +111,42 @@ private suspend fun fetchLogoUrl(document: Document, title: String, isSeries: Bo
             .substringBefore("/")  
             .takeIf { it.startsWith("tt") }  
 
-        var tmdbId: Int? = null
-
         if (imdbId != null) {  
             // Get TMDB ID using IMDB ID  
             app.get("$TMDB_API/find/$imdbId?api_key=$TMDB_KEY&external_source=imdb_id")  
                 .parsedSafe<TmdbFind>()  
-                ?.let {  
+                ?.let { findRes ->
                     if (isSeries) {
-                        tmdbId = it.tvShows?.firstOrNull()?.id
-                        if (tmdbId == null) {
-                            tmdbId = it.movies?.firstOrNull()?.id
+                        tmdbId = findRes.tvShows?.firstOrNull()?.id
+                        if (tmdbId != null) actualMediaType = "tv"
+                        else {
+                            tmdbId = findRes.movies?.firstOrNull()?.id
                             if (tmdbId != null) actualMediaType = "movie"
                         }
                     } else {
-                        tmdbId = it.movies?.firstOrNull()?.id
-                        if (tmdbId == null) {
-                            tmdbId = it.tvShows?.firstOrNull()?.id
+                        tmdbId = findRes.movies?.firstOrNull()?.id
+                        if (tmdbId != null) actualMediaType = "movie"
+                        else {
+                            tmdbId = findRes.tvShows?.firstOrNull()?.id
                             if (tmdbId != null) actualMediaType = "tv"
                         }
-                    } 
+                    }
                 }  
         } 
         
         if (tmdbId == null) {  
-            // ── Method 2: TMDB Search using Cleaned Title ──  
-            val safeTitle = title.replace(Regex("\\s+"), "+")
+            // ── Method 2: TMDB Multi-Search (Searches both Movie & TV at once) ──  
+            val safeTitle = title.replace(" ", "%20")
             
-            // Step A: Search in the expected category
-            val searchRes = app.get("$TMDB_API/search/$actualMediaType?api_key=$TMDB_KEY&query=$safeTitle")  
+            val searchRes = app.get("$TMDB_API/search/multi?api_key=$TMDB_KEY&query=$safeTitle")  
                 .parsedSafe<TmdbSearch>()  
-            tmdbId = searchRes?.results?.firstOrNull()?.id  
-
-            // Step B: If not found, search in the opposite category
-            if (tmdbId == null) {
-                actualMediaType = if (isSeries) "movie" else "tv"
-                val fallbackSearchRes = app.get("$TMDB_API/search/$actualMediaType?api_key=$TMDB_KEY&query=$safeTitle")  
-                    .parsedSafe<TmdbSearch>()  
-                tmdbId = fallbackSearchRes?.results?.firstOrNull()?.id
+            
+            // Pick the first result that is actually a movie or tv show
+            val firstValidResult = searchRes?.results?.firstOrNull { it.mediaType == "movie" || it.mediaType == "tv" }
+            
+            if (firstValidResult != null) {
+                tmdbId = firstValidResult.id
+                actualMediaType = firstValidResult.mediaType ?: actualMediaType
             }
         }  
 
@@ -490,4 +496,4 @@ data class Response(
     val ck: String,  
 )
 
-}
+                  }
