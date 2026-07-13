@@ -34,7 +34,7 @@
             "senkuboy0-cyber"
         ],
         "description": "ToonStream Multi Language",
-        "fileSize": 50620,
+        "fileSize": 50639,
         "repositoryUrl": "https://github.com/senkuboy0-cyber/Anime-Dekho",
         "language": "hi",
         "tvTypes": [
@@ -44,9 +44,9 @@
         ],
         "iconUrl": "https://raw.githubusercontent.com/phisher98/TVVVV/refs/heads/main/Icons/toonstream.png",
         "apiVersion": 1,
-        "fileHash": "sha256-1e723f8c4ccef69e27b396bfb562b0cb00977d8c7a4ad825c7412fddfd83fc7e",
-        "jarFileSize": 230153,
+        "fileHash": "sha256-a20c37403a3ad7168472e58d49113c229611cdb7cd414984326a282d017c6354",
+        "jarFileSize": 230165,
         "jarUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/Toonstream.jar",
-        "jarHash": "sha256-102765c8fd795fad10bb1a0e75861e8ad0acdd506485b56fa95aa617a4bf88f0"
+        "jarHash": "sha256-bb2f66598c9673beef0f55700da4af6cce69a0970ebf458705fb6319612ef58c"
     }
 ]
