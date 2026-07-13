@@ -1,5 +1,6 @@
 package com.Toonstream
 
+import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.MainAPI
 import com.lagradost.cloudstream3.HomePageResponse
 import com.lagradost.cloudstream3.HomePageList
@@ -39,7 +40,81 @@ class Toonstream : MainAPI() {
     override val hasDownloadSupport   = true
     override val supportedTypes       = setOf(TvType.Movie, TvType.Anime, TvType.Cartoon)
 
-    // Fresh Drop first, then directly Anime Series — removed Series/Movies/Cartoon/Animes
+    // ─── TMDB Logo Feature ───────────────────────────────────────
+    private val TMDB_API = "https://api.themoviedb.org/3"
+    private val TMDB_KEY = "1865f43a0549ca50d341dd9ab8b29f49"
+    private val TMDB_IMG = "https://image.tmdb.org/t/p/original"
+
+    // TMDB API response data classes
+    data class TmdbImages(
+        @JsonProperty("logos") val logos: List<TmdbLogo>? = null
+    )
+    data class TmdbLogo(
+        @JsonProperty("file_path") val filePath: String? = null,
+        @JsonProperty("iso_639_1") val lang: String?     = null
+    )
+    data class TmdbFind(
+        @JsonProperty("movie_results") val movies: List<TmdbResult>? = null,
+        @JsonProperty("tv_results")    val tvShows: List<TmdbResult>? = null
+    )
+    data class TmdbResult(
+        @JsonProperty("id") val id: Int? = null
+    )
+    data class TmdbSearch(
+        @JsonProperty("results") val results: List<TmdbResult>? = null
+    )
+
+    /**
+     * TMDB থেকে Title Logo URL আনে।
+     * প্রথমে page-এ IMDB ID খোঁজে, না পেলে title দিয়ে TMDB search করে।
+     */
+    private suspend fun fetchLogoUrl(document: Document, title: String, isSeries: Boolean): String? {
+        return try {
+            val mediaType = if (isSeries) "tv" else "movie"
+
+            // ── পদ্ধতি ১: Page-এ IMDB লিংক খোঁজো ──
+            val imdbId = document
+                .select("a[href*='imdb.com/title']")
+                .attr("href")
+                .substringAfter("title/")
+                .substringBefore("/")
+                .takeIf { it.startsWith("tt") }
+
+            val tmdbId: Int? = if (imdbId != null) {
+                // IMDB ID দিয়ে TMDB ID বের করো
+                app.get("$TMDB_API/find/$imdbId?api_key=$TMDB_KEY&external_source=imdb_id")
+                    .parsedSafe<TmdbFind>()
+                    ?.let {
+                        if (isSeries) it.tvShows?.firstOrNull()?.id
+                        else          it.movies?.firstOrNull()?.id
+                    }
+            } else {
+                // ── পদ্ধতি ২: Title দিয়ে TMDB Search ──
+                val cleanTitle = title.replace(Regex("\\s*\\(\\d{4}\\)"), "").trim()
+                app.get("$TMDB_API/search/$mediaType?api_key=$TMDB_KEY&query=${cleanTitle.replace(" ", "+")}")
+                    .parsedSafe<TmdbSearch>()
+                    ?.results?.firstOrNull()?.id
+            }
+
+            if (tmdbId == null) return null
+
+            // ── TMDB থেকে Logo Image আনো ──
+            val images = app.get(
+                "$TMDB_API/$mediaType/$tmdbId/images?api_key=$TMDB_KEY&include_image_language=en,null"
+            ).parsedSafe<TmdbImages>()
+
+            // English logo প্রথমে, না পেলে যেকোনো logo
+            val logo = images?.logos?.firstOrNull { it.lang == "en" }
+                ?: images?.logos?.firstOrNull()
+
+            logo?.filePath?.let { "$TMDB_IMG$it" }
+
+        } catch (e: Exception) {
+            null  // Logo না পেলে চুপচাপ null return করো
+        }
+    }
+    // ─────────────────────────────────────────────────────────────
+
     override val mainPage = mainPageOf(
         "fresh-drop"                              to "Fresh Drop",
         "category/anime-series"                   to "Anime Series",
@@ -59,7 +134,6 @@ class Toonstream : MainAPI() {
         }
 
         val path = request.data
-        // FIX: site now uses ?page=N for pagination — ?paged=N always returns page 1
         val url = if (page == 1) "$mainUrl/$path/" else "$mainUrl/$path/?page=$page"
 
         val document = app.get(url).document
@@ -138,19 +212,24 @@ class Toonstream : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val document = app.get(url).document
-        val title = document.selectFirst("header.entry-header > h1")?.text()?.trim()
+        val document    = app.get(url).document
+        val title       = document.selectFirst("header.entry-header > h1")?.text()?.trim()
             .toString().replace("Watch Online", "")
-        val posterRaw = document.select("div.bghd > img").attr("src")
-        val poster = if (posterRaw.startsWith("http")) posterRaw else "https:$posterRaw"
+        val posterRaw   = document.select("div.bghd > img").attr("src")
+        val poster      = if (posterRaw.startsWith("http")) posterRaw else "https:$posterRaw"
         val description = document.selectFirst("div.description > p")?.text()?.trim()
+        val isSeries    = url.contains("/series/")
 
-        return if (url.contains("/series/")) {
-            loadSeries(url, document, title, poster, description)
+        // ── TMDB Logo আনো ──
+        val logoUrl = fetchLogoUrl(document, title, isSeries)
+
+        return if (isSeries) {
+            loadSeries(url, document, title, poster, description, logoUrl)
         } else {
             newMovieLoadResponse(title, url, TvType.Movie, url) {
                 this.posterUrl = poster
-                this.plot = description
+                this.plot      = description
+                this.logoUrl   = logoUrl   // ← Title Logo set হলো!
             }
         }
     }
@@ -160,7 +239,8 @@ class Toonstream : MainAPI() {
         document: Document,
         title: String,
         poster: String,
-        description: String?
+        description: String?,
+        logoUrl: String?          // ← নতুন parameter
     ): LoadResponse {
         val episodes = mutableListOf<Episode>()
 
@@ -196,9 +276,9 @@ class Toonstream : MainAPI() {
                 val epName = ep.selectFirst("h5.entry-title1, h2.entry-title, h3.entry-title")
                     ?.text()?.trim() ?: "Episode"
                 episodes.add(newEpisode(fixUrl(epHref)) {
-                    this.name     = epName
+                    this.name      = epName
                     this.posterUrl = epPoster
-                    this.season   = season
+                    this.season    = season
                 })
             }
         }
@@ -208,26 +288,24 @@ class Toonstream : MainAPI() {
                 val epHref = ep.selectFirst("a.lnk-blk, a")?.attr("href") ?: return@forEach
                 val epPoster = ep.selectFirst("img")?.attr("src")
                     ?.let { if (it.startsWith("http")) it else "https:$it" }
-                val epName = ep.selectFirst("h5.entry-title1")?.text()?.trim() ?: "Episode"
-                val numEpi = ep.selectFirst("span.num-epi")?.text()?.trim()
+                val epName   = ep.selectFirst("h5.entry-title1")?.text()?.trim() ?: "Episode"
+                val numEpi   = ep.selectFirst("span.num-epi")?.text()?.trim()
                 val epSeason = numEpi?.substringBefore("x")?.toIntOrNull() ?: 1
                 episodes.add(newEpisode(fixUrl(epHref)) {
-                    this.name     = epName
+                    this.name      = epName
                     this.posterUrl = epPoster
-                    this.season   = epSeason
+                    this.season    = epSeason
                 })
             }
         }
 
         return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
             this.posterUrl = poster
-            this.plot = description
+            this.plot      = description
+            this.logoUrl   = logoUrl   // ← Title Logo set হলো!
         }
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // loadLinks — all bugs fixed + Zephyrflick plays first
-    // ─────────────────────────────────────────────────────────────
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -236,18 +314,14 @@ class Toonstream : MainAPI() {
     ): Boolean {
         val document = app.get(data).document
 
-        // Collect true links from all servers first, then sort by priority
         data class ServerInfo(val truelink: String, val referer: String, val priority: Int)
 
         val servers = document.select("#aa-options > div > iframe").mapNotNull { iframe ->
-            // FIX 1: first iframe uses src, the rest use data-src
             val rawSrc = iframe.attr("data-src").ifEmpty { iframe.attr("src") }
             if (rawSrc.isEmpty()) return@mapNotNull null
 
-            // FIX 2: relative URL (/embed/xxx) -> absolute URL
             val serverlink = if (rawSrc.startsWith("http")) rawSrc else "$mainUrl$rawSrc"
 
-            // Fetch the embed page and extract the actual provider iframe src
             val truelink = try {
                 app.get(serverlink, referer = mainUrl)
                     .document
@@ -257,36 +331,31 @@ class Toonstream : MainAPI() {
 
             if (truelink.isEmpty()) return@mapNotNull null
 
-            // FIX 3: priority order — as-cdn21.top (Zephyrflick) always first
             val priority = when {
-                truelink.contains("as-cdn21.top")    -> 0  // Zephyrflick 1080p — FIRST
-                truelink.contains("emturbovid.com")  -> 1  // EmTurboVid 1080p
-                truelink.contains("gdmirrorbot.nl")  -> 2  // GDMirrorbot HD/FHD
-                truelink.contains("rubystm.com")     -> 3  // Streamruby
-                truelink.contains("vidmoly.net")     -> 4  // VidMoly
-                truelink.contains("abyssplayer.com") -> 5  // AbyssPlayer
-                truelink.contains("cloudy.upns.one") -> 6  // VidStack (CDN token expiry known issue)
+                truelink.contains("as-cdn21.top")    -> 0
+                truelink.contains("emturbovid.com")  -> 1
+                truelink.contains("gdmirrorbot.nl")  -> 2
+                truelink.contains("rubystm.com")     -> 3
+                truelink.contains("vidmoly.net")     -> 4
+                truelink.contains("abyssplayer.com") -> 5
+                truelink.contains("cloudy.upns.one") -> 6
                 else                                 -> 7
             }
             ServerInfo(truelink, serverlink, priority)
         }
 
-        // Some CDNs (e.g. VidHidePro) serve real HLS playlists with a .txt extension
-        // to bypass bot/cache filters. The player won't recognise them as HLS,
-        // so we intercept every link and force M3U8 type when the URL ends in .txt.
         val fixedCallback: (ExtractorLink) -> Unit = { link ->
-            // .txt URLs contain real HLS content — force M3U8 type so the player handles them correctly
             if (link.url.substringBefore("?").endsWith(".txt")) {
                 callback(
                     ExtractorLink(
-                        source          = link.source,
-                        name            = link.name,
-                        url             = link.url,
-                        referer         = link.referer,
-                        quality         = link.quality,
-                        type            = ExtractorLinkType.M3U8,
-                        headers         = link.headers,
-                        extractorData   = link.extractorData
+                        source        = link.source,
+                        name          = link.name,
+                        url           = link.url,
+                        referer       = link.referer,
+                        quality       = link.quality,
+                        type          = ExtractorLinkType.M3U8,
+                        headers       = link.headers,
+                        extractorData = link.extractorData
                     )
                 )
             } else {
@@ -294,8 +363,6 @@ class Toonstream : MainAPI() {
             }
         }
 
-        // Sort by priority and fire callbacks in order
-        // as-cdn21.top (priority=0) fires first -> Zephyrflick appears first in sources list
         servers.sortedBy { it.priority }.forEach { server ->
             loadExtractor(server.truelink, server.referer, subtitleCallback, fixedCallback)
         }
@@ -335,12 +402,11 @@ open class AWSStream : ExtractorApi() {
                     this.quality = Qualities.P1080.value
                 }
             )
-            // Subtitle check
             val doc = app.get(url).document
             val packed = doc.selectFirst("script:containsData(function(p,a,c,k,e,d))")?.data()
                 .orEmpty()
             JsUnpacker(packed).unpack()?.let { unpacked ->
-                Regex("""kind":\s*"captions"\s*,\s*"file":\s*"(https.*?\.srt)""")
+                Regex("""kind":\s*"captions"\s*,\s*"file":\s*"(https.*?\.srt)"""")
                     .find(unpacked)?.groupValues?.get(1)?.let { srtUrl ->
                         subtitleCallback(SubtitleFile("English", srtUrl))
                     }
@@ -357,4 +423,5 @@ open class AWSStream : ExtractorApi() {
         val attachmentLinks: List<Any?>,
         val ck: String,
     )
-}
+                      }
+                      
