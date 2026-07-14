@@ -31,29 +31,28 @@ import org.jsoup.nodes.Element
 import org.jsoup.nodes.Document
 import java.net.URLEncoder
 
-// ─── TMDB Data Classes (Moved outside to prevent Dexer crash) ───
-data class TmdbImages(
-    @JsonProperty("logos") val logos: List<TmdbImage>? = null,
-    @JsonProperty("backdrops") val backdrops: List<TmdbImage>? = null
+// ─── TMDB Data Classes (Renamed to prevent collision with AnimeDekho) ───
+data class ToonTmdbImages(
+    @JsonProperty("logos") val logos: List<ToonTmdbImage>? = null,
+    @JsonProperty("backdrops") val backdrops: List<ToonTmdbImage>? = null
 )
-data class TmdbImage(
+data class ToonTmdbImage(
     @JsonProperty("file_path") val filePath: String? = null,
     @JsonProperty("iso_639_1") val lang: String?     = null
 )
-data class TmdbFind(
-    @JsonProperty("movie_results") val movies: List<TmdbResult>? = null,
-    @JsonProperty("tv_results")    val tvShows: List<TmdbResult>? = null
+data class ToonTmdbFind(
+    @JsonProperty("movie_results") val movies: List<ToonTmdbResult>? = null,
+    @JsonProperty("tv_results")    val tvShows: List<ToonTmdbResult>? = null
 )
-data class TmdbResult(
+data class ToonTmdbResult(
     @JsonProperty("id") val id: Int? = null,
     @JsonProperty("media_type") val mediaType: String? = null,
     @JsonProperty("title") val title: String? = null,
     @JsonProperty("name") val name: String? = null
 )
-data class TmdbSearch(
-    @JsonProperty("results") val results: List<TmdbResult>? = null
+data class ToonTmdbSearch(
+    @JsonProperty("results") val results: List<ToonTmdbResult>? = null
 )
-data class TmdbAssets(val logo: String?, val backdrop: String?)
 // ────────────────────────────────────────────────────────────────
 
 class Toonstream : MainAPI() {
@@ -72,12 +71,15 @@ class Toonstream : MainAPI() {
     private val TMDB_IMG = "https://image.tmdb.org/t/p/original"  
 
     // ─── Safe Regex Declarations ───
-    private val epRegex1 = Regex("(?i)\\s+\\d+[x×]\\d+.*")
-    private val epRegex2 = Regex("(?i)\\s+Episode\\s+\\d+.*")
-    private val seasonRegex = Regex("(?i)\\s+Season\\s+\\d+.*")
-    private val fanDubRegex1 = Regex("(?i)\\s*fan\\s*dub.*")
-    private val fanDubRegex2 = Regex("(?i)\\s*fandub.*")
+    private val epRegex1 = Regex("\\s+\\d+[x×]\\d+.*", RegexOption.IGNORE_CASE)
+    private val epRegex2 = Regex("\\s+Episode\\s+\\d+.*", RegexOption.IGNORE_CASE)
+    private val seasonRegex = Regex("\\s+Season\\s+\\d+.*", RegexOption.IGNORE_CASE)
+    private val fanDubRegex1 = Regex("\\s*fan\\s*dub.*", RegexOption.IGNORE_CASE)
+    private val fanDubRegex2 = Regex("\\s*fandub.*", RegexOption.IGNORE_CASE)
     private val normalizeRegex = Regex("[^a-zA-Z0-9]")
+
+    // ─── Moved outside to prevent Dexer Crash in loadLinks ───
+    data class ServerInfo(val truelink: String, val referer: String, val priority: Int)
 
     /**
      * A helper function to deeply clean the title for better UI display and TMDB searching.
@@ -128,12 +130,12 @@ class Toonstream : MainAPI() {
             val safeTitle = encodeUri(title)
             
             val searchRes = app.get("$TMDB_API/search/multi?api_key=$TMDB_KEY&query=$safeTitle")  
-                .parsedSafe<TmdbSearch>()  
+                .parsedSafe<ToonTmdbSearch>()  
             
             val validResults = searchRes?.results?.filter { it.mediaType == "movie" || it.mediaType == "tv" }
             val normTitle = normalizeTitle(title)
             
-            // Try to find an exact match first (Ignores special chars and spaces)
+            // Try to find an exact match first
             val exactMatch = validResults?.firstOrNull { 
                 normalizeTitle(it.title).equals(normTitle, ignoreCase = true) || 
                 normalizeTitle(it.name).equals(normTitle, ignoreCase = true) 
@@ -148,7 +150,7 @@ class Toonstream : MainAPI() {
                 
                 if (imdbId != null) {
                     app.get("$TMDB_API/find/$imdbId?api_key=$TMDB_KEY&external_source=imdb_id")
-                        .parsedSafe<TmdbFind>()
+                        .parsedSafe<ToonTmdbFind>()
                         ?.let { findRes ->
                             val tvId = findRes.tvShows?.firstOrNull()?.id
                             val movieId = findRes.movies?.firstOrNull()?.id
@@ -169,7 +171,7 @@ class Toonstream : MainAPI() {
             // ── Fetch Logo & Backdrop Images from TMDB ──  
             val images = app.get(  
                 "$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY"  
-            ).parsedSafe<TmdbImages>()  
+            ).parsedSafe<ToonTmdbImages>()  
 
             // Priority for Logo
             val logo = images?.logos?.firstOrNull { it.lang == "en" }  
@@ -415,8 +417,6 @@ class Toonstream : MainAPI() {
     ): Boolean {  
         val document = app.get(data).document  
 
-        data class ServerInfo(val truelink: String, val referer: String, val priority: Int)  
-
         val servers = document.select("#aa-options > div > iframe").mapNotNull { iframe ->  
             val rawSrc = iframe.attr("data-src").ifEmpty { iframe.attr("src") }  
             if (rawSrc.isEmpty()) return@mapNotNull null  
@@ -478,6 +478,16 @@ class Zephyrflick : AWSStream() {
     override val requiresReferer = true
 }
 
+data class AwsResponse(  
+    val hls: Boolean,  
+    val videoImage: String,  
+    val videoSource: String,  
+    val securedLink: String,  
+    val downloadLinks: List<Any?>,  
+    val attachmentLinks: List<Any?>,  
+    val ck: String,  
+)
+
 open class AWSStream : ExtractorApi() {
     override val name    = "AWSStream"
     override val mainUrl = "https://z.awstream.net"
@@ -494,7 +504,7 @@ open class AWSStream : ExtractorApi() {
         val formdata = mapOf("hash" to extractedHash, "r" to mainUrl)  
         val apiUrl   = "$mainUrl/player/index.php?data=$extractedHash&do=getVideo"  
         val response = app.post(apiUrl, headers = header, data = formdata)  
-            .parsedSafe<Response>()  
+            .parsedSafe<AwsResponse>()  
 
         response?.videoSource?.let { m3u8 ->  
             callback(  
@@ -514,14 +524,4 @@ open class AWSStream : ExtractorApi() {
             }  
         }  
     }  
-
-    data class Response(  
-        val hls: Boolean,  
-        val videoImage: String,  
-        val videoSource: String,  
-        val securedLink: String,  
-        val downloadLinks: List<Any?>,  
-        val attachmentLinks: List<Any?>,  
-        val ck: String,  
-    )
 }
