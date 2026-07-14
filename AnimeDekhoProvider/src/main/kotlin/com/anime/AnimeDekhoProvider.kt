@@ -8,6 +8,7 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
+import org.jsoup.nodes.Document
 
 open class AnimeDekhoProvider : MainAPI() {
     override var mainUrl             = "https://animedekho.app"
@@ -344,8 +345,8 @@ open class AnimeDekhoProvider : MainAPI() {
         val logoUrl     = tmdbAssets[0]
         val backdropUrl = tmdbAssets[1]
 
-        // ── Always use rawTitle so the video player shows the full original title ──
-        val displayTitle = rawTitle
+        // ── The Fallback Logic: If no logo is found, show the raw original title ──
+        val displayTitle = if (logoUrl != null) cleanTitle else rawTitle
 
         return if (!isSeries) {
             newMovieLoadResponse(displayTitle, url, TvType.Movie, Gson().toJson(Media(media.url, mediaType = 1))) {
