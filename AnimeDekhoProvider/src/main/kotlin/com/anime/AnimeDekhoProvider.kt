@@ -7,8 +7,33 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import org.jsoup.Jsoup
-import org.jsoup.nodes.Element
 import org.jsoup.nodes.Document
+import org.jsoup.nodes.Element
+
+// ─── TMDB Data Classes (Moved outside to prevent Dexer crash) ───
+data class TmdbImages(
+    @JsonProperty("logos") val logos: List<TmdbImage>? = null,
+    @JsonProperty("backdrops") val backdrops: List<TmdbImage>? = null
+)
+data class TmdbImage(
+    @JsonProperty("file_path") val filePath: String? = null,
+    @JsonProperty("iso_639_1") val lang: String?     = null
+)
+data class TmdbFind(
+    @JsonProperty("movie_results") val movies: List<TmdbResult>? = null,
+    @JsonProperty("tv_results")    val tvShows: List<TmdbResult>? = null
+)
+data class TmdbResult(
+    @JsonProperty("id") val id: Int? = null,
+    @JsonProperty("media_type") val mediaType: String? = null,
+    @JsonProperty("title") val title: String? = null,
+    @JsonProperty("name") val name: String? = null
+)
+data class TmdbSearch(
+    @JsonProperty("results") val results: List<TmdbResult>? = null
+)
+data class TmdbAssets(val logo: String?, val backdrop: String?)
+// ────────────────────────────────────────────────────────────────
 
 open class AnimeDekhoProvider : MainAPI() {
     override var mainUrl             = "https://animedekho.app"
@@ -29,47 +54,24 @@ open class AnimeDekhoProvider : MainAPI() {
     private val TMDB_KEY = "1865f43a0549ca50d341dd9ab8b29f49"
     private val TMDB_IMG = "https://image.tmdb.org/t/p/original"
 
-    data class TmdbImages(
-        @JsonProperty("logos") val logos: List<TmdbImage>? = null,
-        @JsonProperty("backdrops") val backdrops: List<TmdbImage>? = null
-    )
-    data class TmdbImage(
-        @JsonProperty("file_path") val filePath: String? = null,
-        @JsonProperty("iso_639_1") val lang: String?     = null
-    )
-    data class TmdbFind(
-        @JsonProperty("movie_results") val movies: List<TmdbResult>? = null,
-        @JsonProperty("tv_results")    val tvShows: List<TmdbResult>? = null
-    )
-    data class TmdbResult(
-        @JsonProperty("id") val id: Int? = null,
-        @JsonProperty("media_type") val mediaType: String? = null,
-        @JsonProperty("title") val title: String? = null,
-        @JsonProperty("name") val name: String? = null
-    )
-    data class TmdbSearch(
-        @JsonProperty("results") val results: List<TmdbResult>? = null
-    )
-
-    // ─── Safe Regex Declarations ───
-    private val epRegex1 = Regex("(?i)\\s+\\d+[x×]\\d+.*")
-    private val epRegex2 = Regex("(?i)\\s+Episode\\s+\\d+.*")
-    private val seasonRegex = Regex("(?i)\\s+Season\\s+\\d+.*")
-    private val fanDubRegex1 = Regex("(?i)\\s*fan\\s*dub.*")
-    private val fanDubRegex2 = Regex("(?i)\\s*fandub.*")
-
     /**
      * A helper function to deeply clean the title for TMDB searching.
      */
     private fun cleanTitleText(title: String): String {
-        var clean = title.replace("Watch Online", "", ignoreCase = true)
+        var clean = title.replace(Regex("Watch Online", RegexOption.IGNORE_CASE), "")
         
-        clean = clean.replace(epRegex1, "")
-        clean = clean.replace(epRegex2, "")
-        clean = clean.replace(seasonRegex, "")
-        clean = clean.replace(fanDubRegex1, "")
-        clean = clean.replace(fanDubRegex2, "")
+        // Remove episode patterns safely
+        clean = clean.replace(Regex("\\s+\\d+[x×]\\d+.*", RegexOption.IGNORE_CASE), "")
         
+        // Remove explicit "Episode 1" or "Season 1" texts
+        clean = clean.replace(Regex("\\s+Episode\\s+\\d+.*", RegexOption.IGNORE_CASE), "")
+        clean = clean.replace(Regex("\\s+Season\\s+\\d+.*", RegexOption.IGNORE_CASE), "")
+        
+        // Remove "fan dub" or "fandub"
+        clean = clean.replace(Regex("\\s*fan\\s*dub.*", RegexOption.IGNORE_CASE), "")
+        clean = clean.replace(Regex("\\s*fandub.*", RegexOption.IGNORE_CASE), "")
+        
+        // Remove everything from the first open bracket safely
         clean = clean.substringBefore("(")
         clean = clean.substringBefore("[")
         
@@ -97,15 +99,15 @@ open class AnimeDekhoProvider : MainAPI() {
      * Normalizes title for exact matching comparison
      */
     private fun normalizeTitle(s: String?): String {
-        return s?.replace("’", "'")?.replace(":", "")?.replace("-", "")?.replace(" ", "") ?: ""
+        return s?.replace("’", "'")?.replace(":", "")?.replace("-", "")?.replace(" ", "")?.lowercase() ?: ""
     }
 
     /**
-     * Extracted outside of load() to prevent D8 Dexer Compiler crashes
+     * Extracted to prevent compiler crashes
      */
     private fun extractRawTitle(title: String): String? {
         return title
-            .replace("Watch Online ", "", ignoreCase = true)
+            .replace(Regex("Watch Online ", RegexOption.IGNORE_CASE), "")
             .substringBefore(" Movie in Hindi")
             .substringBefore(" Series in Hindi")
             .substringBefore(" in Hindi")
@@ -126,9 +128,8 @@ open class AnimeDekhoProvider : MainAPI() {
 
     /**
      * Fetches Title Logo and Backdrop URL from TMDB.
-     * Returns a List: [0] = logoUrl, [1] = backdropUrl
      */
-    private suspend fun fetchTmdbAssets(document: Document, title: String, isSeries: Boolean): List<String?> {
+    private suspend fun fetchTmdbAssets(document: Document, title: String, isSeries: Boolean): TmdbAssets {
         return try {
             var tmdbId: Int? = null
             var actualMediaType = if (isSeries) "tv" else "movie"
@@ -180,7 +181,7 @@ open class AnimeDekhoProvider : MainAPI() {
                 }
             }
 
-            if (tmdbId == null) return listOf(null, null)
+            if (tmdbId == null) return TmdbAssets(null, null)
 
             // ── Fetch Logo & Backdrop Images from TMDB ──
             val images = app.get(
@@ -201,10 +202,10 @@ open class AnimeDekhoProvider : MainAPI() {
             val logoUrl = logo?.filePath?.let { "$TMDB_IMG$it" }
             val backdropUrl = backdrop?.filePath?.let { "$TMDB_IMG$it" }
 
-            listOf(logoUrl, backdropUrl)
+            TmdbAssets(logoUrl, backdropUrl)
 
         } catch (e: Exception) {
-            listOf(null, null)
+            TmdbAssets(null, null)
         }
     }
     // ─────────────────────────────────────────────────────────────
@@ -325,7 +326,7 @@ open class AnimeDekhoProvider : MainAPI() {
             document.selectFirst("meta[property=og:title]")?.attr("content")?.trim(),
             document.selectFirst("meta[name=twitter:title]")?.attr("content")?.trim(),
             document.selectFirst("title")?.text()?.trim()
-        ).firstNotNullOfOrNull { extractRawTitle(it) }
+        ).mapNotNull { extractRawTitle(it) }.firstOrNull()
             ?: media.url.trimEnd('/').substringAfterLast("/")
                 .replace("-", " ")
                 .replaceFirstChar { it.uppercase() }
@@ -346,8 +347,8 @@ open class AnimeDekhoProvider : MainAPI() {
 
         // ── Fetch TMDB Logo & Backdrop using Clean Title ──
         val tmdbAssets  = fetchTmdbAssets(document, cleanTitle, isSeries)
-        val logoUrl     = tmdbAssets[0]
-        val backdropUrl = tmdbAssets[1]
+        val logoUrl     = tmdbAssets.logo
+        val backdropUrl = tmdbAssets.backdrop
 
         // ── Always use rawTitle so the video player shows the full original title ──
         val displayTitle = rawTitle
