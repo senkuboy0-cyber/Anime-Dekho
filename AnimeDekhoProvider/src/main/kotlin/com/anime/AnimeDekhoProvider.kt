@@ -137,11 +137,12 @@ open class AnimeDekhoProvider : MainAPI() {
     }
 
     /**
-     * Extracted to prevent compiler crashes
+     * Extracted to prevent compiler crashes and dynamically clean titles
      */
     private fun extractRawTitle(title: String): String? {
         return title
             .replace(Regex("Watch Online ", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("(?i)\\s*Anime\\s*$"), "") // Added this line to remove "Anime" at the end of the title
             .substringBefore(" Movie in Hindi")
             .substringBefore(" Series in Hindi")
             .substringBefore(" in Hindi")
