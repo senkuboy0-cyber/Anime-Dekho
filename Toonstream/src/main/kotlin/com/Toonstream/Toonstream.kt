@@ -72,7 +72,7 @@ data class TmdbSearch(
  * A helper function to deeply clean the title for better UI display and TMDB searching.
  */
 private fun cleanTitleText(title: String): String {
-    var clean = title.replace("Watch Online", "", ignoreCase = true)
+    var clean = title.replace(Regex("(?i)Watch Online"), "")
     
     // Remove episode patterns safely
     clean = clean.replace("(?i)\\s+\\d+[x×]\\d+.*".toRegex(), "")
@@ -243,7 +243,7 @@ private suspend fun fetchFreshDrop(): List<SearchResponse> {
     } ?: return emptyList()  
 
     return section.select("article.post.dfx").mapNotNull { el ->  
-        val rawTitle = el.selectFirst("h2.entry-title")?.text()?.replace("Watch Online", "", ignoreCase = true)?.trim() ?: return@mapNotNull null
+        val rawTitle = el.selectFirst("h2.entry-title")?.text()?.replace(Regex("(?i)Watch Online"), "")?.trim() ?: return@mapNotNull null
         val title = cleanTitleText(rawTitle).ifBlank { return@mapNotNull null }
         
         val href  = el.selectFirst("a.lnk-blk")?.attr("href")?.let { fixUrl(it) }  
@@ -263,7 +263,7 @@ private suspend fun fetchFreshDrop(): List<SearchResponse> {
 }  
 
 private fun Element.toSearchResult(): SearchResponse? {  
-    val rawTitle = this.selectFirst("article > header > h2, article h2.entry-title")?.text()?.replace("Watch Online", "", ignoreCase = true)?.trim() ?: return null
+    val rawTitle = this.selectFirst("article > header > h2, article h2.entry-title")?.text()?.replace(Regex("(?i)Watch Online"), "")?.trim() ?: return null
     val title = cleanTitleText(rawTitle).ifBlank { return null }
     
     val href  = fixUrl(  
@@ -313,7 +313,7 @@ override suspend fun load(url: String): LoadResponse {
     val document    = app.get(url).document  
     
     // Fetch Original Title and Cleaned Title
-    val rawTitle    = document.selectFirst("header.entry-header > h1")?.text()?.replace("Watch Online", "", ignoreCase = true)?.trim() ?: ""
+    val rawTitle    = document.selectFirst("header.entry-header > h1")?.text()?.replace(Regex("(?i)Watch Online"), "")?.trim() ?: ""
     val cleanTitle  = cleanTitleText(rawTitle)
         
     val posterRaw   = document.select("div.bghd > img").attr("src")  
@@ -326,8 +326,8 @@ override suspend fun load(url: String): LoadResponse {
     val logoUrl = tmdbAssets[0]
     val backdropUrl = tmdbAssets[1]
 
-    // ── The Fallback Logic: If no logo is found, show the raw original title ──
-    val displayTitle = if (logoUrl != null) cleanTitle else rawTitle
+    // ── Always use rawTitle so the video player shows the full original title ──
+    val displayTitle = rawTitle
 
     return if (isSeries) {  
         loadSeries(url, document, displayTitle, poster, description, logoUrl, backdropUrl)  
