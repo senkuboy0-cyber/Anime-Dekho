@@ -23,80 +23,162 @@ open class AnimeDekhoProvider : MainAPI() {
         TvType.Movie,
     )
 
-    // ─── TMDB Logo ────────────────────────────────────────────────
+    // ─── TMDB API Features ───────────────────────────────────────
     private val TMDB_API = "https://api.themoviedb.org/3"
     private val TMDB_KEY = "1865f43a0549ca50d341dd9ab8b29f49"
     private val TMDB_IMG = "https://image.tmdb.org/t/p/original"
 
     data class TmdbImages(
-        @JsonProperty("logos") val logos: List<TmdbLogo>? = null
+        @JsonProperty("logos") val logos: List<TmdbImage>? = null,
+        @JsonProperty("backdrops") val backdrops: List<TmdbImage>? = null
     )
-    data class TmdbLogo(
+    data class TmdbImage(
         @JsonProperty("file_path") val filePath: String? = null,
         @JsonProperty("iso_639_1") val lang: String?     = null
     )
     data class TmdbFind(
-        @JsonProperty("movie_results") val movies:  List<TmdbFindResult>? = null,
-        @JsonProperty("tv_results")    val tvShows: List<TmdbFindResult>? = null
+        @JsonProperty("movie_results") val movies: List<TmdbResult>? = null,
+        @JsonProperty("tv_results")    val tvShows: List<TmdbResult>? = null
     )
-    data class TmdbFindResult(
-        @JsonProperty("id") val id: Int? = null
+    data class TmdbResult(
+        @JsonProperty("id") val id: Int? = null,
+        @JsonProperty("media_type") val mediaType: String? = null,
+        @JsonProperty("title") val title: String? = null,
+        @JsonProperty("name") val name: String? = null
     )
-    data class TmdbSearchResult(
-        @JsonProperty("results") val results: List<TmdbFindResult>? = null
+    data class TmdbSearch(
+        @JsonProperty("results") val results: List<TmdbResult>? = null
     )
 
     /**
-     * Fetches the title logo URL from TMDB.
-     * Method 1: Extracts IMDB ID from page links -> resolves TMDB ID via /find endpoint.
-     * Method 2: Falls back to TMDB title search if no IMDB link is present.
-     * Returns null silently if logo is unavailable.
+     * A helper function to deeply clean the title for TMDB searching.
      */
-    private suspend fun fetchLogoUrl(
-        document: org.jsoup.nodes.Document,
-        title: String,
-        isSeries: Boolean
-    ): String? {
+    private fun cleanTitleText(title: String): String {
+        var clean = title.replace(Regex("(?i)Watch Online"), "")
+        
+        // Remove episode patterns safely
+        clean = clean.replace("(?i)\\s+\\d+[x×]\\d+.*".toRegex(), "")
+        
+        // Remove explicit "Episode 1" or "Season 1" texts
+        clean = clean.replace("(?i)\\s+Episode\\s+\\d+.*".toRegex(), "")
+        clean = clean.replace("(?i)\\s+Season\\s+\\d+.*".toRegex(), "")
+        
+        // Remove "fan dub" or "fandub"
+        clean = clean.replace("(?i)\\s*fan\\s*dub.*".toRegex(), "")
+        clean = clean.replace("(?i)\\s*fandub.*".toRegex(), "")
+        
+        // Remove everything from the first open bracket safely
+        clean = clean.substringBefore("(")
+        clean = clean.substringBefore("[")
+        
+        return clean.trim()
+    }
+
+    /**
+     * Custom crash-proof URL encoder to safely handle all special characters
+     */
+    private fun encodeUri(text: String): String {
+        return text.replace("%", "%25")
+            .replace(" ", "%20")
+            .replace("#", "%23")
+            .replace("&", "%26")
+            .replace("?", "%3F")
+            .replace("=", "%3D")
+            .replace(":", "%3A")
+            .replace("/", "%2F")
+            .replace("'", "%27")
+            .replace("\"", "%22")
+            .replace(",", "%2C")
+    }
+
+    /**
+     * Normalizes title for exact matching comparison
+     */
+    private fun normalizeTitle(s: String?): String {
+        return s?.replace("’", "'")?.replace(":", "")?.replace("-", "")?.replace(" ", "")?.lowercase() ?: ""
+    }
+
+    /**
+     * Fetches Title Logo and Backdrop URL from TMDB.
+     * Returns a List: [0] = logoUrl, [1] = backdropUrl
+     */
+    private suspend fun fetchTmdbAssets(document: Document, title: String, isSeries: Boolean): List<String?> {
         return try {
-            val mediaType = if (isSeries) "tv" else "movie"
+            var tmdbId: Int? = null
+            var actualMediaType = if (isSeries) "tv" else "movie"
 
-            // Method 1: look for an IMDB link in the page
-            val imdbId = document
-                .select("a[href*='imdb.com/title']")
-                .attr("href")
-                .substringAfter("title/")
-                .substringBefore("/")
-                .takeIf { it.startsWith("tt") }
-
-            val tmdbId: Int? = if (imdbId != null) {
-                // Resolve TMDB ID from IMDB ID
-                app.get("$TMDB_API/find/$imdbId?api_key=$TMDB_KEY&external_source=imdb_id")
-                    .parsedSafe<TmdbFind>()
-                    ?.let {
-                        if (isSeries) it.tvShows?.firstOrNull()?.id
-                        else          it.movies?.firstOrNull()?.id
-                    }
+            // ── Method 1: TMDB Multi-Search with Smart Exact Matching ──
+            val safeTitle = encodeUri(title)
+            
+            val searchRes = app.get("$TMDB_API/search/multi?api_key=$TMDB_KEY&query=$safeTitle")
+                .parsedSafe<TmdbSearch>()
+            
+            val validResults = searchRes?.results?.filter { it.mediaType == "movie" || it.mediaType == "tv" }
+            val normTitle = normalizeTitle(title)
+            
+            // Try to find an exact match first
+            val exactMatch = validResults?.firstOrNull { 
+                normalizeTitle(it.title).equals(normTitle, ignoreCase = true) || 
+                normalizeTitle(it.name).equals(normTitle, ignoreCase = true) 
+            }
+            
+            if (exactMatch != null) {
+                tmdbId = exactMatch.id
+                actualMediaType = exactMatch.mediaType ?: actualMediaType
             } else {
-                // Method 2: search TMDB by title
-                app.get("$TMDB_API/search/$mediaType?api_key=$TMDB_KEY&query=${title.trim().replace(" ", "+")}")
-                    .parsedSafe<TmdbSearchResult>()
-                    ?.results?.firstOrNull()?.id
+                // ── Method 2: Fallback to IMDB ID from the Page ──
+                val imdbId = document.select("a[href*='imdb.com/title']").attr("href").substringAfter("title/").substringBefore("/").takeIf { it.startsWith("tt") }
+                
+                if (imdbId != null) {
+                    app.get("$TMDB_API/find/$imdbId?api_key=$TMDB_KEY&external_source=imdb_id")
+                        .parsedSafe<TmdbFind>()
+                        ?.let { findRes ->
+                            val tvId = findRes.tvShows?.firstOrNull()?.id
+                            val movieId = findRes.movies?.firstOrNull()?.id
+                            
+                            if (isSeries) {
+                                if (tvId != null) { tmdbId = tvId; actualMediaType = "tv" }
+                                else if (movieId != null) { tmdbId = movieId; actualMediaType = "movie" }
+                            } else {
+                                if (movieId != null) { tmdbId = movieId; actualMediaType = "movie" }
+                                else if (tvId != null) { tmdbId = tvId; actualMediaType = "tv" }
+                            }
+                        }
+                }
+                
+                // ── Method 3: Ultimate Fallback ──
+                if (tmdbId == null && !validResults.isNullOrEmpty()) {
+                    val bestFuzzy = validResults.first()
+                    tmdbId = bestFuzzy.id
+                    actualMediaType = bestFuzzy.mediaType ?: actualMediaType
+                }
             }
 
-            if (tmdbId == null) return null
+            if (tmdbId == null) return listOf(null, null)
 
-            // Fetch logo images from TMDB (prefer English, fall back to any)
+            // ── Fetch Logo & Backdrop Images from TMDB ──
             val images = app.get(
-                "$TMDB_API/$mediaType/$tmdbId/images?api_key=$TMDB_KEY&include_image_language=en,null"
+                "$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY"
             ).parsedSafe<TmdbImages>()
 
+            // Priority for Logo
             val logo = images?.logos?.firstOrNull { it.lang == "en" }
+                ?: images?.logos?.firstOrNull { it.lang == null }
+                ?: images?.logos?.firstOrNull { it.lang == "ja" }
                 ?: images?.logos?.firstOrNull()
 
-            logo?.filePath?.let { "$TMDB_IMG$it" }
+            // Priority for Backdrop
+            val backdrop = images?.backdrops?.firstOrNull { it.lang == null }
+                ?: images?.backdrops?.firstOrNull { it.lang == "en" }
+                ?: images?.backdrops?.firstOrNull()
+
+            val logoUrl = logo?.filePath?.let { "$TMDB_IMG$it" }
+            val backdropUrl = backdrop?.filePath?.let { "$TMDB_IMG$it" }
+
+            listOf(logoUrl, backdropUrl)
 
         } catch (e: Exception) {
-            null
+            listOf(null, null)
         }
     }
     // ─────────────────────────────────────────────────────────────
@@ -120,7 +202,6 @@ open class AnimeDekhoProvider : MainAPI() {
         val isMovie     = request.data.contains("type\":\"movie")
         val isCategory  = !isSeries && !isMovie
 
-        // Category pages use standard /page/N/ pagination
         if (isCategory) {
             val term      = Regex("\"term\":\"([^\"]+)\"").find(request.data)?.groupValues?.get(1) ?: ""
             val pageUrl   = "$mainUrl/category/$term/"
@@ -131,17 +212,14 @@ open class AnimeDekhoProvider : MainAPI() {
             return newHomePageResponse(request.name, home, hasNextPage)
         }
 
-        // Series & Movies use AJAX "Load more"
         val pageUrl = if (isSeries) "$mainUrl/series-hindi/" else "$mainUrl/movie-hindi/"
 
-        // Page 1: normal HTML scrape
         if (page == 1) {
             val document = app.get(pageUrl).document
             val home     = document.select("article").mapNotNull { it.toSearchResult() }
             return newHomePageResponse(request.name, home, true)
         }
 
-        // Page 2+: AJAX POST
         val pageDoc  = app.get(pageUrl).document
         val nonce    = Regex("\"nonce\":\"([^\"]+)\"").find(pageDoc.html())?.groupValues?.get(1) ?: ""
 
@@ -215,9 +293,9 @@ open class AnimeDekhoProvider : MainAPI() {
             }
         }
 
-        fun String.cleanTitle(): String? {
+        fun String.extractRawTitle(): String? {
             return this
-                .substringAfter("Watch Online ").let { if (it != this) it else this }
+                .replace(Regex("(?i)Watch Online "), "")
                 .substringBefore(" Movie in Hindi")
                 .substringBefore(" Series in Hindi")
                 .substringBefore(" in Hindi")
@@ -236,16 +314,18 @@ open class AnimeDekhoProvider : MainAPI() {
                 }
         }
 
-        val title = listOfNotNull(
+        val rawTitle = listOfNotNull(
             document.selectFirst("h1.entry-title")?.text()?.trim(),
             document.selectFirst("h1")?.text()?.trim(),
             document.selectFirst("meta[property=og:title]")?.attr("content")?.trim(),
             document.selectFirst("meta[name=twitter:title]")?.attr("content")?.trim(),
             document.selectFirst("title")?.text()?.trim()
-        ).firstNotNullOfOrNull { it.cleanTitle() }
+        ).firstNotNullOfOrNull { it.extractRawTitle() }
             ?: media.url.trimEnd('/').substringAfterLast("/")
                 .replace("-", " ")
                 .replaceFirstChar { it.uppercase() }
+
+        val cleanTitle = cleanTitleText(rawTitle)
 
         val poster = fixUrlNull(
             document.selectFirst("div.post-thumbnail figure img")?.attr("src") ?: media.poster
@@ -259,12 +339,18 @@ open class AnimeDekhoProvider : MainAPI() {
         val lst      = document.select("ul.seasons-lst li")
         val isSeries = lst.isNotEmpty()
 
-        // Fetch title logo from TMDB via IMDB ID (or title search as fallback)
-        val logoUrl  = fetchLogoUrl(document, title, isSeries)
+        // ── Fetch TMDB Logo & Backdrop using Clean Title ──
+        val tmdbAssets  = fetchTmdbAssets(document, cleanTitle, isSeries)
+        val logoUrl     = tmdbAssets[0]
+        val backdropUrl = tmdbAssets[1]
+
+        // ── Always use rawTitle so the video player shows the full original title ──
+        val displayTitle = rawTitle
 
         return if (!isSeries) {
-            newMovieLoadResponse(title, url, TvType.Movie, Gson().toJson(Media(media.url, mediaType = 1))) {
+            newMovieLoadResponse(displayTitle, url, TvType.Movie, Gson().toJson(Media(media.url, mediaType = 1))) {
                 this.posterUrl = poster
+                this.backgroundPosterUrl = backdropUrl ?: poster
                 this.plot      = plot
                 this.year      = year
                 this.logoUrl   = logoUrl
@@ -290,8 +376,9 @@ open class AnimeDekhoProvider : MainAPI() {
                     this.posterUrl = recPoster
                 }
             }
-            newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
+            newTvSeriesLoadResponse(displayTitle, url, TvType.TvSeries, episodes) {
                 this.posterUrl      = poster
+                this.backgroundPosterUrl = backdropUrl ?: poster
                 this.plot           = plot
                 this.year           = year
                 this.logoUrl        = logoUrl
