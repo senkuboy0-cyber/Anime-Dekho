@@ -12,8 +12,6 @@ import com.lagradost.cloudstream3.extractors.Voe
 class AnimeDekhoPlugin: BasePlugin() {
     override fun load() {
         registerMainAPI(AnimeDekhoProvider())
-        registerMainAPI(OnepaceProvider())
-        registerMainAPI(HindiSubAnime())
         registerExtractorAPI(StreamRuby())
         registerExtractorAPI(Vidmolynet())
         registerExtractorAPI(GDMirrorbot())
