@@ -51,24 +51,25 @@ open class AnimeDekhoProvider : MainAPI() {
         @JsonProperty("results") val results: List<TmdbResult>? = null
     )
 
+    // ─── Safe Regex Declarations ───
+    private val epRegex1 = Regex("(?i)\\s+\\d+[x×]\\d+.*")
+    private val epRegex2 = Regex("(?i)\\s+Episode\\s+\\d+.*")
+    private val seasonRegex = Regex("(?i)\\s+Season\\s+\\d+.*")
+    private val fanDubRegex1 = Regex("(?i)\\s*fan\\s*dub.*")
+    private val fanDubRegex2 = Regex("(?i)\\s*fandub.*")
+
     /**
      * A helper function to deeply clean the title for TMDB searching.
      */
     private fun cleanTitleText(title: String): String {
-        var clean = title.replace(Regex("(?i)Watch Online"), "")
+        var clean = title.replace("Watch Online", "", ignoreCase = true)
         
-        // Remove episode patterns safely
-        clean = clean.replace("(?i)\\s+\\d+[x×]\\d+.*".toRegex(), "")
+        clean = clean.replace(epRegex1, "")
+        clean = clean.replace(epRegex2, "")
+        clean = clean.replace(seasonRegex, "")
+        clean = clean.replace(fanDubRegex1, "")
+        clean = clean.replace(fanDubRegex2, "")
         
-        // Remove explicit "Episode 1" or "Season 1" texts
-        clean = clean.replace("(?i)\\s+Episode\\s+\\d+.*".toRegex(), "")
-        clean = clean.replace("(?i)\\s+Season\\s+\\d+.*".toRegex(), "")
-        
-        // Remove "fan dub" or "fandub"
-        clean = clean.replace("(?i)\\s*fan\\s*dub.*".toRegex(), "")
-        clean = clean.replace("(?i)\\s*fandub.*".toRegex(), "")
-        
-        // Remove everything from the first open bracket safely
         clean = clean.substringBefore("(")
         clean = clean.substringBefore("[")
         
@@ -96,7 +97,31 @@ open class AnimeDekhoProvider : MainAPI() {
      * Normalizes title for exact matching comparison
      */
     private fun normalizeTitle(s: String?): String {
-        return s?.replace("’", "'")?.replace(":", "")?.replace("-", "")?.replace(" ", "")?.lowercase() ?: ""
+        return s?.replace("’", "'")?.replace(":", "")?.replace("-", "")?.replace(" ", "") ?: ""
+    }
+
+    /**
+     * Extracted outside of load() to prevent D8 Dexer Compiler crashes
+     */
+    private fun extractRawTitle(title: String): String? {
+        return title
+            .replace("Watch Online ", "", ignoreCase = true)
+            .substringBefore(" Movie in Hindi")
+            .substringBefore(" Series in Hindi")
+            .substringBefore(" in Hindi")
+            .substringBefore(" in Tamil")
+            .substringBefore(" in Telugu")
+            .substringBefore(" | AnimeDekho")
+            .substringBefore("| AnimeDekho")
+            .substringAfter("AnimeDekho - ")
+            .substringAfter("AnimeDekho \u2013 ")
+            .trim()
+            .takeIf {
+                it.isNotEmpty() &&
+                it.length > 2 &&
+                !it.equals("AnimeDekho", ignoreCase = true) &&
+                !it.startsWith("|")
+            }
     }
 
     /**
@@ -294,34 +319,13 @@ open class AnimeDekhoProvider : MainAPI() {
             }
         }
 
-        fun String.extractRawTitle(): String? {
-            return this
-                .replace(Regex("(?i)Watch Online "), "")
-                .substringBefore(" Movie in Hindi")
-                .substringBefore(" Series in Hindi")
-                .substringBefore(" in Hindi")
-                .substringBefore(" in Tamil")
-                .substringBefore(" in Telugu")
-                .substringBefore(" | AnimeDekho")
-                .substringBefore("| AnimeDekho")
-                .substringAfter("AnimeDekho - ")
-                .substringAfter("AnimeDekho \u2013 ")
-                .trim()
-                .takeIf {
-                    it.isNotEmpty() &&
-                    it.length > 2 &&
-                    !it.equals("AnimeDekho", ignoreCase = true) &&
-                    !it.startsWith("|")
-                }
-        }
-
         val rawTitle = listOfNotNull(
             document.selectFirst("h1.entry-title")?.text()?.trim(),
             document.selectFirst("h1")?.text()?.trim(),
             document.selectFirst("meta[property=og:title]")?.attr("content")?.trim(),
             document.selectFirst("meta[name=twitter:title]")?.attr("content")?.trim(),
             document.selectFirst("title")?.text()?.trim()
-        ).firstNotNullOfOrNull { it.extractRawTitle() }
+        ).firstNotNullOfOrNull { extractRawTitle(it) }
             ?: media.url.trimEnd('/').substringAfterLast("/")
                 .replace("-", " ")
                 .replaceFirstChar { it.uppercase() }
