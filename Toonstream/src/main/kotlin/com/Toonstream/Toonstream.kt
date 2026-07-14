@@ -46,8 +46,6 @@ private val TMDB_KEY = "1865f43a0549ca50d341dd9ab8b29f49"
 private val TMDB_IMG = "https://image.tmdb.org/t/p/original"  
 
 // TMDB API response data classes
-data class TmdbAssets(val logo: String?, val backdrop: String?)
-
 data class TmdbImages(  
     @JsonProperty("logos") val logos: List<TmdbImage>? = null,
     @JsonProperty("backdrops") val backdrops: List<TmdbImage>? = null
@@ -111,10 +109,18 @@ private fun encodeUri(text: String): String {
         .replace(",", "%2C")
 }
 
+/**
+ * Normalizes title for exact matching comparison
+ */
+private fun normalizeTitle(s: String?): String {
+    return s?.replace("’", "'")?.replace(":", "")?.replace("-", "")?.replace(" ", "")?.lowercase() ?: ""
+}
+
 /**  
  * Fetches Title Logo and Backdrop URL from TMDB.
+ * Returns a Pair: first = logoUrl, second = backdropUrl
  */  
-private suspend fun fetchTmdbAssets(document: Document, title: String, isSeries: Boolean): TmdbAssets {  
+private suspend fun fetchTmdbAssets(document: Document, title: String, isSeries: Boolean): Pair<String?, String?> {  
     return try {  
         var tmdbId: Int? = null
         var actualMediaType = if (isSeries) "tv" else "movie"  
@@ -126,15 +132,10 @@ private suspend fun fetchTmdbAssets(document: Document, title: String, isSeries:
             .parsedSafe<TmdbSearch>()  
         
         val validResults = searchRes?.results?.filter { it.mediaType == "movie" || it.mediaType == "tv" }
-        
-        // Robust normalization function for exact match
-        fun normalize(s: String?): String {
-            return s?.replace("’", "'")?.replace(":", "")?.replace("-", "")?.replace(" ", "")?.lowercase() ?: ""
-        }
-        val normTitle = normalize(title)
+        val normTitle = normalizeTitle(title)
         
         // Try to find an exact match first
-        val exactMatch = validResults?.firstOrNull { normalize(it.title) == normTitle || normalize(it.name) == normTitle }
+        val exactMatch = validResults?.firstOrNull { normalizeTitle(it.title) == normTitle || normalizeTitle(it.name) == normTitle }
         
         if (exactMatch != null) {
             tmdbId = exactMatch.id
@@ -168,7 +169,7 @@ private suspend fun fetchTmdbAssets(document: Document, title: String, isSeries:
             }
         }
 
-        if (tmdbId == null) return TmdbAssets(null, null)
+        if (tmdbId == null) return Pair(null, null)
 
         // ── Fetch Logo & Backdrop Images from TMDB ──  
         val images = app.get(  
@@ -181,7 +182,7 @@ private suspend fun fetchTmdbAssets(document: Document, title: String, isSeries:
             ?: images?.logos?.firstOrNull { it.lang == "ja" }
             ?: images?.logos?.firstOrNull()
 
-        // Priority for Backdrop (Null language is best for clean backdrops)
+        // Priority for Backdrop (Null language usually gives the best clean backdrops)
         val backdrop = images?.backdrops?.firstOrNull { it.lang == null }
             ?: images?.backdrops?.firstOrNull { it.lang == "en" }
             ?: images?.backdrops?.firstOrNull()
@@ -189,10 +190,10 @@ private suspend fun fetchTmdbAssets(document: Document, title: String, isSeries:
         val logoUrl = logo?.filePath?.let { "$TMDB_IMG$it" }
         val backdropUrl = backdrop?.filePath?.let { "$TMDB_IMG$it" }
 
-        TmdbAssets(logoUrl, backdropUrl)
+        Pair(logoUrl, backdropUrl)
 
     } catch (e: Exception) {  
-        TmdbAssets(null, null)  
+        Pair(null, null)  
     }  
 }  
 // ─────────────────────────────────────────────────────────────  
@@ -319,15 +320,17 @@ override suspend fun load(url: String): LoadResponse {
 
     // ── Fetch TMDB Logo & Backdrop ──  
     val tmdbAssets = fetchTmdbAssets(document, title, isSeries)  
+    val logoUrl = tmdbAssets.first
+    val backdropUrl = tmdbAssets.second
 
     return if (isSeries) {  
-        loadSeries(url, document, title, poster, description, tmdbAssets)  
+        loadSeries(url, document, title, poster, description, logoUrl, backdropUrl)  
     } else {  
         newMovieLoadResponse(title, url, TvType.Movie, url) {  
-            this.posterUrl = tmdbAssets.backdrop ?: poster  
-            this.backgroundPosterUrl = tmdbAssets.backdrop ?: poster
+            this.posterUrl = poster // Original Website Poster for cover
+            this.backgroundPosterUrl = backdropUrl ?: poster // TMDB Wide Backdrop (fallback to poster)
             this.plot      = description  
-            this.logoUrl   = tmdbAssets.logo
+            this.logoUrl   = logoUrl
         }  
     }  
 }  
@@ -338,7 +341,8 @@ private suspend fun loadSeries(
     title: String,  
     poster: String,  
     description: String?,  
-    tmdbAssets: TmdbAssets          
+    logoUrl: String?,
+    backdropUrl: String?
 ): LoadResponse {  
     val episodes = mutableListOf<Episode>()  
 
@@ -398,10 +402,10 @@ private suspend fun loadSeries(
     }  
 
     return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {  
-        this.posterUrl = tmdbAssets.backdrop ?: poster  
-        this.backgroundPosterUrl = tmdbAssets.backdrop ?: poster
+        this.posterUrl = poster // Original Website Poster for cover
+        this.backgroundPosterUrl = backdropUrl ?: poster // TMDB Wide Backdrop (fallback to poster)
         this.plot      = description  
-        this.logoUrl   = tmdbAssets.logo
+        this.logoUrl   = logoUrl
     }  
 }  
 
