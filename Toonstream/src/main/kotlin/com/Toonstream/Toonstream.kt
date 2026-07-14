@@ -46,6 +46,8 @@ private val TMDB_KEY = "1865f43a0549ca50d341dd9ab8b29f49"
 private val TMDB_IMG = "https://image.tmdb.org/t/p/original"  
 
 // TMDB API response data classes
+data class TmdbAssets(val logo: String?, val backdrop: String?)
+
 data class TmdbImages(  
     @JsonProperty("logos") val logos: List<TmdbImage>? = null,
     @JsonProperty("backdrops") val backdrops: List<TmdbImage>? = null
@@ -72,7 +74,7 @@ data class TmdbSearch(
  * A helper function to deeply clean the title for better UI display and TMDB searching.
  */
 private fun cleanTitleText(title: String): String {
-    var clean = title
+    var clean = title.replace(Regex("(?i)Watch Online"), "")
     
     // Remove episode patterns safely
     clean = clean.replace(Regex("(?i)\\s+\\d+[x×]\\d+.*"), "")
@@ -118,9 +120,9 @@ private fun normalizeTitle(s: String?): String {
 
 /**  
  * Fetches Title Logo and Backdrop URL from TMDB.
- * Returns a Pair: first = logoUrl, second = backdropUrl
+ * Returns TmdbAssets containing logo and backdrop urls
  */  
-private suspend fun fetchTmdbAssets(document: Document, title: String, isSeries: Boolean): Pair<String?, String?> {  
+private suspend fun fetchTmdbAssets(document: Document, title: String, isSeries: Boolean): TmdbAssets {  
     return try {  
         var tmdbId: Int? = null
         var actualMediaType = if (isSeries) "tv" else "movie"  
@@ -169,7 +171,7 @@ private suspend fun fetchTmdbAssets(document: Document, title: String, isSeries:
             }
         }
 
-        if (tmdbId == null) return Pair(null, null)
+        if (tmdbId == null) return TmdbAssets(null, null)
 
         // ── Fetch Logo & Backdrop Images from TMDB ──  
         val images = app.get(  
@@ -190,10 +192,10 @@ private suspend fun fetchTmdbAssets(document: Document, title: String, isSeries:
         val logoUrl = logo?.filePath?.let { "$TMDB_IMG$it" }
         val backdropUrl = backdrop?.filePath?.let { "$TMDB_IMG$it" }
 
-        Pair(logoUrl, backdropUrl)
+        TmdbAssets(logoUrl, backdropUrl)
 
     } catch (e: Exception) {  
-        Pair(null, null)  
+        TmdbAssets(null, null)  
     }  
 }  
 // ─────────────────────────────────────────────────────────────  
@@ -240,7 +242,7 @@ private suspend fun fetchFreshDrop(): List<SearchResponse> {
     } ?: return emptyList()  
 
     return section.select("article.post.dfx").mapNotNull { el ->  
-        val rawTitle = el.selectFirst("h2.entry-title")?.text()?.replace("Watch Online", "", ignoreCase = true)?.trim() ?: return@mapNotNull null
+        val rawTitle = el.selectFirst("h2.entry-title")?.text()?.replace(Regex("(?i)Watch Online"), "")?.trim() ?: return@mapNotNull null
         val title = cleanTitleText(rawTitle).ifBlank { return@mapNotNull null }
         
         val href  = el.selectFirst("a.lnk-blk")?.attr("href")?.let { fixUrl(it) }  
@@ -260,7 +262,7 @@ private suspend fun fetchFreshDrop(): List<SearchResponse> {
 }  
 
 private fun Element.toSearchResult(): SearchResponse? {  
-    val rawTitle = this.selectFirst("article > header > h2, article h2.entry-title")?.text()?.replace("Watch Online", "", ignoreCase = true)?.trim() ?: return null
+    val rawTitle = this.selectFirst("article > header > h2, article h2.entry-title")?.text()?.replace(Regex("(?i)Watch Online"), "")?.trim() ?: return null
     val title = cleanTitleText(rawTitle).ifBlank { return null }
     
     val href  = fixUrl(  
@@ -310,7 +312,7 @@ override suspend fun load(url: String): LoadResponse {
     val document    = app.get(url).document  
     
     // Fetch Original Title and Cleaned Title
-    val rawTitle    = document.selectFirst("header.entry-header > h1")?.text()?.replace("Watch Online", "", ignoreCase = true)?.trim() ?: ""
+    val rawTitle    = document.selectFirst("header.entry-header > h1")?.text()?.replace(Regex("(?i)Watch Online"), "")?.trim() ?: ""
     val cleanTitle  = cleanTitleText(rawTitle)
         
     val posterRaw   = document.select("div.bghd > img").attr("src")  
@@ -320,8 +322,8 @@ override suspend fun load(url: String): LoadResponse {
 
     // ── Fetch TMDB Logo & Backdrop using Clean Title ──  
     val tmdbAssets = fetchTmdbAssets(document, cleanTitle, isSeries)  
-    val logoUrl = tmdbAssets.first
-    val backdropUrl = tmdbAssets.second
+    val logoUrl = tmdbAssets.logo
+    val backdropUrl = tmdbAssets.backdrop
 
     // ── The Fallback Logic: If no logo is found, show the raw original title ──
     val displayTitle = if (logoUrl != null) cleanTitle else rawTitle
