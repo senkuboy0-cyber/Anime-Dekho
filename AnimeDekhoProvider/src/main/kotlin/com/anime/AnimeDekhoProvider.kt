@@ -345,8 +345,8 @@ open class AnimeDekhoProvider : MainAPI() {
         val logoUrl     = tmdbAssets[0]
         val backdropUrl = tmdbAssets[1]
 
-        // ── The Fallback Logic: If no logo is found, show the raw original title ──
-        val displayTitle = if (logoUrl != null) cleanTitle else rawTitle
+        // ── Always use rawTitle so the video player shows the full original title ──
+        val displayTitle = rawTitle
 
         return if (!isSeries) {
             newMovieLoadResponse(displayTitle, url, TvType.Movie, Gson().toJson(Media(media.url, mediaType = 1))) {
