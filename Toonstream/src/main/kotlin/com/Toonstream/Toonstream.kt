@@ -26,12 +26,10 @@ import com.lagradost.cloudstream3.utils.JsUnpacker
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.app
-import kotlinx.coroutines.runBlocking
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.Document
 import java.net.URLEncoder
 
-// Top-level data classes to prevent D8 Dexer crash during installation
 data class TmdbImages(
     @JsonProperty("logos") val logos: List<TmdbImage>? = null,
     @JsonProperty("backdrops") val backdrops: List<TmdbImage>? = null
@@ -56,13 +54,10 @@ data class TmdbSearch(
     @JsonProperty("results") val results: List<TmdbResult>? = null
 )
 
-// Moved outside loadLinks to prevent installation crash
 data class ServerInfo(val truelink: String, val referer: String, val priority: Int)
 
 class Toonstream : MainAPI() {
-    override var mainUrl: String = runBlocking {
-        ToonstreamProvider.getDomains()?.Toonstream ?: "https://toon-stream.site"
-    }
+    override var mainUrl              = "https://toon-stream.site"
     override var name                 = "Toonstream"
     override val hasMainPage          = true
     override var lang                 = "hi"
@@ -97,29 +92,17 @@ class Toonstream : MainAPI() {
         return s?.replace(Regex("[^a-zA-Z0-9]"), "")?.lowercase() ?: ""
     }
 
-    /**
-     * Extracts year from a TmdbResult using release_date or first_air_date
-     */
     private fun getResultYear(result: TmdbResult): Int? {
         return (result.releaseDate ?: result.firstAirDate)
             ?.substringBefore("-")
             ?.toIntOrNull()
     }
 
-    /**
-     * Returns true if TMDB year and site year are within +-1 tolerance.
-     * If either year is unknown, returns true to avoid filtering out valid results.
-     */
     private fun yearMatches(tmdbYear: Int?, siteYear: Int?): Boolean {
         if (siteYear == null || tmdbYear == null) return true
         return Math.abs(tmdbYear - siteYear) <= 1
     }
 
-    /**
-     * Picks the best result from candidates.
-     * If multiple candidates exist and siteYear is known, prefers the year-matching one.
-     * Falls back to first candidate if no year match found.
-     */
     private fun pickBestResult(candidates: List<TmdbResult>, siteYear: Int?): TmdbResult? {
         if (candidates.isEmpty()) return null
         if (siteYear == null || candidates.size == 1) return candidates.first()
@@ -139,7 +122,6 @@ class Toonstream : MainAPI() {
             val validResults = searchRes?.results?.filter { it.mediaType == "movie" || it.mediaType == "tv" }
             val normTitle = normalizeTitle(title)
 
-            // Step 1: Collect all exact name matches then pick best by year
             val exactCandidates = validResults?.filter {
                 normalizeTitle(it.title) == normTitle ||
                 normalizeTitle(it.name) == normTitle
@@ -151,7 +133,6 @@ class Toonstream : MainAPI() {
                 tmdbId = exactMatch.id
                 actualMediaType = exactMatch.mediaType ?: actualMediaType
             } else {
-                // Step 2: startsWith fallback for shortened titles
                 val startsWithCandidates = if (normTitle.length >= 6) {
                     validResults?.filter { result ->
                         val tmdbNorm = normalizeTitle(result.title ?: result.name)
@@ -165,7 +146,6 @@ class Toonstream : MainAPI() {
                     tmdbId = startsWithMatch.id
                     actualMediaType = startsWithMatch.mediaType ?: actualMediaType
                 } else {
-                    // Fallback to IMDB ID from the page
                     val imdbId = document.select("a[href*='imdb.com/title']").attr("href")
                         .substringAfter("title/").substringBefore("/")
                         .takeIf { it.startsWith("tt") }
@@ -336,7 +316,6 @@ class Toonstream : MainAPI() {
         val description = document.selectFirst("div.description > p")?.text()?.trim()
         val isSeries   = url.contains("/series/")
 
-        // Extract year from the page
         val year = document.selectFirst("span.year")?.text()?.trim()?.toIntOrNull()
 
         val tmdbAssets  = fetchTmdbAssets(document, cleanTitle, isSeries, year)
