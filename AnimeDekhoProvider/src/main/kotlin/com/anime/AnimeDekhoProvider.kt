@@ -67,16 +67,16 @@ open class AnimeDekhoProvider : MainAPI() {
      */
     private fun cleanTitleText(title: String): String {
         var clean = title.replace(Regex("Watch Online", RegexOption.IGNORE_CASE), "")
-        
+
         clean = clean.replace(epRegex1, "")
         clean = clean.replace(epRegex2, "")
         clean = clean.replace(seasonRegex, "")
         clean = clean.replace(fanDubRegex1, "")
         clean = clean.replace(fanDubRegex2, "")
-        
+
         clean = clean.substringBefore("(")
         clean = clean.substringBefore("[")
-        
+
         return clean.trim()
     }
 
@@ -139,45 +139,64 @@ open class AnimeDekhoProvider : MainAPI() {
 
             // ── Method 1: TMDB Multi-Search with Smart Exact Matching ──
             val safeTitle = encodeUri(title)
-            
+
             val searchRes = app.get("$TMDB_API/search/multi?api_key=$TMDB_KEY&query=$safeTitle")
                 .parsedSafe<TmdbSearch>()
-            
+
             val validResults = searchRes?.results?.filter { it.mediaType == "movie" || it.mediaType == "tv" }
             val normTitle = normalizeTitle(title)
-            
-            // Try to find an exact match first
-            val exactMatch = validResults?.firstOrNull { 
-                normalizeTitle(it.title) == normTitle || 
-                normalizeTitle(it.name) == normTitle 
+
+            // Step 1: Try to find an exact match first
+            val exactMatch = validResults?.firstOrNull {
+                normalizeTitle(it.title) == normTitle ||
+                normalizeTitle(it.name) == normTitle
             }
-            
+
             if (exactMatch != null) {
                 tmdbId = exactMatch.id
                 actualMediaType = exactMatch.mediaType ?: actualMediaType
             } else {
-                // ── Method 2: Fallback to IMDB ID from the Page ──
-                val imdbId = document.select("a[href*='imdb.com/title']").attr("href").substringAfter("title/").substringBefore("/").takeIf { it.startsWith("tt") }
-                
-                if (imdbId != null) {
-                    app.get("$TMDB_API/find/$imdbId?api_key=$TMDB_KEY&external_source=imdb_id")
-                        .parsedSafe<TmdbFind>()
-                        ?.let { findRes ->
-                            val tvId = findRes.tvShows?.firstOrNull()?.id
-                            val movieId = findRes.movies?.firstOrNull()?.id
-                            
-                            if (isSeries) {
-                                if (tvId != null) { tmdbId = tvId; actualMediaType = "tv" }
-                                else if (movieId != null) { tmdbId = movieId; actualMediaType = "movie" }
-                            } else {
-                                if (movieId != null) { tmdbId = movieId; actualMediaType = "movie" }
-                                else if (tvId != null) { tmdbId = tvId; actualMediaType = "tv" }
+                // Step 2: startsWith fallback for cases where the website uses a shortened title
+                // e.g. site has "Villainess Level 99" but TMDB has
+                // "Villainess Level 99: I May Be the Hidden Boss But I'm Not the Demon Lord"
+                // After normalizing: TMDB title starts with the site title → safe match
+                val startsWithMatch = if (normTitle.length >= 6) {
+                    validResults?.firstOrNull { result ->
+                        val tmdbNorm = normalizeTitle(result.title ?: result.name)
+                        tmdbNorm.startsWith(normTitle)
+                    }
+                } else null
+
+                if (startsWithMatch != null) {
+                    tmdbId = startsWithMatch.id
+                    actualMediaType = startsWithMatch.mediaType ?: actualMediaType
+                } else {
+                    // ── Method 2: Fallback to IMDB ID from the Page ──
+                    val imdbId = document.select("a[href*='imdb.com/title']").attr("href")
+                        .substringAfter("title/").substringBefore("/")
+                        .takeIf { it.startsWith("tt") }
+
+                    if (imdbId != null) {
+                        app.get("$TMDB_API/find/$imdbId?api_key=$TMDB_KEY&external_source=imdb_id")
+                            .parsedSafe<TmdbFind>()
+                            ?.let { findRes ->
+                                val tvId    = findRes.tvShows?.firstOrNull()?.id
+                                val movieId = findRes.movies?.firstOrNull()?.id
+
+                                if (isSeries) {
+                                    if (tvId != null)    { tmdbId = tvId;    actualMediaType = "tv"    }
+                                    else if (movieId != null) { tmdbId = movieId; actualMediaType = "movie" }
+                                } else {
+                                    if (movieId != null) { tmdbId = movieId; actualMediaType = "movie" }
+                                    else if (tvId != null)    { tmdbId = tvId;    actualMediaType = "tv"    }
+                                }
                             }
-                        }
+                    }
+
+                    // Note: The blind fuzzy fallback has been completely REMOVED.
+                    // If it doesn't match perfectly or doesn't have an IMDB ID, it will cleanly fail
+                    // and use the website's original poster.
                 }
-                
-                // Note: The blind fuzzy fallback has been completely REMOVED. 
-                // If it doesn't match perfectly or doesn't have an IMDB ID, it will cleanly fail and use the website's original poster.
             }
 
             if (tmdbId == null) return listOf(null, null)
@@ -198,7 +217,7 @@ open class AnimeDekhoProvider : MainAPI() {
                 ?: images?.backdrops?.firstOrNull { it.lang == "en" }
                 ?: images?.backdrops?.firstOrNull()
 
-            val logoUrl = logo?.filePath?.let { "$TMDB_IMG$it" }
+            val logoUrl     = logo?.filePath?.let { "$TMDB_IMG$it" }
             val backdropUrl = backdrop?.filePath?.let { "$TMDB_IMG$it" }
 
             listOf(logoUrl, backdropUrl)
@@ -224,9 +243,9 @@ open class AnimeDekhoProvider : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val isSeries    = request.data.contains("type\":\"series")
-        val isMovie     = request.data.contains("type\":\"movie")
-        val isCategory  = !isSeries && !isMovie
+        val isSeries   = request.data.contains("type\":\"series")
+        val isMovie    = request.data.contains("type\":\"movie")
+        val isCategory = !isSeries && !isMovie
 
         if (isCategory) {
             val term      = Regex("\"term\":\"([^\"]+)\"").find(request.data)?.groupValues?.get(1) ?: ""
@@ -246,8 +265,8 @@ open class AnimeDekhoProvider : MainAPI() {
             return newHomePageResponse(request.name, home, true)
         }
 
-        val pageDoc  = app.get(pageUrl).document
-        val nonce    = Regex("\"nonce\":\"([^\"]+)\"").find(pageDoc.html())?.groupValues?.get(1) ?: ""
+        val pageDoc = app.get(pageUrl).document
+        val nonce   = Regex("\"nonce\":\"([^\"]+)\"").find(pageDoc.html())?.groupValues?.get(1) ?: ""
 
         val filterEl  = pageDoc.selectFirst("[data-taxonomy]")
         val taxonomy  = filterEl?.attr("data-taxonomy") ?: "none"
@@ -276,14 +295,14 @@ open class AnimeDekhoProvider : MainAPI() {
     }
 
     private fun Element.toSearchResult(): AnimeSearchResponse? {
-        val href       = this.selectFirst("a.lnk-blk")?.attr("href") ?: return null
-        var posterUrl  = this.selectFirst("div figure img")?.attr("src")
+        val href      = this.selectFirst("a.lnk-blk")?.attr("href") ?: return null
+        var posterUrl = this.selectFirst("div figure img")?.attr("src")
         if (posterUrl!!.contains("data:image")) {
-            posterUrl  = this.selectFirst("div figure img")?.attr("data-lazy-src")
+            posterUrl = this.selectFirst("div figure img")?.attr("data-lazy-src")
         }
-        val imgAlt  = this.selectFirst("div figure img")?.attr("alt")?.trim()
-        val h2Text  = this.selectFirst("header h2")?.text()?.trim()
-        val title   = when {
+        val imgAlt = this.selectFirst("div figure img")?.attr("alt")?.trim()
+        val h2Text = this.selectFirst("header h2")?.text()?.trim()
+        val title  = when {
             !imgAlt.isNullOrEmpty() && !imgAlt.contains("anime", ignoreCase = true) && imgAlt.length > 2 -> imgAlt
             !h2Text.isNullOrEmpty() && !h2Text.contains("AnimeDekho", ignoreCase = true) && h2Text.length > 2 -> h2Text
             else -> href.trimEnd('/').substringAfterLast("/").replace("-", " ").replaceFirstChar { it.uppercase() }
@@ -354,18 +373,18 @@ open class AnimeDekhoProvider : MainAPI() {
 
         return if (!isSeries) {
             newMovieLoadResponse(displayTitle, url, TvType.Movie, Gson().toJson(Media(media.url, mediaType = 1))) {
-                this.posterUrl = poster
+                this.posterUrl           = poster
                 this.backgroundPosterUrl = backdropUrl ?: poster
-                this.plot      = plot
-                this.year      = year
-                this.logoUrl   = logoUrl
+                this.plot                = plot
+                this.year                = year
+                this.logoUrl             = logoUrl
             }
         } else {
             val episodes = lst.mapNotNull {
-                val name      = it.selectFirst("h3.title")?.ownText() ?: "null"
-                val href      = it.selectFirst("a")?.attr("href") ?: return@mapNotNull null
-                val epPoster  = it.selectFirst("div > div > figure > img")?.attr("src")
-                val season    = it.selectFirst("h3.title > span")?.text()
+                val name     = it.selectFirst("h3.title")?.ownText() ?: "null"
+                val href     = it.selectFirst("a")?.attr("href") ?: return@mapNotNull null
+                val epPoster = it.selectFirst("div > div > figure > img")?.attr("src")
+                val season   = it.selectFirst("h3.title > span")?.text()
                     .toString().substringAfter("S").substringBefore("-").toIntOrNull()
                 newEpisode(Gson().toJson(Media(href, mediaType = 2))) {
                     this.name      = name
@@ -374,20 +393,20 @@ open class AnimeDekhoProvider : MainAPI() {
                 }
             }
             val recommendations = document.select("div.swiper-wrapper article").mapNotNull {
-                val recName   = it.selectFirst("h2")?.text()             ?: return@mapNotNull null
-                val recHref   = it.selectFirst("a")?.attr("href")        ?: return@mapNotNull null
+                val recName   = it.selectFirst("h2")?.text()          ?: return@mapNotNull null
+                val recHref   = it.selectFirst("a")?.attr("href")     ?: return@mapNotNull null
                 val recPoster = it.selectFirst("figure img")?.attr("src")
                 newTvSeriesSearchResponse(recName, Gson().toJson(Media(recHref, recPoster, 0)), TvType.TvSeries) {
                     this.posterUrl = recPoster
                 }
             }
             newTvSeriesLoadResponse(displayTitle, url, TvType.TvSeries, episodes) {
-                this.posterUrl      = poster
+                this.posterUrl           = poster
                 this.backgroundPosterUrl = backdropUrl ?: poster
-                this.plot           = plot
-                this.year           = year
-                this.logoUrl        = logoUrl
-                this.recommendations = recommendations
+                this.plot                = plot
+                this.year                = year
+                this.logoUrl             = logoUrl
+                this.recommendations     = recommendations
             }
         }
     }
