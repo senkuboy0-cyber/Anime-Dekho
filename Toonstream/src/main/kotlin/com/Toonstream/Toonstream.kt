@@ -72,7 +72,7 @@ data class TmdbSearch(
  * A helper function to deeply clean the title for better UI display and TMDB searching.
  */
 private fun cleanTitleText(title: String): String {
-    var clean = title.replace("Watch Online", "", ignoreCase = true)
+    var clean = title
     
     // Remove episode patterns safely
     clean = clean.replace(Regex("(?i)\\s+\\d+[x×]\\d+.*"), "")
@@ -182,7 +182,7 @@ private suspend fun fetchTmdbAssets(document: Document, title: String, isSeries:
             ?: images?.logos?.firstOrNull { it.lang == "ja" }
             ?: images?.logos?.firstOrNull()
 
-        // Priority for Backdrop (Null language usually gives the best clean backdrops)
+        // Priority for Backdrop
         val backdrop = images?.backdrops?.firstOrNull { it.lang == null }
             ?: images?.backdrops?.firstOrNull { it.lang == "en" }
             ?: images?.backdrops?.firstOrNull()
@@ -240,7 +240,7 @@ private suspend fun fetchFreshDrop(): List<SearchResponse> {
     } ?: return emptyList()  
 
     return section.select("article.post.dfx").mapNotNull { el ->  
-        val rawTitle = el.selectFirst("h2.entry-title")?.text() ?: return@mapNotNull null
+        val rawTitle = el.selectFirst("h2.entry-title")?.text()?.replace("Watch Online", "", ignoreCase = true)?.trim() ?: return@mapNotNull null
         val title = cleanTitleText(rawTitle).ifBlank { return@mapNotNull null }
         
         val href  = el.selectFirst("a.lnk-blk")?.attr("href")?.let { fixUrl(it) }  
@@ -260,7 +260,7 @@ private suspend fun fetchFreshDrop(): List<SearchResponse> {
 }  
 
 private fun Element.toSearchResult(): SearchResponse? {  
-    val rawTitle = this.selectFirst("article > header > h2, article h2.entry-title")?.text() ?: return null
+    val rawTitle = this.selectFirst("article > header > h2, article h2.entry-title")?.text()?.replace("Watch Online", "", ignoreCase = true)?.trim() ?: return null
     val title = cleanTitleText(rawTitle).ifBlank { return null }
     
     val href  = fixUrl(  
@@ -309,26 +309,29 @@ override suspend fun search(query: String): List<SearchResponse> {
 override suspend fun load(url: String): LoadResponse {  
     val document    = app.get(url).document  
     
-    // Fetch and Clean the Title for UI & TMDB
-    val rawTitle    = document.selectFirst("header.entry-header > h1")?.text() ?: ""
-    val title       = cleanTitleText(rawTitle)
+    // Fetch Original Title and Cleaned Title
+    val rawTitle    = document.selectFirst("header.entry-header > h1")?.text()?.replace("Watch Online", "", ignoreCase = true)?.trim() ?: ""
+    val cleanTitle  = cleanTitleText(rawTitle)
         
     val posterRaw   = document.select("div.bghd > img").attr("src")  
     val poster      = if (posterRaw.startsWith("http")) posterRaw else "https:$posterRaw"  
     val description = document.selectFirst("div.description > p")?.text()?.trim()  
     val isSeries    = url.contains("/series/")  
 
-    // ── Fetch TMDB Logo & Backdrop ──  
-    val tmdbAssets = fetchTmdbAssets(document, title, isSeries)  
+    // ── Fetch TMDB Logo & Backdrop using Clean Title ──  
+    val tmdbAssets = fetchTmdbAssets(document, cleanTitle, isSeries)  
     val logoUrl = tmdbAssets.first
     val backdropUrl = tmdbAssets.second
 
+    // ── The Fallback Logic: If no logo is found, show the raw original title ──
+    val displayTitle = if (logoUrl != null) cleanTitle else rawTitle
+
     return if (isSeries) {  
-        loadSeries(url, document, title, poster, description, logoUrl, backdropUrl)  
+        loadSeries(url, document, displayTitle, poster, description, logoUrl, backdropUrl)  
     } else {  
-        newMovieLoadResponse(title, url, TvType.Movie, url) {  
-            this.posterUrl = poster // Original Website Poster for cover
-            this.backgroundPosterUrl = backdropUrl ?: poster // TMDB Wide Backdrop (fallback to poster)
+        newMovieLoadResponse(displayTitle, url, TvType.Movie, url) {  
+            this.posterUrl = poster 
+            this.backgroundPosterUrl = backdropUrl ?: poster 
             this.plot      = description  
             this.logoUrl   = logoUrl
         }  
@@ -402,8 +405,8 @@ private suspend fun loadSeries(
     }  
 
     return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {  
-        this.posterUrl = poster // Original Website Poster for cover
-        this.backgroundPosterUrl = backdropUrl ?: poster // TMDB Wide Backdrop (fallback to poster)
+        this.posterUrl = poster 
+        this.backgroundPosterUrl = backdropUrl ?: poster 
         this.plot      = description  
         this.logoUrl   = logoUrl
     }  
