@@ -27,7 +27,9 @@ data class TmdbResult(
     @JsonProperty("id") val id: Int? = null,
     @JsonProperty("media_type") val mediaType: String? = null,
     @JsonProperty("title") val title: String? = null,
-    @JsonProperty("name") val name: String? = null
+    @JsonProperty("name") val name: String? = null,
+    @JsonProperty("release_date") val releaseDate: String? = null,
+    @JsonProperty("first_air_date") val firstAirDate: String? = null
 )
 data class TmdbSearch(
     @JsonProperty("results") val results: List<TmdbResult>? = null
@@ -61,6 +63,34 @@ open class AnimeDekhoProvider : MainAPI() {
     private val fanDubRegex1 = Regex("(?i)\\s*fan\\s*dub.*")
     private val fanDubRegex2 = Regex("(?i)\\s*fandub.*")
     private val normalizeRegex = Regex("[^a-zA-Z0-9]")
+
+    /**
+     * Extracts year from a TmdbResult using release_date or first_air_date
+     */
+    private fun TmdbResult.getResultYear(): Int? {
+        return (releaseDate ?: firstAirDate)?.substringBefore("-")?.toIntOrNull()
+    }
+
+    /**
+     * Returns true if TMDB year and site year are within ±1 tolerance.
+     * If either year is unknown, returns true (don't filter out).
+     */
+    private fun yearMatches(tmdbYear: Int?, siteYear: Int?): Boolean {
+        if (siteYear == null || tmdbYear == null) return true
+        return kotlin.math.abs(tmdbYear - siteYear) <= 1
+    }
+
+    /**
+     * Picks the best result from a list of candidates.
+     * If siteYear is available and multiple candidates exist, prefers the year-matching one.
+     * Falls back to first candidate if no year match.
+     */
+    private fun pickBestResult(candidates: List<TmdbResult>, siteYear: Int?): TmdbResult? {
+        if (candidates.isEmpty()) return null
+        if (siteYear == null || candidates.size == 1) return candidates.first()
+        return candidates.firstOrNull { yearMatches(it.getResultYear(), siteYear) }
+            ?: candidates.first()
+    }
 
     /**
      * A helper function to deeply clean the title for TMDB searching.
@@ -130,9 +160,10 @@ open class AnimeDekhoProvider : MainAPI() {
 
     /**
      * Fetches Title Logo and Backdrop URL from TMDB.
+     * year param is used to resolve conflicts when multiple TMDB results share the same name.
      * Returns a List: [0] = logoUrl, [1] = backdropUrl
      */
-    private suspend fun fetchTmdbAssets(document: Document, title: String, isSeries: Boolean): List<String?> {
+    private suspend fun fetchTmdbAssets(document: Document, title: String, isSeries: Boolean, year: Int?): List<String?> {
         return try {
             var tmdbId: Int? = null
             var actualMediaType = if (isSeries) "tv" else "movie"
@@ -146,26 +177,31 @@ open class AnimeDekhoProvider : MainAPI() {
             val validResults = searchRes?.results?.filter { it.mediaType == "movie" || it.mediaType == "tv" }
             val normTitle = normalizeTitle(title)
 
-            // Step 1: Try to find an exact match first
-            val exactMatch = validResults?.firstOrNull {
+            // Step 1: Collect all exact name matches
+            val exactCandidates = validResults?.filter {
                 normalizeTitle(it.title) == normTitle ||
                 normalizeTitle(it.name) == normTitle
-            }
+            } ?: emptyList()
+
+            // Pick the best exact match using year (±1 tolerance)
+            val exactMatch = pickBestResult(exactCandidates, year)
 
             if (exactMatch != null) {
                 tmdbId = exactMatch.id
                 actualMediaType = exactMatch.mediaType ?: actualMediaType
             } else {
-                // Step 2: startsWith fallback for cases where the website uses a shortened title
+                // Step 2: startsWith fallback for shortened titles
                 // e.g. site has "Villainess Level 99" but TMDB has
                 // "Villainess Level 99: I May Be the Hidden Boss But I'm Not the Demon Lord"
-                // After normalizing: TMDB title starts with the site title → safe match
-                val startsWithMatch = if (normTitle.length >= 6) {
-                    validResults?.firstOrNull { result ->
+                val startsWithCandidates = if (normTitle.length >= 6) {
+                    validResults?.filter { result ->
                         val tmdbNorm = normalizeTitle(result.title ?: result.name)
                         tmdbNorm.startsWith(normTitle)
-                    }
-                } else null
+                    } ?: emptyList()
+                } else emptyList()
+
+                // Pick the best startsWith match using year (±1 tolerance)
+                val startsWithMatch = pickBestResult(startsWithCandidates, year)
 
                 if (startsWithMatch != null) {
                     tmdbId = startsWithMatch.id
@@ -184,10 +220,10 @@ open class AnimeDekhoProvider : MainAPI() {
                                 val movieId = findRes.movies?.firstOrNull()?.id
 
                                 if (isSeries) {
-                                    if (tvId != null)    { tmdbId = tvId;    actualMediaType = "tv"    }
+                                    if (tvId != null)         { tmdbId = tvId;    actualMediaType = "tv"    }
                                     else if (movieId != null) { tmdbId = movieId; actualMediaType = "movie" }
                                 } else {
-                                    if (movieId != null) { tmdbId = movieId; actualMediaType = "movie" }
+                                    if (movieId != null)      { tmdbId = movieId; actualMediaType = "movie" }
                                     else if (tvId != null)    { tmdbId = tvId;    actualMediaType = "tv"    }
                                 }
                             }
@@ -363,8 +399,8 @@ open class AnimeDekhoProvider : MainAPI() {
         val lst      = document.select("ul.seasons-lst li")
         val isSeries = lst.isNotEmpty()
 
-        // ── Fetch TMDB Logo & Backdrop using Clean Title ──
-        val tmdbAssets  = fetchTmdbAssets(document, cleanTitle, isSeries)
+        // ── Fetch TMDB Logo & Backdrop using Clean Title + Year ──
+        val tmdbAssets  = fetchTmdbAssets(document, cleanTitle, isSeries, year)
         val logoUrl     = tmdbAssets[0]
         val backdropUrl = tmdbAssets[1]
 
