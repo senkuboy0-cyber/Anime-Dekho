@@ -67,28 +67,30 @@ open class AnimeDekhoProvider : MainAPI() {
     /**
      * Extracts year from a TmdbResult using release_date or first_air_date
      */
-    private fun TmdbResult.getResultYear(): Int? {
-        return (releaseDate ?: firstAirDate)?.substringBefore("-")?.toIntOrNull()
+    private fun getResultYear(result: TmdbResult): Int? {
+        return (result.releaseDate ?: result.firstAirDate)
+            ?.substringBefore("-")
+            ?.toIntOrNull()
     }
 
     /**
-     * Returns true if TMDB year and site year are within ±1 tolerance.
-     * If either year is unknown, returns true (don't filter out).
+     * Returns true if TMDB year and site year are within +-1 tolerance.
+     * If either year is unknown, returns true to avoid filtering out valid results.
      */
     private fun yearMatches(tmdbYear: Int?, siteYear: Int?): Boolean {
         if (siteYear == null || tmdbYear == null) return true
-        return kotlin.math.abs(tmdbYear - siteYear) <= 1
+        return Math.abs(tmdbYear - siteYear) <= 1
     }
 
     /**
-     * Picks the best result from a list of candidates.
-     * If siteYear is available and multiple candidates exist, prefers the year-matching one.
-     * Falls back to first candidate if no year match.
+     * Picks the best result from candidates.
+     * If multiple candidates exist and siteYear is known, prefers the year-matching one.
+     * Falls back to first candidate if no year match found.
      */
     private fun pickBestResult(candidates: List<TmdbResult>, siteYear: Int?): TmdbResult? {
         if (candidates.isEmpty()) return null
         if (siteYear == null || candidates.size == 1) return candidates.first()
-        return candidates.firstOrNull { yearMatches(it.getResultYear(), siteYear) }
+        return candidates.firstOrNull { yearMatches(getResultYear(it), siteYear) }
             ?: candidates.first()
     }
 
@@ -160,7 +162,7 @@ open class AnimeDekhoProvider : MainAPI() {
 
     /**
      * Fetches Title Logo and Backdrop URL from TMDB.
-     * year param is used to resolve conflicts when multiple TMDB results share the same name.
+     * year param resolves conflicts when multiple TMDB results share the same name.
      * Returns a List: [0] = logoUrl, [1] = backdropUrl
      */
     private suspend fun fetchTmdbAssets(document: Document, title: String, isSeries: Boolean, year: Int?): List<String?> {
@@ -177,13 +179,12 @@ open class AnimeDekhoProvider : MainAPI() {
             val validResults = searchRes?.results?.filter { it.mediaType == "movie" || it.mediaType == "tv" }
             val normTitle = normalizeTitle(title)
 
-            // Step 1: Collect all exact name matches
+            // Step 1: Collect all exact name matches then pick best by year
             val exactCandidates = validResults?.filter {
                 normalizeTitle(it.title) == normTitle ||
                 normalizeTitle(it.name) == normTitle
             } ?: emptyList()
 
-            // Pick the best exact match using year (±1 tolerance)
             val exactMatch = pickBestResult(exactCandidates, year)
 
             if (exactMatch != null) {
@@ -200,7 +201,6 @@ open class AnimeDekhoProvider : MainAPI() {
                     } ?: emptyList()
                 } else emptyList()
 
-                // Pick the best startsWith match using year (±1 tolerance)
                 val startsWithMatch = pickBestResult(startsWithCandidates, year)
 
                 if (startsWithMatch != null) {
@@ -404,7 +404,6 @@ open class AnimeDekhoProvider : MainAPI() {
         val logoUrl     = tmdbAssets[0]
         val backdropUrl = tmdbAssets[1]
 
-        // ── Always use rawTitle so the video player shows the full original title ──
         val displayTitle = rawTitle
 
         return if (!isSeries) {
