@@ -9,9 +9,8 @@ import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import java.net.URLEncoder
 
-// ─── TMDB Data Classes (Moved outside to prevent Dexer crash) ───
+// ─── TMDB Data Classes ───
 data class TmdbImages(
     @JsonProperty("logos") val logos: List<TmdbImage>? = null,
     @JsonProperty("backdrops") val backdrops: List<TmdbImage>? = null
@@ -34,7 +33,7 @@ data class TmdbSearch(
     @JsonProperty("results") val results: List<TmdbResult>? = null
 )
 data class TmdbAssets(val logo: String?, val backdrop: String?)
-// ────────────────────────────────────────────────────────────────
+// ─────────────────────────
 
 open class AnimeDekhoProvider : MainAPI() {
     override var mainUrl             = "https://animedekho.app"
@@ -61,6 +60,7 @@ open class AnimeDekhoProvider : MainAPI() {
     private val seasonRegex = Regex("(?i)\\s+Season\\s+\\d+.*")
     private val fanDubRegex1 = Regex("(?i)\\s*fan\\s*dub.*")
     private val fanDubRegex2 = Regex("(?i)\\s*fandub.*")
+    private val normalizeRegex = Regex("[^a-zA-Z0-9]")
 
     /**
      * A helper function to deeply clean the title for TMDB searching.
@@ -81,21 +81,27 @@ open class AnimeDekhoProvider : MainAPI() {
     }
 
     /**
-     * Custom URLEncoder to safely encode query for TMDB Multi-Search
+     * Custom crash-proof URL encoder to safely handle all special characters
      */
     private fun encodeUri(text: String): String {
-        return try {
-            URLEncoder.encode(text, "UTF-8")
-        } catch (e: Exception) {
-            text.replace(" ", "+")
-        }
+        return text.replace("%", "%25")
+            .replace(" ", "%20")
+            .replace("#", "%23")
+            .replace("&", "%26")
+            .replace("?", "%3F")
+            .replace("=", "%3D")
+            .replace(":", "%3A")
+            .replace("/", "%2F")
+            .replace("'", "%27")
+            .replace("\"", "%22")
+            .replace(",", "%2C")
     }
 
     /**
-     * Powerful Title Normalizer: Removes ALL spaces and special characters for a foolproof exact match
+     * Normalizes title for exact matching comparison by removing ALL spaces and special characters
      */
     private fun normalizeTitle(s: String?): String {
-        return s?.replace(Regex("[^a-zA-Z0-9]"), "") ?: ""
+        return s?.replace(normalizeRegex, "")?.lowercase() ?: ""
     }
 
     /**
@@ -140,10 +146,10 @@ open class AnimeDekhoProvider : MainAPI() {
             val validResults = searchRes?.results?.filter { it.mediaType == "movie" || it.mediaType == "tv" }
             val normTitle = normalizeTitle(title)
             
-            // Try to find an exact match first (Ignores special chars and spaces)
+            // Try to find an exact match first
             val exactMatch = validResults?.firstOrNull { 
-                normalizeTitle(it.title).equals(normTitle, ignoreCase = true) || 
-                normalizeTitle(it.name).equals(normTitle, ignoreCase = true) 
+                normalizeTitle(it.title) == normTitle || 
+                normalizeTitle(it.name) == normTitle 
             }
             
             if (exactMatch != null) {
@@ -170,12 +176,8 @@ open class AnimeDekhoProvider : MainAPI() {
                         }
                 }
                 
-                // ── Method 3: Ultimate Fallback ──
-                if (tmdbId == null && !validResults.isNullOrEmpty()) {
-                    val bestFuzzy = validResults.first()
-                    tmdbId = bestFuzzy.id
-                    actualMediaType = bestFuzzy.mediaType ?: actualMediaType
-                }
+                // Note: The blind fuzzy fallback has been completely REMOVED. 
+                // If it doesn't match perfectly or doesn't have an IMDB ID, it will cleanly fail and use the website's original poster.
             }
 
             if (tmdbId == null) return listOf(null, null)
