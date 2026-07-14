@@ -142,7 +142,7 @@ open class AnimeDekhoProvider : MainAPI() {
     private fun extractRawTitle(title: String): String? {
         return title
             .replace(Regex("Watch Online ", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("(?i)\\s*Anime\\s*$"), "") // Added this line to remove "Anime" at the end of the title
+            .replace(Regex("\\s+Anime\\s*$", RegexOption.IGNORE_CASE), "")
             .substringBefore(" Movie in Hindi")
             .substringBefore(" Series in Hindi")
             .substringBefore(" in Hindi")
@@ -160,6 +160,7 @@ open class AnimeDekhoProvider : MainAPI() {
                 !it.startsWith("|")
             }
     }
+
 
     /**
      * Fetches Title Logo and Backdrop URL from TMDB.
