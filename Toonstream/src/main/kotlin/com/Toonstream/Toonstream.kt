@@ -31,7 +31,7 @@ import org.jsoup.nodes.Element
 import org.jsoup.nodes.Document
 import java.net.URLEncoder
 
-// ─── ডেটা ক্লাসগুলো ফাংশনের বাইরে রাখা হয়েছে (ইন্সটল ক্র্যাশ এড়াতে) ───
+// Top-level data classes to prevent D8 Dexer crash during installation
 data class TmdbImages(  
     @JsonProperty("logos") val logos: List<TmdbImage>? = null,
     @JsonProperty("backdrops") val backdrops: List<TmdbImage>? = null
@@ -54,9 +54,8 @@ data class TmdbSearch(
     @JsonProperty("results") val results: List<TmdbResult>? = null  
 )  
 
-// loadLinks এর ভেতর থেকে এখানে নিয়ে আসা হয়েছে
+// Moved outside loadLinks to prevent installation crash
 data class ServerInfo(val truelink: String, val referer: String, val priority: Int)
-// ─────────────────────────────────────────────────────────────
 
 class Toonstream : MainAPI() {
     override var mainUrl: String = runBlocking {
@@ -68,32 +67,22 @@ class Toonstream : MainAPI() {
     override val hasDownloadSupport   = true
     override val supportedTypes       = setOf(TvType.Movie, TvType.Anime, TvType.Cartoon)
 
-    // ─── TMDB API Features ───────────────────────────────────────  
     private val TMDB_API = "https://api.themoviedb.org/3"  
     private val TMDB_KEY = "1865f43a0549ca50d341dd9ab8b29f49"  
     private val TMDB_IMG = "https://image.tmdb.org/t/p/original"  
 
-    /**
-     * A helper function to deeply clean the title for better UI display and TMDB searching.
-     */
     private fun cleanTitleText(title: String): String {
         var clean = title.replace(Regex("(?i)Watch Online"), "")
-        
         clean = clean.replace("(?i)\\s+\\d+[x×]\\d+.*".toRegex(), "")
         clean = clean.replace("(?i)\\s+Episode\\s+\\d+.*".toRegex(), "")
         clean = clean.replace("(?i)\\s+Season\\s+\\d+.*".toRegex(), "")
         clean = clean.replace("(?i)\\s*fan\\s*dub.*".toRegex(), "")
         clean = clean.replace("(?i)\\s*fandub.*".toRegex(), "")
-        
         clean = clean.substringBefore("(")
         clean = clean.substringBefore("[")
-        
         return clean.trim()
     }
 
-    /**
-     * Custom crash-proof URL encoder to safely handle all special characters
-     */
     private fun encodeUri(text: String): String {
         return try {
             URLEncoder.encode(text, "UTF-8")
@@ -102,42 +91,31 @@ class Toonstream : MainAPI() {
         }
     }
 
-    /**
-     * Normalizes title for exact matching comparison (removes spaces/special chars)
-     */
     private fun normalizeTitle(s: String?): String {
         return s?.replace(Regex("[^a-zA-Z0-9]"), "")?.lowercase() ?: ""
     }
 
-    /**  
-     * Fetches Title Logo and Backdrop URL from TMDB.
-     * Returns a List: [0] = logoUrl, [1] = backdropUrl
-     */  
     private suspend fun fetchTmdbAssets(document: Document, title: String, isSeries: Boolean): List<String?> {  
         return try {  
             var tmdbId: Int? = null
             var actualMediaType = if (isSeries) "tv" else "movie"  
 
-            // ── Method 1: TMDB Multi-Search with Smart Exact Matching ──  
             val safeTitle = encodeUri(title)
-            
             val searchRes = app.get("$TMDB_API/search/multi?api_key=$TMDB_KEY&query=$safeTitle")  
                 .parsedSafe<TmdbSearch>()  
             
             val validResults = searchRes?.results?.filter { it.mediaType == "movie" || it.mediaType == "tv" }
             val normTitle = normalizeTitle(title)
             
-            // Try to find an exact match first
             val exactMatch = validResults?.firstOrNull { 
-                normalizeTitle(it.title).equals(normTitle, ignoreCase = true) || 
-                normalizeTitle(it.name).equals(normTitle, ignoreCase = true) 
+                normalizeTitle(it.title) == normTitle || 
+                normalizeTitle(it.name) == normTitle 
             }
             
             if (exactMatch != null) {
                 tmdbId = exactMatch.id
                 actualMediaType = exactMatch.mediaType ?: actualMediaType
             } else {
-                // ── Method 2: Fallback to IMDB ID from the Page ──
                 val imdbId = document.select("a[href*='imdb.com/title']").attr("href").substringAfter("title/").substringBefore("/").takeIf { it.startsWith("tt") }
                 
                 if (imdbId != null) {
@@ -156,24 +134,19 @@ class Toonstream : MainAPI() {
                             }
                         }
                 }
-                
-                // ── (Method 3: Ultimate Fallback সরানো হয়েছে যাতে ভুলভাল ছবি না আসে) ──
             }
 
             if (tmdbId == null) return listOf(null, null)
 
-            // ── Fetch Logo & Backdrop Images from TMDB ──  
             val images = app.get(  
                 "$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY"  
             ).parsedSafe<TmdbImages>()  
 
-            // Priority for Logo
             val logo = images?.logos?.firstOrNull { it.lang == "en" }  
                 ?: images?.logos?.firstOrNull { it.lang == null }
                 ?: images?.logos?.firstOrNull { it.lang == "ja" }
                 ?: images?.logos?.firstOrNull()
 
-            // Priority for Backdrop
             val backdrop = images?.backdrops?.firstOrNull { it.lang == null }
                 ?: images?.backdrops?.firstOrNull { it.lang == "en" }
                 ?: images?.backdrops?.firstOrNull()
@@ -187,7 +160,6 @@ class Toonstream : MainAPI() {
             listOf(null, null)  
         }  
     }  
-    // ─────────────────────────────────────────────────────────────  
 
     override val mainPage = mainPageOf(  
         "fresh-drop"                              to "Fresh Drop",  
@@ -300,7 +272,6 @@ class Toonstream : MainAPI() {
     override suspend fun load(url: String): LoadResponse {  
         val document    = app.get(url).document  
         
-        // Fetch Original Title and Cleaned Title
         val rawTitle    = document.selectFirst("header.entry-header > h1")?.text()?.replace(Regex("(?i)Watch Online"), "")?.trim() ?: ""
         val cleanTitle  = cleanTitleText(rawTitle)
             
@@ -309,12 +280,10 @@ class Toonstream : MainAPI() {
         val description = document.selectFirst("div.description > p")?.text()?.trim()  
         val isSeries    = url.contains("/series/")  
 
-        // ── Fetch TMDB Logo & Backdrop using Clean Title ──  
         val tmdbAssets = fetchTmdbAssets(document, cleanTitle, isSeries)  
         val logoUrl = tmdbAssets[0]
         val backdropUrl = tmdbAssets[1]
 
-        // ── Always use rawTitle so the video player shows the full original title ──
         val displayTitle = rawTitle
 
         return if (isSeries) {  
@@ -465,7 +434,6 @@ class Toonstream : MainAPI() {
     }
 }
 
-// ─── AWSStream / Zephyrflick ──────────────────────────────────
 class Zephyrflick : AWSStream() {
     override val name    = "Zephyrflick"
     override val mainUrl = "https://play.zephyrflick.top"
@@ -508,15 +476,14 @@ open class AWSStream : ExtractorApi() {
             }  
         }  
     }  
-}  
 
-// Extractors.kt যেন খুঁজে পায় তাই এই Response ক্লাসটির নাম আর চেঞ্জ করা হয়নি
-data class Response(  
-    val hls: Boolean,  
-    val videoImage: String,  
-    val videoSource: String,  
-    val securedLink: String,  
-    val downloadLinks: List<Any?>,  
-    val attachmentLinks: List<Any?>,  
-    val ck: String,  
-)
+    data class Response(  
+        val hls: Boolean,  
+        val videoImage: String,  
+        val videoSource: String,  
+        val securedLink: String,  
+        val downloadLinks: List<Any?>,  
+        val attachmentLinks: List<Any?>,  
+        val ck: String,  
+    )
+}
