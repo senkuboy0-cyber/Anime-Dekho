@@ -40,16 +40,19 @@ override var lang                 = "hi"
 override val hasDownloadSupport   = true
 override val supportedTypes       = setOf(TvType.Movie, TvType.Anime, TvType.Cartoon)
 
-// ─── TMDB Logo Feature ───────────────────────────────────────  
+// ─── TMDB API Features ───────────────────────────────────────  
 private val TMDB_API = "https://api.themoviedb.org/3"  
 private val TMDB_KEY = "1865f43a0549ca50d341dd9ab8b29f49"  
 private val TMDB_IMG = "https://image.tmdb.org/t/p/original"  
 
 // TMDB API response data classes
+data class TmdbAssets(val logo: String?, val backdrop: String?)
+
 data class TmdbImages(  
-    @JsonProperty("logos") val logos: List<TmdbLogo>? = null  
+    @JsonProperty("logos") val logos: List<TmdbImage>? = null,
+    @JsonProperty("backdrops") val backdrops: List<TmdbImage>? = null
 )  
-data class TmdbLogo(  
+data class TmdbImage(  
     @JsonProperty("file_path") val filePath: String? = null,  
     @JsonProperty("iso_639_1") val lang: String?     = null  
 )  
@@ -92,7 +95,7 @@ private fun cleanTitleText(title: String): String {
 }
 
 /**
- * Custom crash-proof URL encoder to safely handle all special characters like #, &, :, etc.
+ * Custom crash-proof URL encoder to safely handle all special characters
  */
 private fun encodeUri(text: String): String {
     return text.replace("%", "%25")
@@ -109,10 +112,9 @@ private fun encodeUri(text: String): String {
 }
 
 /**  
- * Fetches Title Logo URL from TMDB.
- * Prioritizes Exact Title Matching to avoid incorrect IMDB IDs on streaming sites.
+ * Fetches Title Logo and Backdrop URL from TMDB.
  */  
-private suspend fun fetchLogoUrl(document: Document, title: String, isSeries: Boolean): String? {  
+private suspend fun fetchTmdbAssets(document: Document, title: String, isSeries: Boolean): TmdbAssets {  
     return try {  
         var tmdbId: Int? = null
         var actualMediaType = if (isSeries) "tv" else "movie"  
@@ -125,13 +127,13 @@ private suspend fun fetchLogoUrl(document: Document, title: String, isSeries: Bo
         
         val validResults = searchRes?.results?.filter { it.mediaType == "movie" || it.mediaType == "tv" }
         
-        // Robust normalization function for exact match (ignores spaces, colons, quotes)
+        // Robust normalization function for exact match
         fun normalize(s: String?): String {
             return s?.replace("’", "'")?.replace(":", "")?.replace("-", "")?.replace(" ", "")?.lowercase() ?: ""
         }
         val normTitle = normalize(title)
         
-        // 1. Try to find an exact match first (ignores generic franchise results)
+        // Try to find an exact match first
         val exactMatch = validResults?.firstOrNull { normalize(it.title) == normTitle || normalize(it.name) == normTitle }
         
         if (exactMatch != null) {
@@ -139,7 +141,6 @@ private suspend fun fetchLogoUrl(document: Document, title: String, isSeries: Bo
             actualMediaType = exactMatch.mediaType ?: actualMediaType
         } else {
             // ── Method 2: Fallback to IMDB ID from the Page ──
-            // Websites often put the wrong IMDB ID, so we only use this if exact title match fails.
             val imdbId = document.select("a[href*='imdb.com/title']").attr("href").substringAfter("title/").substringBefore("/").takeIf { it.startsWith("tt") }
             
             if (imdbId != null) {
@@ -159,7 +160,7 @@ private suspend fun fetchLogoUrl(document: Document, title: String, isSeries: Bo
                     }
             }
             
-            // ── Method 3: Ultimate Fallback (Best Fuzzy Result) ──
+            // ── Method 3: Ultimate Fallback ──
             if (tmdbId == null && !validResults.isNullOrEmpty()) {
                 val bestFuzzy = validResults.first()
                 tmdbId = bestFuzzy.id
@@ -167,23 +168,31 @@ private suspend fun fetchLogoUrl(document: Document, title: String, isSeries: Bo
             }
         }
 
-        if (tmdbId == null) return null  
+        if (tmdbId == null) return TmdbAssets(null, null)
 
-        // ── Fetch Logo Image from TMDB ──  
+        // ── Fetch Logo & Backdrop Images from TMDB ──  
         val images = app.get(  
             "$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY"  
         ).parsedSafe<TmdbImages>()  
 
-        // Priority: English -> No Language -> Japanese -> Any fallback
+        // Priority for Logo
         val logo = images?.logos?.firstOrNull { it.lang == "en" }  
             ?: images?.logos?.firstOrNull { it.lang == null }
             ?: images?.logos?.firstOrNull { it.lang == "ja" }
             ?: images?.logos?.firstOrNull()
 
-        logo?.filePath?.let { "$TMDB_IMG$it" }  
+        // Priority for Backdrop (Null language is best for clean backdrops)
+        val backdrop = images?.backdrops?.firstOrNull { it.lang == null }
+            ?: images?.backdrops?.firstOrNull { it.lang == "en" }
+            ?: images?.backdrops?.firstOrNull()
+
+        val logoUrl = logo?.filePath?.let { "$TMDB_IMG$it" }
+        val backdropUrl = backdrop?.filePath?.let { "$TMDB_IMG$it" }
+
+        TmdbAssets(logoUrl, backdropUrl)
 
     } catch (e: Exception) {  
-        null  
+        TmdbAssets(null, null)  
     }  
 }  
 // ─────────────────────────────────────────────────────────────  
@@ -308,16 +317,17 @@ override suspend fun load(url: String): LoadResponse {
     val description = document.selectFirst("div.description > p")?.text()?.trim()  
     val isSeries    = url.contains("/series/")  
 
-    // ── Fetch TMDB Logo ──  
-    val logoUrl = fetchLogoUrl(document, title, isSeries)  
+    // ── Fetch TMDB Logo & Backdrop ──  
+    val tmdbAssets = fetchTmdbAssets(document, title, isSeries)  
 
     return if (isSeries) {  
-        loadSeries(url, document, title, poster, description, logoUrl)  
+        loadSeries(url, document, title, poster, description, tmdbAssets)  
     } else {  
         newMovieLoadResponse(title, url, TvType.Movie, url) {  
-            this.posterUrl = poster  
+            this.posterUrl = tmdbAssets.backdrop ?: poster  
+            this.backgroundPosterUrl = tmdbAssets.backdrop ?: poster
             this.plot      = description  
-            this.logoUrl   = logoUrl   // ← Title Logo is set!  
+            this.logoUrl   = tmdbAssets.logo
         }  
     }  
 }  
@@ -328,7 +338,7 @@ private suspend fun loadSeries(
     title: String,  
     poster: String,  
     description: String?,  
-    logoUrl: String?          // ← New parameter  
+    tmdbAssets: TmdbAssets          
 ): LoadResponse {  
     val episodes = mutableListOf<Episode>()  
 
@@ -388,9 +398,10 @@ private suspend fun loadSeries(
     }  
 
     return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {  
-        this.posterUrl = poster  
+        this.posterUrl = tmdbAssets.backdrop ?: poster  
+        this.backgroundPosterUrl = tmdbAssets.backdrop ?: poster
         this.plot      = description  
-        this.logoUrl   = logoUrl   // ← Title Logo is set!  
+        this.logoUrl   = tmdbAssets.logo
     }  
 }  
 
