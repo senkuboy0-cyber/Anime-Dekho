@@ -162,9 +162,6 @@ class Toonstream : MainAPI() {
                             }
                         }
                 }
-                
-                // Note: The blind fuzzy fallback (Method 3) has been completely REMOVED here too! 
-                // No more random wrong images.
             }
 
             if (tmdbId == null) return listOf(null, null)
@@ -437,7 +434,7 @@ class Toonstream : MainAPI() {
 
             val priority = when {  
                 truelink.contains("as-cdn21.top")    -> 0  
-                truিন্ত("emturbovid.com")  -> 1  
+                truelink.contains("emturbovid.com")  -> 1  
                 truelink.contains("gdmirrorbot.nl")  -> 2  
                 truelink.contains("rubystm.com")     -> 3  
                 truelink.contains("vidmoly.net")     -> 4  
