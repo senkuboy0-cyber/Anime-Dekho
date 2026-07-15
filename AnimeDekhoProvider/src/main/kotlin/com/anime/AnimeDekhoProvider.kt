@@ -162,7 +162,35 @@ open class AnimeDekhoProvider : MainAPI() {
             }
     }
 
+    /**
+     * Fetches year via AJAX request if not found directly in the DOM
+     */
+    private suspend fun fetchYearViaAjax(movieUrl: String, pageHtml: String): Int? {
+        return try {
+            val nonce = Regex("\"nonce\"\\s*:\\s*\"([^\"]+)\"").find(pageHtml)?.groupValues?.get(1) ?: return null
+            val searchTerm = movieUrl.trimEnd('/').substringAfterLast("/").replace("-", " ")
+            val type = if (movieUrl.contains("series")) "series" else "movie"
 
+            val vars = """{"_wpsearch":"$nonce","search":"$searchTerm","type":"$type","genres":[],"years":[],"sort":1,"page":1}"""
+
+            val response = app.post(
+                "$mainUrl/wp-admin/admin-ajax.php",
+                data = mapOf("action" to "action_search", "vars" to vars),
+                headers = mapOf(
+                    "Content-Type"     to "application/x-www-form-urlencoded",
+                    "X-WP-Nonce"       to nonce,
+                    "X-Requested-With" to "XMLHttpRequest",
+                    "Referer"          to movieUrl
+                )
+            ).text
+
+            val json = parseJson<AjaxResponse>(response)
+            val yearStr = Regex("<span class=\"year\">(\\d+)</span>").find(json.html)?.groupValues?.get(1)
+            yearStr?.toIntOrNull()
+        } catch (e: Exception) {
+            null
+        }
+    }
 
     /**
      * Fetches Title Logo and Backdrop URL from TMDB.
@@ -196,8 +224,6 @@ open class AnimeDekhoProvider : MainAPI() {
                 actualMediaType = exactMatch.mediaType ?: actualMediaType
             } else {
                 // Step 2: startsWith fallback for shortened titles
-                // e.g. site has "Villainess Level 99" but TMDB has
-                // "Villainess Level 99: I May Be the Hidden Boss But I'm Not the Demon Lord"
                 val startsWithCandidates = if (normTitle.length >= 6) {
                     validResults?.filter { result ->
                         val tmdbNorm = normalizeTitle(result.title ?: result.name)
@@ -232,10 +258,6 @@ open class AnimeDekhoProvider : MainAPI() {
                                 }
                             }
                     }
-
-                    // Note: The blind fuzzy fallback has been completely REMOVED.
-                    // If it doesn't match perfectly or doesn't have an IMDB ID, it will cleanly fail
-                    // and use the website's original poster.
                 }
             }
 
@@ -396,9 +418,15 @@ open class AnimeDekhoProvider : MainAPI() {
         )
         val plot = document.selectFirst("div.entry-content p")?.text()?.trim()
             ?: document.selectFirst("meta[name=twitter:description]")?.attr("content")
-        val year = (document.selectFirst("span.year")?.text()?.trim()
+        
+        // Fetch year from DOM, if not found fetch using AJAX
+        var year = (document.selectFirst("span.year")?.text()?.trim()
             ?: document.selectFirst("meta[property=og:updated_time]")
                 ?.attr("content")?.substringBefore("-"))?.toIntOrNull()
+
+        if (year == null) {
+            year = fetchYearViaAjax(media.url, document.html())
+        }
 
         val lst      = document.select("ul.seasons-lst li")
         val isSeries = lst.isNotEmpty()
