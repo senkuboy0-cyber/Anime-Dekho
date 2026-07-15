@@ -168,8 +168,13 @@ open class AnimeDekhoProvider : MainAPI() {
     private suspend fun fetchYearViaAjax(movieUrl: String, pageHtml: String): Int? {
         return try {
             val nonce = Regex("\"nonce\"\\s*:\\s*\"([^\"]+)\"").find(pageHtml)?.groupValues?.get(1) ?: return null
-            val searchTerm = movieUrl.trimEnd('/').substringAfterLast("/").replace("-", " ")
-            val type = if (movieUrl.contains("series")) "series" else "movie"
+            
+            val slug = movieUrl.trimEnd('/').substringAfterLast("/")
+            val searchTerm = slug.replace(Regex("-(hin|hindi|dubbed|dub|sub)$", RegexOption.IGNORE_CASE), "")
+                                 .replace("-", " ")
+                                 .trim()
+                                 
+            val type = if (movieUrl.contains("series")) "series" else "movies"
 
             val vars = """{"_wpsearch":"$nonce","search":"$searchTerm","type":"$type","genres":[],"years":[],"sort":1,"page":1}"""
 
@@ -185,7 +190,7 @@ open class AnimeDekhoProvider : MainAPI() {
             ).text
 
             val json = parseJson<AjaxResponse>(response)
-            val yearStr = Regex("<span class=\"year\">(\\d+)</span>").find(json.html)?.groupValues?.get(1)
+            val yearStr = Regex("<span class=\"year\">(\\d{4})</span>").find(json.html)?.groupValues?.get(1)
             yearStr?.toIntOrNull()
         } catch (e: Exception) {
             null
@@ -419,10 +424,8 @@ open class AnimeDekhoProvider : MainAPI() {
         val plot = document.selectFirst("div.entry-content p")?.text()?.trim()
             ?: document.selectFirst("meta[name=twitter:description]")?.attr("content")
         
-        // Fetch year from DOM, if not found fetch using AJAX
-        var year = (document.selectFirst("span.year")?.text()?.trim()
-            ?: document.selectFirst("meta[property=og:updated_time]")
-                ?.attr("content")?.substringBefore("-"))?.toIntOrNull()
+        // Only fetch year from valid span, ignore og:updated_time which gives wrong upload year
+        var year = document.selectFirst("span.year")?.text()?.trim()?.toIntOrNull()
 
         if (year == null) {
             year = fetchYearViaAjax(media.url, document.html())
