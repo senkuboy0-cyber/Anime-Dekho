@@ -143,6 +143,7 @@ open class AnimeDekhoProvider : MainAPI() {
         return title
             .replace(Regex("Watch Online ", RegexOption.IGNORE_CASE), "")
             .replace(Regex("\\s+Anime\\s*$", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\s*Movie\\s*\\(.*Dubbed.*\\).*$", RegexOption.IGNORE_CASE), "")
             .substringBefore(" Movie in Hindi")
             .substringBefore(" Series in Hindi")
             .substringBefore(" in Hindi")
@@ -160,6 +161,7 @@ open class AnimeDekhoProvider : MainAPI() {
                 !it.startsWith("|")
             }
     }
+
 
 
     /**
