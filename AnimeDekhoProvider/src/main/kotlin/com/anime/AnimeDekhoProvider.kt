@@ -1,6 +1,5 @@
 package com.anime
 
-import com.fasterxml.jackson.annotation.JsonProperty
 import com.google.gson.Gson
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
@@ -10,44 +9,44 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
-// TMDB Data Classes
+// TMDB Data Classes (Without annotations for max compatibility)
 data class TmdbImages(
-    @JsonProperty("logos") val logos: List<TmdbImage>? = null,
-    @JsonProperty("backdrops") val backdrops: List<TmdbImage>? = null
+    val logos: List<TmdbImage>? = null,
+    val backdrops: List<TmdbImage>? = null
 )
 data class TmdbImage(
-    @JsonProperty("file_path") val filePath: String? = null,
-    @JsonProperty("iso_639_1") val lang: String?     = null
+    val file_path: String? = null,
+    val iso_639_1: String? = null
 )
 data class TmdbFind(
-    @JsonProperty("movie_results") val movies: List<TmdbResult>? = null,
-    @JsonProperty("tv_results")    val tvShows: List<TmdbResult>? = null
+    val movie_results: List<TmdbResult>? = null,
+    val tv_results: List<TmdbResult>? = null
 )
 data class TmdbResult(
-    @JsonProperty("id") val id: Int? = null,
-    @JsonProperty("media_type") val mediaType: String? = null,
-    @JsonProperty("title") val title: String? = null,
-    @JsonProperty("name") val name: String? = null,
-    @JsonProperty("release_date") val releaseDate: String? = null,
-    @JsonProperty("first_air_date") val firstAirDate: String? = null
+    val id: Int? = null,
+    val media_type: String? = null,
+    val title: String? = null,
+    val name: String? = null,
+    val release_date: String? = null,
+    val first_air_date: String? = null
 )
 data class TmdbSearch(
-    @JsonProperty("results") val results: List<TmdbResult>? = null
+    val results: List<TmdbResult>? = null
 )
 data class TmdbSeason(
-    @JsonProperty("episodes") val episodes: List<TmdbEpisode>? = null
+    val episodes: List<TmdbEpisode>? = null
 )
 data class TmdbEpisode(
-    @JsonProperty("episode_number") val episodeNumber: Int? = null,
-    @JsonProperty("season_number") val seasonNumber: Int? = null,
-    @JsonProperty("name") val name: String? = null,
-    @JsonProperty("still_path") val stillPath: String? = null
+    val episode_number: Int? = null,
+    val season_number: Int? = null,
+    val name: String? = null,
+    val still_path: String? = null
 )
 data class TmdbDetails(
-    val id: Int?,
-    val type: String?,
-    val logoUrl: String?,
-    val backdropUrl: String?
+    val id: Int? = null,
+    val type: String? = null,
+    val logoUrl: String? = null,
+    val backdropUrl: String? = null
 )
 
 open class AnimeDekhoProvider : MainAPI() {
@@ -76,7 +75,7 @@ open class AnimeDekhoProvider : MainAPI() {
     private val normalizeRegex = Regex("[^a-zA-Z0-9]")
 
     private fun getResultYear(result: TmdbResult): Int? {
-        return (result.releaseDate ?: result.firstAirDate)
+        return (result.release_date ?: result.first_air_date)
             ?.substringBefore("-")
             ?.toIntOrNull()
     }
@@ -185,7 +184,7 @@ open class AnimeDekhoProvider : MainAPI() {
             val searchRes = app.get("$TMDB_API/search/multi?api_key=$TMDB_KEY&query=$safeTitle")
                 .parsedSafe<TmdbSearch>()
 
-            val validResults = searchRes?.results?.filter { it.mediaType == "movie" || it.mediaType == "tv" }
+            val validResults = searchRes?.results?.filter { it.media_type == "movie" || it.media_type == "tv" }
             val normTitle = normalizeTitle(title)
 
             val exactCandidates = validResults?.filter {
@@ -197,7 +196,7 @@ open class AnimeDekhoProvider : MainAPI() {
 
             if (exactMatch != null) {
                 tmdbId = exactMatch.id
-                actualMediaType = exactMatch.mediaType ?: actualMediaType
+                actualMediaType = exactMatch.media_type ?: actualMediaType
             } else {
                 val startsWithCandidates = if (normTitle.length >= 6) {
                     validResults?.filter { result ->
@@ -210,7 +209,7 @@ open class AnimeDekhoProvider : MainAPI() {
 
                 if (startsWithMatch != null) {
                     tmdbId = startsWithMatch.id
-                    actualMediaType = startsWithMatch.mediaType ?: actualMediaType
+                    actualMediaType = startsWithMatch.media_type ?: actualMediaType
                 } else {
                     val imdbId = document.select("a[href*='imdb.com/title']").attr("href")
                         .substringAfter("title/").substringBefore("/")
@@ -220,8 +219,8 @@ open class AnimeDekhoProvider : MainAPI() {
                         app.get("$TMDB_API/find/$imdbId?api_key=$TMDB_KEY&external_source=imdb_id")
                             .parsedSafe<TmdbFind>()
                             ?.let { findRes ->
-                                val tvId    = findRes.tvShows?.firstOrNull()?.id
-                                val movieId = findRes.movies?.firstOrNull()?.id
+                                val tvId    = findRes.tv_results?.firstOrNull()?.id
+                                val movieId = findRes.movie_results?.firstOrNull()?.id
 
                                 if (isSeries) {
                                     if (tvId != null)         { tmdbId = tvId;    actualMediaType = "tv"    }
@@ -241,17 +240,17 @@ open class AnimeDekhoProvider : MainAPI() {
                 "$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY"
             ).parsedSafe<TmdbImages>()
 
-            val logo = images?.logos?.firstOrNull { it.lang == "en" }
-                ?: images?.logos?.firstOrNull { it.lang == null }
-                ?: images?.logos?.firstOrNull { it.lang == "ja" }
+            val logo = images?.logos?.firstOrNull { it.iso_639_1 == "en" }
+                ?: images?.logos?.firstOrNull { it.iso_639_1 == null }
+                ?: images?.logos?.firstOrNull { it.iso_639_1 == "ja" }
                 ?: images?.logos?.firstOrNull()
 
-            val backdrop = images?.backdrops?.firstOrNull { it.lang == null }
-                ?: images?.backdrops?.firstOrNull { it.lang == "en" }
+            val backdrop = images?.backdrops?.firstOrNull { it.iso_639_1 == null }
+                ?: images?.backdrops?.firstOrNull { it.iso_639_1 == "en" }
                 ?: images?.backdrops?.firstOrNull()
 
-            val logoUrl     = logo?.filePath?.let { "$TMDB_IMG$it" }
-            val backdropUrl = backdrop?.filePath?.let { "$TMDB_IMG$it" }
+            val logoUrl     = logo?.file_path?.let { "$TMDB_IMG$it" }
+            val backdropUrl = backdrop?.file_path?.let { "$TMDB_IMG$it" }
 
             TmdbDetails(tmdbId, actualMediaType, logoUrl, backdropUrl)
 
@@ -340,10 +339,7 @@ open class AnimeDekhoProvider : MainAPI() {
         val title = when {
             !imgAlt.isNullOrEmpty() && !imgAlt.contains("anime", ignoreCase = true) && imgAlt.length > 2 -> imgAlt
             !h2Text.isNullOrEmpty() && !h2Text.contains("AnimeDekho", ignoreCase = true) && h2Text.length > 2 -> h2Text
-            else -> {
-                val t = href.trimEnd('/').substringAfterLast("/").replace("-", " ")
-                if (t.isNotEmpty()) t.substring(0, 1).uppercase() + t.substring(1) else t
-            }
+            else -> href.trimEnd('/').substringAfterLast("/").replace("-", " ").replaceFirstChar { it.uppercase() }
         }
         
         return newAnimeSearchResponse(title, Gson().toJson(Media(href, posterUrl)), TvType.Anime, false) {
@@ -356,21 +352,12 @@ open class AnimeDekhoProvider : MainAPI() {
         return document.select("ul[data-results] li article").mapNotNull { it.toSearchResult() }
     }
 
-    // Safe parser for older bookmarks
-    private fun parseMediaSafe(data: String): Media {
-        return try {
-            if (data.trim().startsWith("{")) {
-                Gson().fromJson(data, Media::class.java)
-            } else {
-                Media(data)
-            }
-        } catch (e: Exception) {
-            Media(data)
-        }
-    }
-
     override suspend fun load(url: String): LoadResponse {
-        val media = parseMediaSafe(url)
+        val media = try {
+            Gson().fromJson(url, Media::class.java)
+        } catch (e: Exception) {
+            Media(url)
+        }
 
         val document = try {
             app.get(
@@ -399,7 +386,7 @@ open class AnimeDekhoProvider : MainAPI() {
         ).mapNotNull { extractRawTitle(it) }.firstOrNull()
             ?: media.url.trimEnd('/').substringAfterLast("/")
                 .replace("-", " ")
-                .let { if (it.isNotEmpty()) it.substring(0, 1).uppercase() + it.substring(1) else it }
+                .replaceFirstChar { it.uppercase() }
 
         val cleanTitle = cleanTitleText(rawTitle)
 
@@ -432,24 +419,24 @@ open class AnimeDekhoProvider : MainAPI() {
             }
         } else {
             val seasonsOnSite = lst.mapNotNull {
-                val spanText = it.selectFirst("h3.title > span")?.text() ?: ""
-                val sMatch = Regex("S(\\d+)").find(spanText)
-                sMatch?.groupValues?.get(1)?.toIntOrNull()
+                it.selectFirst("h3.title > span")?.text()?.substringAfter("S")?.substringBefore("-")?.trim()?.toIntOrNull()
             }.distinct()
 
-            val tmdbEpisodes = mutableListOf<TmdbEpisode>()
+            val tmdbEpisodes = ArrayList<TmdbEpisode>()
             if (tmdbDetails.id != null && tmdbDetails.type == "tv") {
-                seasonsOnSite.forEach { s ->
+                for (s in seasonsOnSite) {
                     try {
                         val seasonRes = app.get("$TMDB_API/tv/${tmdbDetails.id}/season/$s?api_key=$TMDB_KEY").parsedSafe<TmdbSeason>()
-                        seasonRes?.episodes?.let { tmdbEpisodes.addAll(it) }
+                        if (seasonRes?.episodes != null) {
+                            tmdbEpisodes.addAll(seasonRes.episodes)
+                        }
                     } catch (e: Exception) {
                         Log.e("AnimeDekho", "Failed to fetch TMDB season $s: ${e.message}")
                     }
                 }
             }
 
-            val seasonCounters = mutableMapOf<Int, Int>()
+            val seasonCounters = HashMap<Int, Int>()
 
             val episodes = lst.mapNotNull { epElement ->
                 val href = epElement.selectFirst("a")?.attr("href") ?: return@mapNotNull null
@@ -461,21 +448,24 @@ open class AnimeDekhoProvider : MainAPI() {
                 }
                 
                 val spanText = epElement.selectFirst("h3.title > span")?.text() ?: ""
-                val sMatch = Regex("S(\\d+)").find(spanText)
-                val season = sMatch?.groupValues?.get(1)?.toIntOrNull() ?: 1
+                val season = spanText.substringAfter("S", "1").substringBefore("-").trim().toIntOrNull() ?: 1
                 
                 val currentCount = seasonCounters[season] ?: 0
                 val relativeEpNum = currentCount + 1
                 seasonCounters[season] = relativeEpNum
                 
-                val tmdbEp = tmdbEpisodes.find { ep -> 
-                    ep.seasonNumber == season && ep.episodeNumber == relativeEpNum 
+                var finalName = rawName
+                var finalPoster = epPoster
+                var finalEpNum = relativeEpNum
+
+                if (tmdbEpisodes.isNotEmpty()) {
+                    val tmdbEp = tmdbEpisodes.find { it.season_number == season && it.episode_number == relativeEpNum }
+                    if (tmdbEp != null) {
+                        if (!tmdbEp.name.isNullOrBlank()) finalName = tmdbEp.name
+                        if (!tmdbEp.still_path.isNullOrBlank()) finalPoster = "$TMDB_IMG${tmdbEp.still_path}"
+                        if (tmdbEp.episode_number != null) finalEpNum = tmdbEp.episode_number
+                    }
                 }
-                
-                val tmdbName = tmdbEp?.name
-                val finalName = if (tmdbName != null && tmdbName.isNotBlank()) tmdbName else rawName
-                val finalPoster = tmdbEp?.stillPath?.let { path -> "$TMDB_IMG$path" } ?: epPoster
-                val finalEpNum = tmdbEp?.episodeNumber ?: relativeEpNum
 
                 newEpisode(Gson().toJson(Media(href, mediaType = 2))) {
                     this.name      = finalName
@@ -511,13 +501,18 @@ open class AnimeDekhoProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
-        val media = parseMediaSafe(data)
+        val media = runCatching { Gson().fromJson(data, Media::class.java) }.getOrElse {
+            Log.e("Error:", "Failed to parse media JSON $it")
+            return false
+        }
 
         val headers = mapOf("Cookie" to "toronites_server=vidstream")
         val doc = app.get(media.url, headers = headers).document
-        doc.select("iframe.serversel[src]").forEach { iframe ->
+        
+        val iframes = doc.select("iframe.serversel[src]")
+        for (iframe in iframes) {
             val serverUrl = iframe.attr("src")
-            if (serverUrl.isBlank()) return@forEach
+            if (serverUrl.isBlank()) continue
             val innerIframeUrl = runCatching {
                 app.get(serverUrl).document.selectFirst("iframe[src]")?.attr("src")
             }.getOrNull()
@@ -530,9 +525,9 @@ open class AnimeDekhoProvider : MainAPI() {
             app.get(media.url).document.selectFirst("body")?.attr("class")
         }.getOrNull()
 
-        val match = Regex("(?:term|postid)-(\\d+)").find(bodyClass ?: "")
-        val term = if (match != null && match.groupValues.size > 1) match.groupValues[1] else null
-
+        val termMatch = Regex("(?:term|postid)-(\\d+)").find(bodyClass ?: "")
+        val term = if (termMatch != null && termMatch.groupValues.size > 1) termMatch.groupValues[1] else null
+        
         if (term.isNullOrEmpty()) {
             Log.e("Error:", "No postid/term ID found in body class: $bodyClass")
             return false
