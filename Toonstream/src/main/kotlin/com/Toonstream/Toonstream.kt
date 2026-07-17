@@ -26,10 +26,12 @@ import com.lagradost.cloudstream3.utils.JsUnpacker
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.app
+import com.lagradost.api.Log
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.Document
 import java.net.URLEncoder
 
+// --- TMDB Data Classes ---
 data class TmdbImages(
     @JsonProperty("logos") val logos: List<TmdbImage>? = null,
     @JsonProperty("backdrops") val backdrops: List<TmdbImage>? = null
@@ -53,6 +55,29 @@ data class TmdbResult(
 data class TmdbSearch(
     @JsonProperty("results") val results: List<TmdbResult>? = null
 )
+data class TmdbSeason(
+    @JsonProperty("episodes") val episodes: List<TmdbEpisode>? = null
+)
+data class TmdbEpisode(
+    @JsonProperty("episode_number") val episodeNumber: Int? = null,
+    @JsonProperty("name") val name: String? = null,
+    @JsonProperty("still_path") val stillPath: String? = null
+)
+data class TmdbDetails(
+    val id: Int?,
+    val type: String?,
+    val logo: String?,
+    val backdrop: String?
+)
+data class SiteEpisode(
+    val href: String,
+    val rawName: String,
+    val poster: String?,
+    val season: Int?,
+    var calculatedEpNum: Int = 1,
+    var finalName: String = rawName,
+    var finalPoster: String? = poster
+)
 
 data class ServerInfo(val truelink: String, val referer: String, val priority: Int)
 
@@ -64,6 +89,7 @@ class Toonstream : MainAPI() {
     override val hasDownloadSupport   = true
     override val supportedTypes       = setOf(TvType.Movie, TvType.Anime, TvType.Cartoon)
 
+    // --- TMDB API Configuration ---
     private val TMDB_API = "https://api.themoviedb.org/3"
     private val TMDB_KEY = "1865f43a0549ca50d341dd9ab8b29f49"
     private val TMDB_IMG = "https://image.tmdb.org/t/p/original"
@@ -110,7 +136,7 @@ class Toonstream : MainAPI() {
             ?: candidates.first()
     }
 
-    private suspend fun fetchTmdbAssets(document: Document, title: String, isSeries: Boolean, year: Int?): List<String?> {
+    private suspend fun fetchTmdbDetails(document: Document, title: String, isSeries: Boolean, year: Int?): TmdbDetails {
         return try {
             var tmdbId: Int? = null
             var actualMediaType = if (isSeries) "tv" else "movie"
@@ -169,7 +195,7 @@ class Toonstream : MainAPI() {
                 }
             }
 
-            if (tmdbId == null) return listOf(null, null)
+            if (tmdbId == null) return TmdbDetails(null, null, null, null)
 
             val images = app.get(
                 "$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY"
@@ -187,10 +213,10 @@ class Toonstream : MainAPI() {
             val logoUrl     = logo?.filePath?.let { "$TMDB_IMG$it" }
             val backdropUrl = backdrop?.filePath?.let { "$TMDB_IMG$it" }
 
-            listOf(logoUrl, backdropUrl)
+            TmdbDetails(tmdbId, actualMediaType, logoUrl, backdropUrl)
 
         } catch (e: Exception) {
-            listOf(null, null)
+            TmdbDetails(null, null, null, null)
         }
     }
 
@@ -318,21 +344,27 @@ class Toonstream : MainAPI() {
 
         val year = document.selectFirst("span.year")?.text()?.trim()?.toIntOrNull()
 
-        val tmdbAssets  = fetchTmdbAssets(document, cleanTitle, isSeries, year)
-        val logoUrl     = tmdbAssets[0]
-        val backdropUrl = tmdbAssets[1]
-
-        val displayTitle = rawTitle
+        val tmdbDetails = fetchTmdbDetails(document, cleanTitle, isSeries, year)
 
         return if (isSeries) {
-            loadSeries(url, document, displayTitle, poster, description, logoUrl, backdropUrl, year)
+            loadSeries(
+                url = url,
+                document = document,
+                title = rawTitle,
+                poster = poster,
+                description = description,
+                tmdbId = tmdbDetails.id,
+                logoUrl = tmdbDetails.logo,
+                backdropUrl = tmdbDetails.backdrop,
+                year = year
+            )
         } else {
-            newMovieLoadResponse(displayTitle, url, TvType.Movie, url) {
+            newMovieLoadResponse(rawTitle, url, TvType.Movie, url) {
                 this.posterUrl           = poster
-                this.backgroundPosterUrl = backdropUrl ?: poster
+                this.backgroundPosterUrl = tmdbDetails.backdrop ?: poster
                 this.plot                = description
                 this.year                = year
-                this.logoUrl             = logoUrl
+                this.logoUrl             = tmdbDetails.logo
             }
         }
     }
@@ -343,11 +375,12 @@ class Toonstream : MainAPI() {
         title: String,
         poster: String,
         description: String?,
+        tmdbId: Int?,
         logoUrl: String?,
         backdropUrl: String?,
         year: Int?
     ): LoadResponse {
-        val episodes = mutableListOf<Episode>()
+        val rawEpisodes = mutableListOf<SiteEpisode>()
 
         val seasonNumbers = document.select("a.season-btn").mapNotNull { el ->
             el.attr("data-season").toIntOrNull()
@@ -380,15 +413,11 @@ class Toonstream : MainAPI() {
                     ?.let { if (it.startsWith("http")) it else "https:$it" }
                 val epName = ep.selectFirst("h5.entry-title1, h2.entry-title, h3.entry-title")
                     ?.text()?.trim() ?: "Episode"
-                episodes.add(newEpisode(fixUrl(epHref)) {
-                    this.name      = epName
-                    this.posterUrl = epPoster
-                    this.season    = season
-                })
+                rawEpisodes.add(SiteEpisode(epHref, epName, epPoster, season))
             }
         }
 
-        if (episodes.isEmpty()) {
+        if (rawEpisodes.isEmpty()) {
             document.select("#episode_by_temp article.post").forEach { ep ->
                 val epHref = ep.selectFirst("a.lnk-blk, a")?.attr("href") ?: return@forEach
                 val epPoster = ep.selectFirst("img")?.attr("src")
@@ -396,11 +425,67 @@ class Toonstream : MainAPI() {
                 val epName   = ep.selectFirst("h5.entry-title1")?.text()?.trim() ?: "Episode"
                 val numEpi   = ep.selectFirst("span.num-epi")?.text()?.trim()
                 val epSeason = numEpi?.substringBefore("x")?.toIntOrNull() ?: 1
-                episodes.add(newEpisode(fixUrl(epHref)) {
-                    this.name      = epName
-                    this.posterUrl = epPoster
-                    this.season    = epSeason
-                })
+                rawEpisodes.add(SiteEpisode(epHref, epName, epPoster, epSeason))
+            }
+        }
+
+        val seasonCounters = mutableMapOf<Int?, Int>()
+        rawEpisodes.forEach { ep ->
+            val count = seasonCounters.getOrDefault(ep.season, 0) + 1
+            seasonCounters[ep.season] = count
+            ep.calculatedEpNum = count
+        }
+
+        if (tmdbId != null) {
+            val seasonsGrouped = rawEpisodes.groupBy { it.season }
+            
+            seasonsGrouped.forEach { (seasonNum, eps) ->
+                // Skip specials or invalid seasons
+                if (seasonNum == null || seasonNum == 0) {
+                    return@forEach
+                }
+                
+                try {
+                    val tmdbSeason = app.get("$TMDB_API/tv/$tmdbId/season/$seasonNum?api_key=$TMDB_KEY")
+                        .parsedSafe<TmdbSeason>()
+                        
+                    if (tmdbSeason?.episodes != null) {
+                        val tmdbEpCount = tmdbSeason.episodes.size
+                        val siteEpCount = eps.size
+                        
+                        // Strict Episode Count Matching
+                        // If the site has merged episodes (e.g. 13 site episodes but 25 TMDB episodes),
+                        // the counts will mismatch, and it will safely skip fetching wrong thumbnails.
+                        if (tmdbEpCount == siteEpCount) {
+                            val tmdbEpMap = tmdbSeason.episodes.associateBy { it.episodeNumber }
+                            
+                            eps.forEach { ep ->
+                                val tmdbData = tmdbEpMap[ep.calculatedEpNum]
+                                if (tmdbData != null) {
+                                    if (!tmdbData.name.isNullOrBlank()) {
+                                        ep.finalName = tmdbData.name
+                                    }
+                                    if (!tmdbData.stillPath.isNullOrBlank()) {
+                                        ep.finalPoster = "$TMDB_IMG${tmdbData.stillPath}"
+                                    }
+                                }
+                            }
+                        } else {
+                            Log.d("Toonstream", "Episode count mismatch for season $seasonNum. Site: $siteEpCount, TMDB: $tmdbEpCount. Skipping TMDB fetch.")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("Toonstream", "TMDB season fetch failed: ${e.message}")
+                }
+            }
+        }
+
+        val episodes = rawEpisodes.map { ep ->
+            newEpisode(fixUrl(ep.href)) {
+                this.name      = ep.finalName
+                this.posterUrl = ep.finalPoster
+                this.season    = ep.season
+                this.episode   = ep.calculatedEpNum
             }
         }
 
