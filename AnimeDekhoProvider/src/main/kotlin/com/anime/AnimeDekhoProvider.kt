@@ -460,9 +460,9 @@ open class AnimeDekhoProvider : MainAPI() {
                 val epPoster = it.selectFirst("div > div > figure > img")?.attr("src")
                 val seasonStr = it.selectFirst("h3.title > span")?.text()?.substringAfter("S")?.substringBefore("-")
                 
-                // Convert null to 0 for specials mapping
                 val parsedSeason = seasonStr?.toIntOrNull()
-                val season = parsedSeason ?: 0
+                // Convert null to 99 for specials mapping
+                val season = parsedSeason ?: 99 
                 
                 SiteEpisode(href, name, epPoster, season)
             }
@@ -480,12 +480,11 @@ open class AnimeDekhoProvider : MainAPI() {
                 val seasonsGrouped = rawEpisodes.groupBy { it.season }
                 
                 seasonsGrouped.forEach { (seasonNum, eps) ->
-                    // Skip TMDB fetch if season is 'No Season' (null) or 0 (Specials)
-                    if (seasonNum == null || seasonNum == 0) {
+                    // Skip TMDB fetch if season is 99 (Specials) or invalid
+                    if (seasonNum == null || seasonNum == 0 || seasonNum == 99) {
                         return@forEach
                     }
                     
-                    // Skip TMDB fetch if any episode in this season is merged (contains "/")
                     val hasMergedEpisodes = eps.any { it.rawName.contains("/") }
                     
                     if (!hasMergedEpisodes) {
@@ -542,9 +541,9 @@ open class AnimeDekhoProvider : MainAPI() {
                 this.logoUrl             = tmdbDetails.logo
                 this.recommendations     = recommendations
                 
-                // Fix for the List<SeasonData> Error
-                this.seasonNames         = listOf(
-                    SeasonData(0, "Special Episode")
+                // Set custom name for season 99
+                this.seasonNames = listOf(
+                    SeasonData(99, "Special Episode")
                 )
             }
         }
