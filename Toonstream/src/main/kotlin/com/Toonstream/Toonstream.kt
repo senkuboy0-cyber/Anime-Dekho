@@ -31,7 +31,6 @@ import org.jsoup.nodes.Element
 import org.jsoup.nodes.Document
 import java.net.URLEncoder
 
-// --- TMDB Data Classes ---
 data class TmdbImages(
     @JsonProperty("logos") val logos: List<TmdbImage>? = null,
     @JsonProperty("backdrops") val backdrops: List<TmdbImage>? = null
@@ -89,7 +88,6 @@ class Toonstream : MainAPI() {
     override val hasDownloadSupport   = true
     override val supportedTypes       = setOf(TvType.Movie, TvType.Anime, TvType.Cartoon)
 
-    // --- TMDB API Configuration ---
     private val TMDB_API = "https://api.themoviedb.org/3"
     private val TMDB_KEY = "1865f43a0549ca50d341dd9ab8b29f49"
     private val TMDB_IMG = "https://image.tmdb.org/t/p/original"
@@ -450,28 +448,18 @@ class Toonstream : MainAPI() {
                         .parsedSafe<TmdbSeason>()
                         
                     if (tmdbSeason?.episodes != null) {
-                        val tmdbEpCount = tmdbSeason.episodes.size
-                        val siteEpCount = eps.size
+                        val tmdbEpMap = tmdbSeason.episodes.associateBy { it.episodeNumber }
                         
-                        // Strict Episode Count Matching
-                        // If the site has merged episodes (e.g. 13 site episodes but 25 TMDB episodes),
-                        // the counts will mismatch, and it will safely skip fetching wrong thumbnails.
-                        if (tmdbEpCount == siteEpCount) {
-                            val tmdbEpMap = tmdbSeason.episodes.associateBy { it.episodeNumber }
-                            
-                            eps.forEach { ep ->
-                                val tmdbData = tmdbEpMap[ep.calculatedEpNum]
-                                if (tmdbData != null) {
-                                    if (!tmdbData.name.isNullOrBlank()) {
-                                        ep.finalName = tmdbData.name
-                                    }
-                                    if (!tmdbData.stillPath.isNullOrBlank()) {
-                                        ep.finalPoster = "$TMDB_IMG${tmdbData.stillPath}"
-                                    }
+                        eps.forEach { ep ->
+                            val tmdbData = tmdbEpMap[ep.calculatedEpNum]
+                            if (tmdbData != null) {
+                                if (!tmdbData.name.isNullOrBlank()) {
+                                    ep.finalName = tmdbData.name
+                                }
+                                if (!tmdbData.stillPath.isNullOrBlank()) {
+                                    ep.finalPoster = "$TMDB_IMG${tmdbData.stillPath}"
                                 }
                             }
-                        } else {
-                            Log.d("Toonstream", "Episode count mismatch for season $seasonNum. Site: $siteEpCount, TMDB: $tmdbEpCount. Skipping TMDB fetch.")
                         }
                     }
                 } catch (e: Exception) {
