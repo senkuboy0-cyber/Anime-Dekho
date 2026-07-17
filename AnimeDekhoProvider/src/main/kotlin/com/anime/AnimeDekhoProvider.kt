@@ -459,26 +459,30 @@ open class AnimeDekhoProvider : MainAPI() {
                 val href = it.selectFirst("a")?.attr("href") ?: return@mapNotNull null
                 val epPoster = it.selectFirst("div > div > figure > img")?.attr("src")
                 val seasonStr = it.selectFirst("h3.title > span")?.text()?.substringAfter("S")?.substringBefore("-")
-                val season = seasonStr?.toIntOrNull()
+                val season = seasonStr?.toIntOrNull() // Returns null if 'No Season' or invalid format
                 
                 SiteEpisode(href, name, epPoster, season)
             }
 
             // ─── Phase 2: Fix Episode Numbering (1-based per season) ───
-            val seasonCounters = mutableMapOf<Int, Int>()
+            val seasonCounters = mutableMapOf<Int?, Int>()
             rawEpisodes.forEach { ep ->
-                val s = ep.season ?: 1
-                val count = seasonCounters.getOrDefault(s, 0) + 1
-                seasonCounters[s] = count
+                val count = seasonCounters.getOrDefault(ep.season, 0) + 1
+                seasonCounters[ep.season] = count
                 ep.calculatedEpNum = count
             }
 
             // ─── Phase 3: Smart TMDB Episode Fetching ───
             if (tmdbDetails.id != null && tmdbDetails.type == "tv") {
-                val seasonsGrouped = rawEpisodes.groupBy { it.season ?: 1 }
+                val seasonsGrouped = rawEpisodes.groupBy { it.season }
                 
                 seasonsGrouped.forEach { (seasonNum, eps) ->
-                    // Check if any episode in this season is merged (contains "/")
+                    // Skip TMDB fetch if season is 'No Season' (null) or 0 (Specials)
+                    if (seasonNum == null || seasonNum == 0) {
+                        return@forEach
+                    }
+                    
+                    // Skip TMDB fetch if any episode in this season is merged (contains "/")
                     val hasMergedEpisodes = eps.any { it.rawName.contains("/") }
                     
                     if (!hasMergedEpisodes) {
