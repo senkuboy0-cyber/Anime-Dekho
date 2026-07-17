@@ -10,7 +10,7 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
-// ─── TMDB Data Classes ───
+// â”€â”€â”€ TMDB Data Classes â”€â”€â”€
 data class TmdbImages(
     @JsonProperty("logos") val logos: List<TmdbImage>? = null,
     @JsonProperty("backdrops") val backdrops: List<TmdbImage>? = null
@@ -58,7 +58,7 @@ data class SiteEpisode(
     var finalName: String = rawName,
     var finalPoster: String? = poster
 )
-// ─────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 open class AnimeDekhoProvider : MainAPI() {
     override var mainUrl             = "https://animedekho.app"
@@ -74,13 +74,13 @@ open class AnimeDekhoProvider : MainAPI() {
         TvType.Movie,
     )
 
-    // ─── TMDB API Features ───────────────────────────────────────
+    // â”€â”€â”€ TMDB API Features â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     private val TMDB_API = "https://api.themoviedb.org/3"
     private val TMDB_KEY = "1865f43a0549ca50d341dd9ab8b29f49"
     private val TMDB_IMG = "https://image.tmdb.org/t/p/original"
 
-    // ─── Safe Regex Declarations ───
-    private val epRegex1 = Regex("(?i)\\s+\\d+[x×]\\d+.*")
+    // â”€â”€â”€ Safe Regex Declarations â”€â”€â”€
+    private val epRegex1 = Regex("(?i)\\s+\\d+[xÃ—]\\d+.*")
     private val epRegex2 = Regex("(?i)\\s+Episode\\s+\\d+.*")
     private val seasonRegex = Regex("(?i)\\s+Season\\s+\\d+.*")
     private val fanDubRegex1 = Regex("(?i)\\s*fan\\s*dub.*")
@@ -306,7 +306,7 @@ open class AnimeDekhoProvider : MainAPI() {
             TmdbDetails(null, null, null, null)
         }
     }
-    // ─────────────────────────────────────────────────────────────
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     private fun mainPageJson(taxonomy: String, search: String, term: String, type: String): String {
         return "{\"taxonomy\":\"$taxonomy\",\"search\":\"$search\",\"term\":\"$term\",\"type\":\"$type\"}"
@@ -441,7 +441,7 @@ open class AnimeDekhoProvider : MainAPI() {
         val lst = document.select("ul.seasons-lst li")
         val isSeries = lst.isNotEmpty()
 
-        // ── Fetch TMDB Details ──
+        // â”€â”€ Fetch TMDB Details â”€â”€
         val tmdbDetails = fetchTmdbDetails(document, cleanTitle, isSeries, year)
 
         return if (!isSeries) {
@@ -453,21 +453,18 @@ open class AnimeDekhoProvider : MainAPI() {
                 this.logoUrl             = tmdbDetails.logo
             }
         } else {
-            // ─── Phase 1: Parse Raw Site Episodes ───
+            // â”€â”€â”€ Phase 1: Parse Raw Site Episodes â”€â”€â”€
             val rawEpisodes = lst.mapNotNull {
                 val name = it.selectFirst("h3.title")?.ownText() ?: "null"
                 val href = it.selectFirst("a")?.attr("href") ?: return@mapNotNull null
                 val epPoster = it.selectFirst("div > div > figure > img")?.attr("src")
                 val seasonStr = it.selectFirst("h3.title > span")?.text()?.substringAfter("S")?.substringBefore("-")
-                
-                val parsedSeason = seasonStr?.toIntOrNull()
-                // Convert null to 99 for specials mapping
-                val season = parsedSeason ?: 99 
+                val season = seasonStr?.toIntOrNull() // Returns null if 'No Season' or invalid format
                 
                 SiteEpisode(href, name, epPoster, season)
             }
 
-            // ─── Phase 2: Fix Episode Numbering (1-based per season) ───
+            // â”€â”€â”€ Phase 2: Fix Episode Numbering (1-based per season) â”€â”€â”€
             val seasonCounters = mutableMapOf<Int?, Int>()
             rawEpisodes.forEach { ep ->
                 val count = seasonCounters.getOrDefault(ep.season, 0) + 1
@@ -475,16 +472,17 @@ open class AnimeDekhoProvider : MainAPI() {
                 ep.calculatedEpNum = count
             }
 
-            // ─── Phase 3: Smart TMDB Episode Fetching ───
+            // â”€â”€â”€ Phase 3: Smart TMDB Episode Fetching â”€â”€â”€
             if (tmdbDetails.id != null && tmdbDetails.type == "tv") {
                 val seasonsGrouped = rawEpisodes.groupBy { it.season }
                 
                 seasonsGrouped.forEach { (seasonNum, eps) ->
-                    // Skip TMDB fetch if season is 99 (Specials) or invalid
-                    if (seasonNum == null || seasonNum == 0 || seasonNum == 99) {
+                    // Skip TMDB fetch if season is 'No Season' (null) or 0 (Specials)
+                    if (seasonNum == null || seasonNum == 0) {
                         return@forEach
                     }
                     
+                    // Skip TMDB fetch if any episode in this season is merged (contains "/")
                     val hasMergedEpisodes = eps.any { it.rawName.contains("/") }
                     
                     if (!hasMergedEpisodes) {
@@ -514,7 +512,7 @@ open class AnimeDekhoProvider : MainAPI() {
                 }
             }
 
-            // ─── Phase 4: Build Cloudstream Episodes ───
+            // â”€â”€â”€ Phase 4: Build Cloudstream Episodes â”€â”€â”€
             val episodes = rawEpisodes.map { ep ->
                 newEpisode(Gson().toJson(Media(ep.href, mediaType = 2))) {
                     this.name      = ep.finalName
@@ -540,11 +538,6 @@ open class AnimeDekhoProvider : MainAPI() {
                 this.year                = year
                 this.logoUrl             = tmdbDetails.logo
                 this.recommendations     = recommendations
-                
-                // Set custom name for season 99
-                this.seasonNames = listOf(
-                    SeasonData(99, "Special Episode")
-                )
             }
         }
     }
