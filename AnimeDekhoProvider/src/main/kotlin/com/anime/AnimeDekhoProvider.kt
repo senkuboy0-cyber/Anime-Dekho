@@ -459,7 +459,10 @@ open class AnimeDekhoProvider : MainAPI() {
                 val href = it.selectFirst("a")?.attr("href") ?: return@mapNotNull null
                 val epPoster = it.selectFirst("div > div > figure > img")?.attr("src")
                 val seasonStr = it.selectFirst("h3.title > span")?.text()?.substringAfter("S")?.substringBefore("-")
-                val season = seasonStr?.toIntOrNull() // Returns null if 'No Season' or invalid format
+                
+                // Convert null to 0 for specials mapping
+                val parsedSeason = seasonStr?.toIntOrNull()
+                val season = parsedSeason ?: 0
                 
                 SiteEpisode(href, name, epPoster, season)
             }
@@ -538,6 +541,11 @@ open class AnimeDekhoProvider : MainAPI() {
                 this.year                = year
                 this.logoUrl             = tmdbDetails.logo
                 this.recommendations     = recommendations
+                
+                // Add this block to override season 0 name
+                this.seasonNames         = mapOf(
+                    0 to "Special Episode"
+                )
             }
         }
     }
