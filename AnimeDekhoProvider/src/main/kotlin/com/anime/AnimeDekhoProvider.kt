@@ -542,9 +542,9 @@ open class AnimeDekhoProvider : MainAPI() {
                 this.logoUrl             = tmdbDetails.logo
                 this.recommendations     = recommendations
                 
-                // Add this block to override season 0 name
-                this.seasonNames         = mapOf(
-                    0 to "Special Episode"
+                // Fix for the List<SeasonData> Error
+                this.seasonNames         = listOf(
+                    SeasonData(0, "Special Episode")
                 )
             }
         }
