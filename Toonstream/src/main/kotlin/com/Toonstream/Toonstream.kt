@@ -429,7 +429,7 @@ class Toonstream : MainAPI() {
 
         val seasonCounters = mutableMapOf<Int?, Int>()
         rawEpisodes.forEach { ep ->
-            val count = seasonCounters.getOrDefault(ep.season, 0) + 1
+            val count = (seasonCounters[ep.season] ?: 0) + 1
             seasonCounters[ep.season] = count
             ep.calculatedEpNum = count
         }
@@ -438,7 +438,6 @@ class Toonstream : MainAPI() {
             val seasonsGrouped = rawEpisodes.groupBy { it.season }
             
             seasonsGrouped.forEach { (seasonNum, eps) ->
-                // Skip specials or invalid seasons
                 if (seasonNum == null || seasonNum == 0) {
                     return@forEach
                 }
@@ -453,11 +452,13 @@ class Toonstream : MainAPI() {
                         eps.forEach { ep ->
                             val tmdbData = tmdbEpMap[ep.calculatedEpNum]
                             if (tmdbData != null) {
-                                if (!tmdbData.name.isNullOrBlank()) {
-                                    ep.finalName = tmdbData.name
+                                val tName = tmdbData.name
+                                if (!tName.isNullOrBlank()) {
+                                    ep.finalName = tName
                                 }
-                                if (!tmdbData.stillPath.isNullOrBlank()) {
-                                    ep.finalPoster = "$TMDB_IMG${tmdbData.stillPath}"
+                                val tPath = tmdbData.stillPath
+                                if (!tPath.isNullOrBlank()) {
+                                    ep.finalPoster = "$TMDB_IMG$tPath"
                                 }
                             }
                         }
