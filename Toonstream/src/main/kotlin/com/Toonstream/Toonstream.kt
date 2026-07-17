@@ -429,7 +429,7 @@ class Toonstream : MainAPI() {
 
         val seasonCounters = mutableMapOf<Int?, Int>()
         rawEpisodes.forEach { ep ->
-            val count = (seasonCounters[ep.season] ?: 0) + 1
+            val count = seasonCounters.getOrDefault(ep.season, 0) + 1
             seasonCounters[ep.season] = count
             ep.calculatedEpNum = count
         }
@@ -452,13 +452,11 @@ class Toonstream : MainAPI() {
                         eps.forEach { ep ->
                             val tmdbData = tmdbEpMap[ep.calculatedEpNum]
                             if (tmdbData != null) {
-                                val tName = tmdbData.name
-                                if (!tName.isNullOrBlank()) {
-                                    ep.finalName = tName
+                                if (!tmdbData.name.isNullOrBlank()) {
+                                    ep.finalName = tmdbData.name
                                 }
-                                val tPath = tmdbData.stillPath
-                                if (!tPath.isNullOrBlank()) {
-                                    ep.finalPoster = "$TMDB_IMG$tPath"
+                                if (!tmdbData.stillPath.isNullOrBlank()) {
+                                    ep.finalPoster = "$TMDB_IMG${tmdbData.stillPath}"
                                 }
                             }
                         }
