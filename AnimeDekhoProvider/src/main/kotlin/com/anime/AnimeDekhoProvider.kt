@@ -231,7 +231,7 @@ open class AnimeDekhoProvider : MainAPI() {
 
             val safeTitle = encodeUri(title)
 
-            val searchRes = app.get("$TMDB_API/search/multi?api_key=$TMDB_KEY&query=$safeTitle", timeout = 60)
+            val searchRes = app.get("$TMDB_API/search/multi?api_key=$TMDB_KEY&query=$safeTitle")
                 .parsedSafe<TmdbSearch>()
 
             val validResults = searchRes?.results?.filter { it.mediaType == "movie" || it.mediaType == "tv" }
@@ -266,7 +266,7 @@ open class AnimeDekhoProvider : MainAPI() {
                         .takeIf { it.startsWith("tt") }
 
                     if (imdbId != null) {
-                        app.get("$TMDB_API/find/$imdbId?api_key=$TMDB_KEY&external_source=imdb_id", timeout = 60)
+                        app.get("$TMDB_API/find/$imdbId?api_key=$TMDB_KEY&external_source=imdb_id")
                             .parsedSafe<TmdbFind>()
                             ?.let { findRes ->
                                 val tvId    = findRes.tvShows?.firstOrNull()?.id
@@ -287,8 +287,7 @@ open class AnimeDekhoProvider : MainAPI() {
             if (tmdbId == null) return TmdbDetails(null, null, null, null)
 
             val images = app.get(
-                "$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY",
-                timeout = 60
+                "$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY"
             ).parsedSafe<TmdbImages>()
 
             val logo = images?.logos?.firstOrNull { it.lang == "en" }
@@ -490,7 +489,7 @@ open class AnimeDekhoProvider : MainAPI() {
                     
                     if (!hasMergedEpisodes) {
                         try {
-                            val tmdbSeason = app.get("$TMDB_API/tv/${tmdbDetails.id}/season/$seasonNum?api_key=$TMDB_KEY", timeout = 60)
+                            val tmdbSeason = app.get("$TMDB_API/tv/${tmdbDetails.id}/season/$seasonNum?api_key=$TMDB_KEY")
                                 .parsedSafe<TmdbSeason>()
                                 
                             if (tmdbSeason?.episodes != null) {
