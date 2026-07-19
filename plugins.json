@@ -9,7 +9,7 @@
             "senkuboy0-cyber"
         ],
         "description": "Includes AnimeDekho,OnePace(DUB,SUB) and HindiSubAnime",
-        "fileSize": 71497,
+        "fileSize": 71505,
         "repositoryUrl": "https://github.com/senkuboy0-cyber/Anime-Dekho",
         "language": "hi",
         "tvTypes": [
@@ -19,10 +19,10 @@
         ],
         "iconUrl": "https://animedekho.app/wp-content/uploads/2023/07/AnimeDekho-Logo-300x-1.png",
         "apiVersion": 1,
-        "fileHash": "sha256-0bd9aefd8a5c1f47164a78ee6ecc63a24309566a93e66113c83d524669358438",
-        "jarFileSize": 294891,
+        "fileHash": "sha256-5729631b13983964dd4546143a88f925423febac031f26358bac5c1e15186f46",
+        "jarFileSize": 294875,
         "jarUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/AnimeDekhoProvider.jar",
-        "jarHash": "sha256-e4f5e351544e0891494bf0afbedf57b193b0b465731a4098b6975c1dc6f142bf"
+        "jarHash": "sha256-e727303603920f9fa5e59c41708f5d192bd8502eddbde9bf824bedd8db687f80"
     },
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/Toonstream.cs3",
