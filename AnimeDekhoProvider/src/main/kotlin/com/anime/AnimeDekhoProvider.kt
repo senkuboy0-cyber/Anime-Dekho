@@ -10,7 +10,7 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
-// --- TMDB Data Classes ---
+// â”€â”€â”€ TMDB Data Classes â”€â”€â”€
 data class TmdbImages(
     @JsonProperty("logos") val logos: List<TmdbImage>? = null,
     @JsonProperty("backdrops") val backdrops: List<TmdbImage>? = null
@@ -58,7 +58,7 @@ data class SiteEpisode(
     var finalName: String = rawName,
     var finalPoster: String? = poster
 )
-// ----------------------------------------
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 open class AnimeDekhoProvider : MainAPI() {
     override var mainUrl             = "https://animedekho.app"
@@ -74,13 +74,13 @@ open class AnimeDekhoProvider : MainAPI() {
         TvType.Movie,
     )
 
-    // --- TMDB API Features ---
+    // â”€â”€â”€ TMDB API Features â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     private val TMDB_API = "https://api.themoviedb.org/3"
     private val TMDB_KEY = "1865f43a0549ca50d341dd9ab8b29f49"
     private val TMDB_IMG = "https://image.tmdb.org/t/p/original"
 
-    // --- Safe Regex Declarations ---
-    private val epRegex1 = Regex("(?i)\\s+\\d+[xX]\\d+.*")
+    // â”€â”€â”€ Safe Regex Declarations â”€â”€â”€
+    private val epRegex1 = Regex("(?i)\\s+\\d+[xÃ—]\\d+.*")
     private val epRegex2 = Regex("(?i)\\s+Episode\\s+\\d+.*")
     private val seasonRegex = Regex("(?i)\\s+Season\\s+\\d+.*")
     private val fanDubRegex1 = Regex("(?i)\\s*fan\\s*dub.*")
@@ -175,7 +175,7 @@ open class AnimeDekhoProvider : MainAPI() {
             .substringBefore(" | AnimeDekho")
             .substringBefore("| AnimeDekho")
             .substringAfter("AnimeDekho - ")
-            .substringAfter("AnimeDekho - ")
+            .substringAfter("AnimeDekho \u2013 ")
             .trim()
             .takeIf {
                 it.isNotEmpty() &&
@@ -209,8 +209,7 @@ open class AnimeDekhoProvider : MainAPI() {
                     "X-WP-Nonce"       to nonce,
                     "X-Requested-With" to "XMLHttpRequest",
                     "Referer"          to movieUrl
-                ),
-                timeout = 60
+                )
             ).text
 
             val json = parseJson<AjaxResponse>(response)
@@ -307,7 +306,7 @@ open class AnimeDekhoProvider : MainAPI() {
             TmdbDetails(null, null, null, null)
         }
     }
-    // -------------------------------------------------------------------------
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     private fun mainPageJson(taxonomy: String, search: String, term: String, type: String): String {
         return "{\"taxonomy\":\"$taxonomy\",\"search\":\"$search\",\"term\":\"$term\",\"type\":\"$type\"}"
@@ -332,7 +331,7 @@ open class AnimeDekhoProvider : MainAPI() {
             val term      = Regex("\"term\":\"([^\"]+)\"").find(request.data)?.groupValues?.get(1) ?: ""
             val pageUrl   = "$mainUrl/category/$term/"
             val pagedUrl  = if (page == 1) pageUrl else "${pageUrl}page/$page/"
-            val document  = app.get(pagedUrl, timeout = 60).document
+            val document  = app.get(pagedUrl).document
             val home      = document.select("article").mapNotNull { it.toSearchResult() }
             val hasNextPage = document.selectFirst("a.next.page-numbers") != null
             return newHomePageResponse(request.name, home, hasNextPage)
@@ -341,12 +340,12 @@ open class AnimeDekhoProvider : MainAPI() {
         val pageUrl = if (isSeries) "$mainUrl/series-hindi/" else "$mainUrl/movie-hindi/"
 
         if (page == 1) {
-            val document = app.get(pageUrl, timeout = 60).document
+            val document = app.get(pageUrl).document
             val home     = document.select("article").mapNotNull { it.toSearchResult() }
             return newHomePageResponse(request.name, home, true)
         }
 
-        val pageDoc = app.get(pageUrl, timeout = 60).document
+        val pageDoc = app.get(pageUrl).document
         val nonce   = Regex("\"nonce\":\"([^\"]+)\"").find(pageDoc.html())?.groupValues?.get(1) ?: ""
 
         val filterEl  = pageDoc.selectFirst("[data-taxonomy]")
@@ -365,8 +364,7 @@ open class AnimeDekhoProvider : MainAPI() {
                 "X-WP-Nonce"       to nonce,
                 "X-Requested-With" to "XMLHttpRequest",
                 "Referer"          to pageUrl
-            ),
-            timeout = 60
+            )
         ).text
 
         val json    = parseJson<AjaxResponse>(response)
@@ -395,7 +393,7 @@ open class AnimeDekhoProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<AnimeSearchResponse> {
-        val document = app.get("$mainUrl/?s=$query", timeout = 60).document
+        val document = app.get("$mainUrl/?s=$query").document
         return document.select("ul[data-results] li article").mapNotNull { it.toSearchResult() }
     }
 
@@ -411,7 +409,7 @@ open class AnimeDekhoProvider : MainAPI() {
                     "Accept"          to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                     "Accept-Language" to "en-US,en;q=0.5",
                 ),
-                timeout = 60
+                timeout = 30
             ).document
         } catch (e: Exception) {
             Log.e("AnimeDekho", "Failed to load page: ${e.message}")
@@ -443,7 +441,7 @@ open class AnimeDekhoProvider : MainAPI() {
         val lst = document.select("ul.seasons-lst li")
         val isSeries = lst.isNotEmpty()
 
-        // --- Fetch TMDB Details ---
+        // â”€â”€ Fetch TMDB Details â”€â”€
         val tmdbDetails = fetchTmdbDetails(document, cleanTitle, isSeries, year)
 
         return if (!isSeries) {
@@ -455,7 +453,7 @@ open class AnimeDekhoProvider : MainAPI() {
                 this.logoUrl             = tmdbDetails.logo
             }
         } else {
-            // --- Phase 1: Parse Raw Site Episodes ---
+            // â”€â”€â”€ Phase 1: Parse Raw Site Episodes â”€â”€â”€
             val rawEpisodes = lst.mapNotNull {
                 val name = it.selectFirst("h3.title")?.ownText() ?: "null"
                 val href = it.selectFirst("a")?.attr("href") ?: return@mapNotNull null
@@ -466,7 +464,7 @@ open class AnimeDekhoProvider : MainAPI() {
                 SiteEpisode(href, name, epPoster, season)
             }
 
-            // --- Phase 2: Fix Episode Numbering (1-based per season) ---
+            // â”€â”€â”€ Phase 2: Fix Episode Numbering (1-based per season) â”€â”€â”€
             val seasonCounters = mutableMapOf<Int?, Int>()
             rawEpisodes.forEach { ep ->
                 val count = seasonCounters.getOrDefault(ep.season, 0) + 1
@@ -474,7 +472,7 @@ open class AnimeDekhoProvider : MainAPI() {
                 ep.calculatedEpNum = count
             }
 
-            // --- Phase 3: Smart TMDB Episode Fetching ---
+            // â”€â”€â”€ Phase 3: Smart TMDB Episode Fetching â”€â”€â”€
             if (tmdbDetails.id != null && tmdbDetails.type == "tv") {
                 val seasonsGrouped = rawEpisodes.groupBy { it.season }
                 
@@ -514,7 +512,7 @@ open class AnimeDekhoProvider : MainAPI() {
                 }
             }
 
-            // --- Phase 4: Build Cloudstream Episodes ---
+            // â”€â”€â”€ Phase 4: Build Cloudstream Episodes â”€â”€â”€
             val episodes = rawEpisodes.map { ep ->
                 newEpisode(Gson().toJson(Media(ep.href, mediaType = 2))) {
                     this.name      = ep.finalName
@@ -556,12 +554,12 @@ open class AnimeDekhoProvider : MainAPI() {
         }
 
         val headers = mapOf("Cookie" to "toronites_server=vidstream")
-        val doc = app.get(media.url, headers = headers, timeout = 60).document
+        val doc = app.get(media.url, headers = headers).document
         doc.select("iframe.serversel[src]").forEach { iframe ->
             val serverUrl = iframe.attr("src")
             if (serverUrl.isBlank()) return@forEach
             val innerIframeUrl = runCatching {
-                app.get(serverUrl, timeout = 60).document.selectFirst("iframe[src]")?.attr("src")
+                app.get(serverUrl).document.selectFirst("iframe[src]")?.attr("src")
             }.getOrNull()
             if (!innerIframeUrl.isNullOrBlank()) {
                 loadExtractor(innerIframeUrl, subtitleCallback, callback)
@@ -569,7 +567,7 @@ open class AnimeDekhoProvider : MainAPI() {
         }
 
         val bodyClass = runCatching {
-            app.get(media.url, timeout = 60).document.selectFirst("body")?.attr("class")
+            app.get(media.url).document.selectFirst("body")?.attr("class")
         }.getOrNull()
 
         val term = Regex("(?:term|postid)-(\\d+)").find(bodyClass ?: "")?.groupValues?.getOrNull(1)
@@ -581,7 +579,7 @@ open class AnimeDekhoProvider : MainAPI() {
         var success = false
         for (i in 0..10) {
             val iframeUrl = runCatching {
-                app.get("$mainUrl/?trdekho=$i&trid=$term&trtype=${media.mediaType}", timeout = 60)
+                app.get("$mainUrl/?trdekho=$i&trid=$term&trtype=${media.mediaType}")
                     .document.selectFirst("iframe")?.attr("src")
             }.getOrNull()
             if (!iframeUrl.isNullOrEmpty()) {
