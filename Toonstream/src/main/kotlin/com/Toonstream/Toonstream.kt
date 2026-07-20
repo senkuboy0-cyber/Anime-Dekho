@@ -70,7 +70,7 @@ class Toonstream : MainAPI() {
 
     private fun cleanTitleText(title: String): String {
         var clean = title.replace(Regex("(?i)Watch Online"), "")
-        clean = clean.replace("(?i)\\s+\\d+[x×]\\d+.*".toRegex(), "")
+        clean = clean.replace("(?i)\\s+\\d+[xÃ—]\\d+.*".toRegex(), "")
         clean = clean.replace("(?i)\\s+Episode\\s+\\d+.*".toRegex(), "")
         clean = clean.replace("(?i)\\s+Season\\s+\\d+.*".toRegex(), "")
         clean = clean.replace("(?i)\\s*fan\\s*dub.*".toRegex(), "")
@@ -108,6 +108,42 @@ class Toonstream : MainAPI() {
         if (siteYear == null || candidates.size == 1) return candidates.first()
         return candidates.firstOrNull { yearMatches(getResultYear(it), siteYear) }
             ?: candidates.first()
+    }
+
+    /**
+     * Extracts the language(s) from the page.
+     * Handles two known structures:
+     *   1. <ul><li>Language: Hindi â€“ Japanese</li></ul>            (series pages)
+     *   2. <div class="language-label">Language<br>Hindi</div>    (movie pages)
+     */
+    private fun extractLanguage(document: Document): String? {
+        // Pattern 1: <li>Language: ...</li>
+        document.select("li").firstOrNull {
+            it.ownText().trim().startsWith("Language", ignoreCase = true)
+        }?.let { li ->
+            val raw = li.ownText().trim()
+            val after = raw.substringAfter(":").trim()
+            if (after.isNotEmpty()) return after
+        }
+
+        // Pattern 2: <div class="language-label">Language<br>Hindi</div>
+        document.selectFirst("div.language-label")?.let { div ->
+            val cleaned = div.text()
+                .replace(Regex("(?i)language"), "")
+                .trim()
+            if (cleaned.isNotEmpty()) return cleaned
+        }
+
+        // Pattern 3 (fallback): any element that contains "Language" label
+        document.selectFirst("*:containsOwn(Language)")?.let { el ->
+            val text = el.text()
+            if (text.contains("Language", ignoreCase = true)) {
+                val after = text.substringAfter("Language").trim(':', ' ', '\n', '\t')
+                if (after.isNotEmpty()) return after
+            }
+        }
+
+        return null
     }
 
     private suspend fun fetchTmdbAssets(document: Document, title: String, isSeries: Boolean, year: Int?): List<String?> {
@@ -282,28 +318,6 @@ class Toonstream : MainAPI() {
         }
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {
-        val results = mutableListOf<SearchResponse>()
-        for (i in 1..3) {
-            val searchUrl = if (i == 1) {
-                "$mainUrl/s?q=$query"
-            } else {
-                "$mainUrl/page/$i/s?q=$query"
-            }
-
-            val doc = app.get(searchUrl).document
-
-            var page = doc.select("#movies-a ul > li").mapNotNull { it.toSearchResult() }
-            if (page.isEmpty()) {
-                page = doc.select("article, .result-item, .item").mapNotNull { it.toSearchResult() }
-            }
-
-            if (page.isEmpty() || results.containsAll(page)) break
-            results.addAll(page)
-        }
-        return results
-    }
-
     override suspend fun load(url: String): LoadResponse {
         val document   = app.get(url).document
 
@@ -313,9 +327,23 @@ class Toonstream : MainAPI() {
 
         val posterRaw  = document.select("div.bghd > img").attr("src")
         val poster     = if (posterRaw.startsWith("http")) posterRaw else "https:$posterRaw"
-        val description = document.selectFirst("div.description > p")?.text()?.trim()
-        val isSeries   = url.contains("/series/")
 
+        // --- Description ---
+        val rawDescription = document.selectFirst("div.description > p")?.text()?.trim()
+
+        // --- Language (handles both series <ul><li> and movie <div class="language-label">) ---
+        val language = extractLanguage(document)
+
+        // Combine: description + blank line + "Language: <lang>"
+        val description = when {
+            rawDescription != null && language != null ->
+                "$rawDescription\n\nLanguage: $language"
+            rawDescription != null -> rawDescription
+            language != null       -> "Language: $language"
+            else                   -> null
+        }
+
+        val isSeries   = url.contains("/series/")
         val year = document.selectFirst("span.year")?.text()?.trim()?.toIntOrNull()
 
         val tmdbAssets  = fetchTmdbAssets(document, cleanTitle, isSeries, year)
