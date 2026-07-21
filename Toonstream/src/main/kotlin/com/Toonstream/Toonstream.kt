@@ -34,24 +34,35 @@ data class TmdbImages(
     @JsonProperty("logos") val logos: List<TmdbImage>? = null,
     @JsonProperty("backdrops") val backdrops: List<TmdbImage>? = null
 )
+
 data class TmdbImage(
     @JsonProperty("file_path") val filePath: String? = null,
     @JsonProperty("iso_639_1") val lang: String?     = null
 )
+
 data class TmdbFind(
     @JsonProperty("movie_results") val movies: List<TmdbResult>? = null,
     @JsonProperty("tv_results")    val tvShows: List<TmdbResult>? = null
 )
+
 data class TmdbResult(
     @JsonProperty("id") val id: Int? = null,
     @JsonProperty("media_type") val mediaType: String? = null,
     @JsonProperty("title") val title: String? = null,
     @JsonProperty("name") val name: String? = null,
     @JsonProperty("release_date") val releaseDate: String? = null,
-    @JsonProperty("first_air_date") val firstAirDate: String? = null
+    @JsonProperty("first_air_date") val firstAirDate: String? = null,
+    @JsonProperty("overview") val overview: String? = null
 )
+
 data class TmdbSearch(
     @JsonProperty("results") val results: List<TmdbResult>? = null
+)
+
+data class TmdbDetails(
+    val logoUrl: String? = null,
+    val backdropUrl: String? = null,
+    val overview: String? = null
 )
 
 data class ServerInfo(val truelink: String, val referer: String, val priority: Int)
@@ -69,35 +80,22 @@ class Toonstream : MainAPI() {
     private val TMDB_IMG = "https://image.tmdb.org/t/p/original"
 
     private fun cleanTitleText(title: String): String {
-        var clean = title
-
+        var clean = title.replace(Regex("[\u200B-\u200D\uFEFF\\p{Cf}]"), "")
+        clean = clean.replace("\u00A0", " ")
         clean = clean.replace(Regex("(?i)Watch Online"), "")
-        
-        // Safely extract text before brackets
-        if (clean.contains("[")) clean = clean.substringBefore("[")
-        if (clean.contains("(")) clean = clean.substringBefore("(")
-        
-        // Remove resolution or episode patterns like 1080x720 or 12x04
         clean = clean.replace("(?i)\\s+\\d+[x×]\\d+.*".toRegex(), "")
         clean = clean.replace("×", "x")
-        
         clean = clean.replace("(?i)\\s+Episode\\s+\\d+.*".toRegex(), "")
         clean = clean.replace("(?i)\\s+Season\\s+\\d+.*".toRegex(), "")
-        
-        // Safely remove dub/audio info
-        clean = clean.replace(Regex("(?i)\\s*(hindi dub|english dub|dual audio|multi audio|fan dub|fandub|eng-jap).*"), "")
-        
-        // Ultimate safe filter: keeps ONLY letters, numbers, spaces, and basic punctuation
-        // This guarantees NO invisible or weird formatting characters survive.
-        val sb = java.lang.StringBuilder()
-        for (c in clean) {
-            if (c.isLetterOrDigit() || c.isWhitespace() || c == '-' || c == '\'' || c == ':') {
-                sb.append(c)
-            }
-        }
-        
-        // Clean up multiple spaces
-        clean = sb.toString().replace("\\s+".toRegex(), " ")
+        clean = clean.replace("(?i)\\s*hindi\\s*dub.*".toRegex(), "")
+        clean = clean.replace("(?i)\\s*english\\s*dub.*".toRegex(), "")
+        clean = clean.replace("(?i)\\s*dual\\s*audio.*".toRegex(), "")
+        clean = clean.replace("(?i)\\s*multi\\s*audio.*".toRegex(), "")
+        clean = clean.replace("(?i)\\s*fan\\s*dub.*".toRegex(), "")
+        clean = clean.replace("(?i)\\s*fandub.*".toRegex(), "")
+        clean = clean.substringBefore("(")
+        clean = clean.substringBefore("[")
+        clean = clean.replace("\\s+".toRegex(), " ")
         return clean.trim()
     }
 
@@ -131,24 +129,22 @@ class Toonstream : MainAPI() {
             ?: candidates.first()
     }
 
-    private suspend fun fetchTmdbAssets(document: Document, title: String, isSeries: Boolean, year: Int?): List<String?> {
+    private suspend fun fetchTmdbAssets(document: Document, title: String, isSeries: Boolean, year: Int?): TmdbDetails {
         return try {
             var tmdbId: Int? = null
             var actualMediaType = if (isSeries) "tv" else "movie"
+            var tmdbOverview: String? = null
 
-            // Encode the 100% clean title
             val safeTitle = encodeUri(title)
-            val searchRes = app.get("$TMDB_API/search/multi?api_key=$TMDB_KEY&query=$safeTitle&language=en-US")
+            val searchRes = app.get("$TMDB_API/search/multi?api_key=$TMDB_KEY&query=$safeTitle")
                 .parsedSafe<TmdbSearch>()
 
             val validResults = searchRes?.results?.filter { it.mediaType == "movie" || it.mediaType == "tv" }
             val normTitle = normalizeTitle(title)
 
-            // 1. Strict exact match logic
-            val exactCandidates = validResults?.filter { result ->
-                val tmdbTitleNorm = normalizeTitle(result.title)
-                val tmdbNameNorm = normalizeTitle(result.name)
-                tmdbTitleNorm == normTitle || tmdbNameNorm == normTitle
+            val exactCandidates = validResults?.filter {
+                normalizeTitle(it.title) == normTitle ||
+                normalizeTitle(it.name) == normTitle
             } ?: emptyList()
 
             val exactMatch = pickBestResult(exactCandidates, year)
@@ -156,12 +152,12 @@ class Toonstream : MainAPI() {
             if (exactMatch != null) {
                 tmdbId = exactMatch.id
                 actualMediaType = exactMatch.mediaType ?: actualMediaType
+                tmdbOverview = exactMatch.overview
             } else {
-                // 2. Fallback to startsWith ONLY if exact match fails
-                val startsWithCandidates = if (normTitle.length >= 4) {
+                val startsWithCandidates = if (normTitle.length >= 6) {
                     validResults?.filter { result ->
                         val tmdbNorm = normalizeTitle(result.title ?: result.name)
-                        tmdbNorm.startsWith(normTitle) || normTitle.startsWith(tmdbNorm)
+                        tmdbNorm.startsWith(normTitle)
                     } ?: emptyList()
                 } else emptyList()
 
@@ -170,8 +166,8 @@ class Toonstream : MainAPI() {
                 if (startsWithMatch != null) {
                     tmdbId = startsWithMatch.id
                     actualMediaType = startsWithMatch.mediaType ?: actualMediaType
+                    tmdbOverview = startsWithMatch.overview
                 } else {
-                    // 3. Fallback to IMDb ID
                     val imdbId = document.select("a[href*='imdb.com/title']").attr("href")
                         .substringAfter("title/").substringBefore("/")
                         .takeIf { it.startsWith("tt") }
@@ -180,26 +176,33 @@ class Toonstream : MainAPI() {
                         app.get("$TMDB_API/find/$imdbId?api_key=$TMDB_KEY&external_source=imdb_id")
                             .parsedSafe<TmdbFind>()
                             ?.let { findRes ->
-                                val tvId    = findRes.tvShows?.firstOrNull()?.id
-                                val movieId = findRes.movies?.firstOrNull()?.id
+                                val tvMatch = findRes.tvShows?.firstOrNull()
+                                val movieMatch = findRes.movies?.firstOrNull()
 
                                 if (isSeries) {
-                                    if (tvId != null)         { tmdbId = tvId;    actualMediaType = "tv"    }
-                                    else if (movieId != null) { tmdbId = movieId; actualMediaType = "movie" }
+                                    if (tvMatch != null) { 
+                                        tmdbId = tvMatch.id; actualMediaType = "tv"; tmdbOverview = tvMatch.overview 
+                                    }
+                                    else if (movieMatch != null) { 
+                                        tmdbId = movieMatch.id; actualMediaType = "movie"; tmdbOverview = movieMatch.overview 
+                                    }
                                 } else {
-                                    if (movieId != null)      { tmdbId = movieId; actualMediaType = "movie" }
-                                    else if (tvId != null)    { tmdbId = tvId;    actualMediaType = "tv"    }
+                                    if (movieMatch != null) { 
+                                        tmdbId = movieMatch.id; actualMediaType = "movie"; tmdbOverview = movieMatch.overview 
+                                    }
+                                    else if (tvMatch != null) { 
+                                        tmdbId = tvMatch.id; actualMediaType = "tv"; tmdbOverview = tvMatch.overview 
+                                    }
                                 }
                             }
                     }
                 }
             }
 
-            if (tmdbId == null) return listOf(null, null)
+            if (tmdbId == null) return TmdbDetails(null, null, null)
 
-            // Added 'ja' to ensure it fetches Japanese logos if English ones are missing
             val images = app.get(
-                "$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY&include_image_language=en,null,ja"
+                "$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY"
             ).parsedSafe<TmdbImages>()
 
             val logo = images?.logos?.firstOrNull { it.lang == "en" }
@@ -214,10 +217,10 @@ class Toonstream : MainAPI() {
             val logoUrl     = logo?.filePath?.let { "$TMDB_IMG$it" }
             val backdropUrl = backdrop?.filePath?.let { "$TMDB_IMG$it" }
 
-            listOf(logoUrl, backdropUrl)
+            TmdbDetails(logoUrl, backdropUrl, tmdbOverview)
 
         } catch (e: Exception) {
-            listOf(null, null)
+            TmdbDetails(null, null, null)
         }
     }
 
@@ -351,18 +354,24 @@ class Toonstream : MainAPI() {
         val year = document.selectFirst("span.year")?.text()?.trim()?.toIntOrNull()
 
         val tmdbAssets  = fetchTmdbAssets(document, cleanTitle, isSeries, year)
-        val logoUrl     = tmdbAssets[0]
-        val backdropUrl = tmdbAssets[1]
+        val logoUrl     = tmdbAssets.logoUrl
+        val backdropUrl = tmdbAssets.backdropUrl
+        
+        val finalDescription = if (!tmdbAssets.overview.isNullOrBlank()) {
+            tmdbAssets.overview
+        } else {
+            description
+        }
 
         val displayTitle = rawTitle
 
         return if (isSeries) {
-            loadSeries(url, document, displayTitle, poster, description, logoUrl, backdropUrl, year)
+            loadSeries(url, document, displayTitle, poster, finalDescription, logoUrl, backdropUrl, year)
         } else {
             newMovieLoadResponse(displayTitle, url, TvType.Movie, url) {
                 this.posterUrl           = poster
                 this.backgroundPosterUrl = backdropUrl ?: poster
-                this.plot                = description
+                this.plot                = finalDescription
                 this.year                = year
                 this.logoUrl             = logoUrl
             }
