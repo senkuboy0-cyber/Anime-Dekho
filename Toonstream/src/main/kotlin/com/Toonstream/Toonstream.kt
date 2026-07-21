@@ -70,11 +70,24 @@ class Toonstream : MainAPI() {
 
     private fun cleanTitleText(title: String): String {
         var clean = title.replace(Regex("(?i)Watch Online"), "")
+        
+        // Remove resolution or episode patterns like 1080x720 or 12x04
         clean = clean.replace("(?i)\\s+\\d+[x×]\\d+.*".toRegex(), "")
+        
+        // Replace special character '×' with standard 'x' for better TMDB matching
+        clean = clean.replace("×", "x")
+        
         clean = clean.replace("(?i)\\s+Episode\\s+\\d+.*".toRegex(), "")
         clean = clean.replace("(?i)\\s+Season\\s+\\d+.*".toRegex(), "")
+        
+        // Remove dub and audio info
+        clean = clean.replace("(?i)\\s*hindi\\s*dub.*".toRegex(), "")
+        clean = clean.replace("(?i)\\s*english\\s*dub.*".toRegex(), "")
+        clean = clean.replace("(?i)\\s*dual\\s*audio.*".toRegex(), "")
+        clean = clean.replace("(?i)\\s*multi\\s*audio.*".toRegex(), "")
         clean = clean.replace("(?i)\\s*fan\\s*dub.*".toRegex(), "")
         clean = clean.replace("(?i)\\s*fandub.*".toRegex(), "")
+        
         clean = clean.substringBefore("(")
         clean = clean.substringBefore("[")
         return clean.trim()
