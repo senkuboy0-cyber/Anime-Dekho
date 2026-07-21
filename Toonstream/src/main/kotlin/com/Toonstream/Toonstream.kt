@@ -71,9 +71,12 @@ class Toonstream : MainAPI() {
     private fun cleanTitleText(title: String): String {
         var clean = title
 
-        // Remove zero-width spaces and formatting characters
-        clean = clean.replace(Regex("[\u200B-\u200D\uFEFF\\p{Cf}]"), "")
-        clean = clean.replace("\u00A0", " ")
+        // Safely remove zero-width spaces and invisible characters without complex Regex
+        clean = clean.replace("\u200B", "")
+                     .replace("\u200C", "")
+                     .replace("\u200D", "")
+                     .replace("\uFEFF", "")
+                     .replace("\u00A0", " ")
 
         // Safely remove any text inside brackets [] ()
         clean = clean.replace(Regex("\\[.*?\\]"), "")
@@ -88,11 +91,8 @@ class Toonstream : MainAPI() {
         clean = clean.replace("(?i)\\s+Episode\\s+\\d+.*".toRegex(), "")
         clean = clean.replace("(?i)\\s+Season\\s+\\d+.*".toRegex(), "")
         
-        // Remove dub/audio info safely
-        val removeWords = listOf("hindi dub", "english dub", "dual audio", "multi audio", "fan dub", "fandub", "eng-jap")
-        for (word in removeWords) {
-            clean = clean.replace(Regex("(?i)\\b${word}\\b.*"), "")
-        }
+        // Safely remove dub/audio info using a single simple Regex
+        clean = clean.replace(Regex("(?i)\\s*(hindi dub|english dub|dual audio|multi audio|fan dub|fandub|eng-jap).*"), "")
         
         // Clean up multiple spaces
         clean = clean.replace("\\s+".toRegex(), " ")
@@ -141,7 +141,6 @@ class Toonstream : MainAPI() {
             val validResults = searchRes?.results?.filter { it.mediaType == "movie" || it.mediaType == "tv" }
             val normTitle = normalizeTitle(title)
 
-            // Improved exact match logic to catch edge cases
             val exactCandidates = validResults?.filter { result ->
                 val tmdbTitleNorm = normalizeTitle(result.title)
                 val tmdbNameNorm = normalizeTitle(result.name)
@@ -193,7 +192,6 @@ class Toonstream : MainAPI() {
 
             if (tmdbId == null) return listOf(null, null)
 
-            // Added include_image_language just to be completely safe
             val images = app.get(
                 "$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY&include_image_language=en,null"
             ).parsedSafe<TmdbImages>()
