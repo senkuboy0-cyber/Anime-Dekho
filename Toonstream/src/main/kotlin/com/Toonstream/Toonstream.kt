@@ -69,7 +69,13 @@ class Toonstream : MainAPI() {
     private val TMDB_IMG = "https://image.tmdb.org/t/p/original"
 
     private fun cleanTitleText(title: String): String {
-        var clean = title.replace(Regex("(?i)Watch Online"), "")
+        // Remove zero-width spaces and invisible formatting characters
+        var clean = title.replace(Regex("[\u200B-\u200D\uFEFF\\p{Cf}]"), "")
+        
+        // Replace non-breaking spaces with standard space
+        clean = clean.replace("\u00A0", " ")
+
+        clean = clean.replace(Regex("(?i)Watch Online"), "")
         
         // Remove resolution or episode patterns like 1080x720 or 12x04
         clean = clean.replace("(?i)\\s+\\d+[x×]\\d+.*".toRegex(), "")
@@ -90,6 +96,9 @@ class Toonstream : MainAPI() {
         
         clean = clean.substringBefore("(")
         clean = clean.substringBefore("[")
+        
+        // Fix multiple spaces that might have been left over and trim
+        clean = clean.replace("\\s+".toRegex(), " ")
         return clean.trim()
     }
 
@@ -251,7 +260,10 @@ class Toonstream : MainAPI() {
         return section.select("article.post.dfx").mapNotNull { el ->
             val rawTitle = el.selectFirst("h2.entry-title")?.text()
                 ?.replace(Regex("(?i)Watch Online"), "")?.trim() ?: return@mapNotNull null
-            val title = cleanTitleText(rawTitle).ifBlank { return@mapNotNull null }
+            
+            // Validate if title is usable after cleaning
+            val cleanedTitle = cleanTitleText(rawTitle)
+            if (cleanedTitle.isBlank()) return@mapNotNull null
 
             val href  = el.selectFirst("a.lnk-blk")?.attr("href")?.let { fixUrl(it) }
                 ?: return@mapNotNull null
@@ -262,7 +274,8 @@ class Toonstream : MainAPI() {
             val rating = el.selectFirst("span.vote")?.text()
                 ?.replace("TMDB", "")?.trim()?.toDoubleOrNull()
 
-            newMovieSearchResponse(title, href, TvType.TvSeries) {
+            // Pass rawTitle for display in the app UI
+            newMovieSearchResponse(rawTitle, href, TvType.TvSeries) {
                 this.posterUrl = poster
                 this.score = Score.from10(rating)
             }
@@ -272,7 +285,10 @@ class Toonstream : MainAPI() {
     private fun Element.toSearchResult(): SearchResponse? {
         val rawTitle = this.selectFirst("article > header > h2, article h2.entry-title")
             ?.text()?.replace(Regex("(?i)Watch Online"), "")?.trim() ?: return null
-        val title = cleanTitleText(rawTitle).ifBlank { return null }
+            
+        // Validate if title is usable after cleaning
+        val cleanedTitle = cleanTitleText(rawTitle)
+        if (cleanedTitle.isBlank()) return null
 
         val href  = fixUrl(
             this.selectFirst("article > a.lnk-blk, article a.lnk-blk")
@@ -290,7 +306,9 @@ class Toonstream : MainAPI() {
             href.contains("/movies/") -> TvType.Movie
             else                      -> TvType.Movie
         }
-        return newMovieSearchResponse(title, href, tvType) {
+        
+        // Pass rawTitle for display in the app UI
+        return newMovieSearchResponse(rawTitle, href, tvType) {
             this.posterUrl = poster
         }
     }
