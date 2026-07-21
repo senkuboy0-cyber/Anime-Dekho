@@ -29,8 +29,7 @@ data class TmdbResult(
     @JsonProperty("title") val title: String? = null,
     @JsonProperty("name") val name: String? = null,
     @JsonProperty("release_date") val releaseDate: String? = null,
-    @JsonProperty("first_air_date") val firstAirDate: String? = null,
-    @JsonProperty("overview") val overview: String? = null
+    @JsonProperty("first_air_date") val firstAirDate: String? = null
 )
 data class TmdbSearch(
     @JsonProperty("results") val results: List<TmdbResult>? = null
@@ -47,8 +46,7 @@ data class TmdbDetails(
     val id: Int?, 
     val type: String?, 
     val logo: String?, 
-    val backdrop: String?,
-    val overview: String?
+    val backdrop: String?
 )
 
 data class SiteEpisode(
@@ -60,7 +58,7 @@ data class SiteEpisode(
     var finalName: String = rawName,
     var finalPoster: String? = poster
 )
-// ────────────────────────────────────────
+// ─────────────────────────
 
 open class AnimeDekhoProvider : MainAPI() {
     override var mainUrl             = "https://animedekho.app"
@@ -76,7 +74,7 @@ open class AnimeDekhoProvider : MainAPI() {
         TvType.Movie,
     )
 
-    // ─── TMDB API Features ──────────────────────────────────────────────
+    // ─── TMDB API Features ──────────────────────────────────────────
     private val TMDB_API = "https://api.themoviedb.org/3"
     private val TMDB_KEY = "1865f43a0549ca50d341dd9ab8b29f49"
     private val TMDB_IMG = "https://image.tmdb.org/t/p/original"
@@ -223,13 +221,12 @@ open class AnimeDekhoProvider : MainAPI() {
     }
 
     /**
-     * Fetches TMDB Details (ID, MediaType, Logo, Backdrop, Overview)
+     * Fetches TMDB Details (ID, MediaType, Logo, Backdrop)
      */
     private suspend fun fetchTmdbDetails(document: Document, title: String, isSeries: Boolean, year: Int?): TmdbDetails {
         return try {
             var tmdbId: Int? = null
             var actualMediaType = if (isSeries) "tv" else "movie"
-            var tmdbOverview: String? = null
 
             val safeTitle = encodeUri(title)
 
@@ -249,7 +246,6 @@ open class AnimeDekhoProvider : MainAPI() {
             if (exactMatch != null) {
                 tmdbId = exactMatch.id
                 actualMediaType = exactMatch.mediaType ?: actualMediaType
-                tmdbOverview = exactMatch.overview
             } else {
                 val startsWithCandidates = if (normTitle.length >= 6) {
                     validResults?.filter { result ->
@@ -263,7 +259,6 @@ open class AnimeDekhoProvider : MainAPI() {
                 if (startsWithMatch != null) {
                     tmdbId = startsWithMatch.id
                     actualMediaType = startsWithMatch.mediaType ?: actualMediaType
-                    tmdbOverview = startsWithMatch.overview
                 } else {
                     val imdbId = document.select("a[href*='imdb.com/title']").attr("href")
                         .substringAfter("title/").substringBefore("/")
@@ -273,30 +268,22 @@ open class AnimeDekhoProvider : MainAPI() {
                         app.get("$TMDB_API/find/$imdbId?api_key=$TMDB_KEY&external_source=imdb_id")
                             .parsedSafe<TmdbFind>()
                             ?.let { findRes ->
-                                val tvMatch = findRes.tvShows?.firstOrNull()
-                                val movieMatch = findRes.movies?.firstOrNull()
+                                val tvId    = findRes.tvShows?.firstOrNull()?.id
+                                val movieId = findRes.movies?.firstOrNull()?.id
 
                                 if (isSeries) {
-                                    if (tvMatch != null) { 
-                                        tmdbId = tvMatch.id; actualMediaType = "tv"; tmdbOverview = tvMatch.overview 
-                                    }
-                                    else if (movieMatch != null) { 
-                                        tmdbId = movieMatch.id; actualMediaType = "movie"; tmdbOverview = movieMatch.overview 
-                                    }
+                                    if (tvId != null)         { tmdbId = tvId;    actualMediaType = "tv"    }
+                                    else if (movieId != null) { tmdbId = movieId; actualMediaType = "movie" }
                                 } else {
-                                    if (movieMatch != null) { 
-                                        tmdbId = movieMatch.id; actualMediaType = "movie"; tmdbOverview = movieMatch.overview 
-                                    }
-                                    else if (tvMatch != null) { 
-                                        tmdbId = tvMatch.id; actualMediaType = "tv"; tmdbOverview = tvMatch.overview 
-                                    }
+                                    if (movieId != null)      { tmdbId = movieId; actualMediaType = "movie" }
+                                    else if (tvId != null)    { tmdbId = tvId;    actualMediaType = "tv"    }
                                 }
                             }
                     }
                 }
             }
 
-            if (tmdbId == null) return TmdbDetails(null, null, null, null, null)
+            if (tmdbId == null) return TmdbDetails(null, null, null, null)
 
             val images = app.get(
                 "$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY"
@@ -314,12 +301,12 @@ open class AnimeDekhoProvider : MainAPI() {
             val logoUrl     = logo?.filePath?.let { "$TMDB_IMG$it" }
             val backdropUrl = backdrop?.filePath?.let { "$TMDB_IMG$it" }
 
-            TmdbDetails(tmdbId, actualMediaType, logoUrl, backdropUrl, tmdbOverview)
+            TmdbDetails(tmdbId, actualMediaType, logoUrl, backdropUrl)
         } catch (e: Exception) {
-            TmdbDetails(null, null, null, null, null)
+            TmdbDetails(null, null, null, null)
         }
     }
-    // ────────────────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────
 
     private fun mainPageJson(taxonomy: String, search: String, term: String, type: String): String {
         return "{\"taxonomy\":\"$taxonomy\",\"search\":\"$search\",\"term\":\"$term\",\"type\":\"$type\"}"
@@ -456,19 +443,12 @@ open class AnimeDekhoProvider : MainAPI() {
 
         // ── Fetch TMDB Details ──
         val tmdbDetails = fetchTmdbDetails(document, cleanTitle, isSeries, year)
-        
-        // ── Description Fallback Logic ──
-        val finalPlot = if (!tmdbDetails.overview.isNullOrBlank()) {
-            tmdbDetails.overview
-        } else {
-            plot
-        }
 
         return if (!isSeries) {
             newMovieLoadResponse(rawTitle, url, TvType.Movie, Gson().toJson(Media(media.url, mediaType = 1))) {
                 this.posterUrl           = poster
                 this.backgroundPosterUrl = tmdbDetails.backdrop ?: poster
-                this.plot                = finalPlot
+                this.plot                = plot
                 this.year                = year
                 this.logoUrl             = tmdbDetails.logo
             }
@@ -554,7 +534,7 @@ open class AnimeDekhoProvider : MainAPI() {
             newTvSeriesLoadResponse(rawTitle, url, TvType.TvSeries, episodes) {
                 this.posterUrl           = poster
                 this.backgroundPosterUrl = tmdbDetails.backdrop ?: poster
-                this.plot                = finalPlot
+                this.plot                = plot
                 this.year                = year
                 this.logoUrl             = tmdbDetails.logo
                 this.recommendations     = recommendations
