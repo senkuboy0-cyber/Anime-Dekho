@@ -141,11 +141,11 @@ class Toonstream : MainAPI() {
             val validResults = searchRes?.results?.filter { it.mediaType == "movie" || it.mediaType == "tv" }
             val normTitle = normalizeTitle(title)
 
+            // Strict exact match - REMOVED the buggy startsWith logic from here
             val exactCandidates = validResults?.filter { result ->
                 val tmdbTitleNorm = normalizeTitle(result.title)
                 val tmdbNameNorm = normalizeTitle(result.name)
-                tmdbTitleNorm == normTitle || tmdbNameNorm == normTitle ||
-                (normTitle.length >= 5 && (tmdbTitleNorm.startsWith(normTitle) || tmdbNameNorm.startsWith(normTitle)))
+                tmdbTitleNorm == normTitle || tmdbNameNorm == normTitle
             } ?: emptyList()
 
             val exactMatch = pickBestResult(exactCandidates, year)
@@ -154,6 +154,7 @@ class Toonstream : MainAPI() {
                 tmdbId = exactMatch.id
                 actualMediaType = exactMatch.mediaType ?: actualMediaType
             } else {
+                // startsWith is now safely moved only to the fallback section
                 val startsWithCandidates = if (normTitle.length >= 6) {
                     validResults?.filter { result ->
                         val tmdbNorm = normalizeTitle(result.title ?: result.name)
