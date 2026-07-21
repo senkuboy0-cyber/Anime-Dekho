@@ -71,18 +71,11 @@ class Toonstream : MainAPI() {
     private fun cleanTitleText(title: String): String {
         var clean = title
 
-        // Safely remove zero-width spaces and invisible characters without complex Regex
-        clean = clean.replace("\u200B", "")
-                     .replace("\u200C", "")
-                     .replace("\u200D", "")
-                     .replace("\uFEFF", "")
-                     .replace("\u00A0", " ")
-
-        // Safely remove any text inside brackets [] ()
-        clean = clean.replace(Regex("\\[.*?\\]"), "")
-        clean = clean.replace(Regex("\\(.*?\\)"), "")
-
         clean = clean.replace(Regex("(?i)Watch Online"), "")
+        
+        // Safely extract text before brackets
+        if (clean.contains("[")) clean = clean.substringBefore("[")
+        if (clean.contains("(")) clean = clean.substringBefore("(")
         
         // Remove resolution or episode patterns like 1080x720 or 12x04
         clean = clean.replace("(?i)\\s+\\d+[x×]\\d+.*".toRegex(), "")
@@ -91,11 +84,20 @@ class Toonstream : MainAPI() {
         clean = clean.replace("(?i)\\s+Episode\\s+\\d+.*".toRegex(), "")
         clean = clean.replace("(?i)\\s+Season\\s+\\d+.*".toRegex(), "")
         
-        // Safely remove dub/audio info using a single simple Regex
+        // Safely remove dub/audio info
         clean = clean.replace(Regex("(?i)\\s*(hindi dub|english dub|dual audio|multi audio|fan dub|fandub|eng-jap).*"), "")
         
+        // Ultimate safe filter: keeps ONLY letters, numbers, spaces, and basic punctuation
+        // This guarantees NO invisible or weird formatting characters survive.
+        val sb = java.lang.StringBuilder()
+        for (c in clean) {
+            if (c.isLetterOrDigit() || c.isWhitespace() || c == '-' || c == '\'' || c == ':') {
+                sb.append(c)
+            }
+        }
+        
         // Clean up multiple spaces
-        clean = clean.replace("\\s+".toRegex(), " ")
+        clean = sb.toString().replace("\\s+".toRegex(), " ")
         return clean.trim()
     }
 
@@ -134,6 +136,7 @@ class Toonstream : MainAPI() {
             var tmdbId: Int? = null
             var actualMediaType = if (isSeries) "tv" else "movie"
 
+            // Encode the 100% clean title
             val safeTitle = encodeUri(title)
             val searchRes = app.get("$TMDB_API/search/multi?api_key=$TMDB_KEY&query=$safeTitle&language=en-US")
                 .parsedSafe<TmdbSearch>()
@@ -141,7 +144,7 @@ class Toonstream : MainAPI() {
             val validResults = searchRes?.results?.filter { it.mediaType == "movie" || it.mediaType == "tv" }
             val normTitle = normalizeTitle(title)
 
-            // Strict exact match - REMOVED the buggy startsWith logic from here
+            // 1. Strict exact match logic
             val exactCandidates = validResults?.filter { result ->
                 val tmdbTitleNorm = normalizeTitle(result.title)
                 val tmdbNameNorm = normalizeTitle(result.name)
@@ -154,11 +157,11 @@ class Toonstream : MainAPI() {
                 tmdbId = exactMatch.id
                 actualMediaType = exactMatch.mediaType ?: actualMediaType
             } else {
-                // startsWith is now safely moved only to the fallback section
-                val startsWithCandidates = if (normTitle.length >= 6) {
+                // 2. Fallback to startsWith ONLY if exact match fails
+                val startsWithCandidates = if (normTitle.length >= 4) {
                     validResults?.filter { result ->
                         val tmdbNorm = normalizeTitle(result.title ?: result.name)
-                        tmdbNorm.startsWith(normTitle)
+                        tmdbNorm.startsWith(normTitle) || normTitle.startsWith(tmdbNorm)
                     } ?: emptyList()
                 } else emptyList()
 
@@ -168,6 +171,7 @@ class Toonstream : MainAPI() {
                     tmdbId = startsWithMatch.id
                     actualMediaType = startsWithMatch.mediaType ?: actualMediaType
                 } else {
+                    // 3. Fallback to IMDb ID
                     val imdbId = document.select("a[href*='imdb.com/title']").attr("href")
                         .substringAfter("title/").substringBefore("/")
                         .takeIf { it.startsWith("tt") }
@@ -193,8 +197,9 @@ class Toonstream : MainAPI() {
 
             if (tmdbId == null) return listOf(null, null)
 
+            // Added 'ja' to ensure it fetches Japanese logos if English ones are missing
             val images = app.get(
-                "$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY&include_image_language=en,null"
+                "$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY&include_image_language=en,null,ja"
             ).parsedSafe<TmdbImages>()
 
             val logo = images?.logos?.firstOrNull { it.lang == "en" }
