@@ -69,35 +69,32 @@ class Toonstream : MainAPI() {
     private val TMDB_IMG = "https://image.tmdb.org/t/p/original"
 
     private fun cleanTitleText(title: String): String {
-        // Remove zero-width spaces and invisible formatting characters
-        var clean = title.replace(Regex("[\u200B-\u200D\uFEFF\\p{Cf}]"), "")
-        
-        // Replace non-breaking spaces with standard space
+        var clean = title
+
+        // Remove zero-width spaces and formatting characters
+        clean = clean.replace(Regex("[\u200B-\u200D\uFEFF\\p{Cf}]"), "")
         clean = clean.replace("\u00A0", " ")
+
+        // Safely remove any text inside brackets [] ()
+        clean = clean.replace(Regex("\\[.*?\\]"), "")
+        clean = clean.replace(Regex("\\(.*?\\)"), "")
 
         clean = clean.replace(Regex("(?i)Watch Online"), "")
         
         // Remove resolution or episode patterns like 1080x720 or 12x04
         clean = clean.replace("(?i)\\s+\\d+[x×]\\d+.*".toRegex(), "")
-        
-        // Replace special character '×' with standard 'x' for better TMDB matching
         clean = clean.replace("×", "x")
         
         clean = clean.replace("(?i)\\s+Episode\\s+\\d+.*".toRegex(), "")
         clean = clean.replace("(?i)\\s+Season\\s+\\d+.*".toRegex(), "")
         
-        // Remove dub and audio info
-        clean = clean.replace("(?i)\\s*hindi\\s*dub.*".toRegex(), "")
-        clean = clean.replace("(?i)\\s*english\\s*dub.*".toRegex(), "")
-        clean = clean.replace("(?i)\\s*dual\\s*audio.*".toRegex(), "")
-        clean = clean.replace("(?i)\\s*multi\\s*audio.*".toRegex(), "")
-        clean = clean.replace("(?i)\\s*fan\\s*dub.*".toRegex(), "")
-        clean = clean.replace("(?i)\\s*fandub.*".toRegex(), "")
+        // Remove dub/audio info safely
+        val removeWords = listOf("hindi dub", "english dub", "dual audio", "multi audio", "fan dub", "fandub", "eng-jap")
+        for (word in removeWords) {
+            clean = clean.replace(Regex("(?i)\\b${word}\\b.*"), "")
+        }
         
-        clean = clean.substringBefore("(")
-        clean = clean.substringBefore("[")
-        
-        // Fix multiple spaces that might have been left over and trim
+        // Clean up multiple spaces
         clean = clean.replace("\\s+".toRegex(), " ")
         return clean.trim()
     }
@@ -138,15 +135,18 @@ class Toonstream : MainAPI() {
             var actualMediaType = if (isSeries) "tv" else "movie"
 
             val safeTitle = encodeUri(title)
-            val searchRes = app.get("$TMDB_API/search/multi?api_key=$TMDB_KEY&query=$safeTitle")
+            val searchRes = app.get("$TMDB_API/search/multi?api_key=$TMDB_KEY&query=$safeTitle&language=en-US")
                 .parsedSafe<TmdbSearch>()
 
             val validResults = searchRes?.results?.filter { it.mediaType == "movie" || it.mediaType == "tv" }
             val normTitle = normalizeTitle(title)
 
-            val exactCandidates = validResults?.filter {
-                normalizeTitle(it.title) == normTitle ||
-                normalizeTitle(it.name) == normTitle
+            // Improved exact match logic to catch edge cases
+            val exactCandidates = validResults?.filter { result ->
+                val tmdbTitleNorm = normalizeTitle(result.title)
+                val tmdbNameNorm = normalizeTitle(result.name)
+                tmdbTitleNorm == normTitle || tmdbNameNorm == normTitle ||
+                (normTitle.length >= 5 && (tmdbTitleNorm.startsWith(normTitle) || tmdbNameNorm.startsWith(normTitle)))
             } ?: emptyList()
 
             val exactMatch = pickBestResult(exactCandidates, year)
@@ -193,8 +193,9 @@ class Toonstream : MainAPI() {
 
             if (tmdbId == null) return listOf(null, null)
 
+            // Added include_image_language just to be completely safe
             val images = app.get(
-                "$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY"
+                "$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY&include_image_language=en,null"
             ).parsedSafe<TmdbImages>()
 
             val logo = images?.logos?.firstOrNull { it.lang == "en" }
@@ -261,7 +262,6 @@ class Toonstream : MainAPI() {
             val rawTitle = el.selectFirst("h2.entry-title")?.text()
                 ?.replace(Regex("(?i)Watch Online"), "")?.trim() ?: return@mapNotNull null
             
-            // Validate if title is usable after cleaning
             val cleanedTitle = cleanTitleText(rawTitle)
             if (cleanedTitle.isBlank()) return@mapNotNull null
 
@@ -274,7 +274,6 @@ class Toonstream : MainAPI() {
             val rating = el.selectFirst("span.vote")?.text()
                 ?.replace("TMDB", "")?.trim()?.toDoubleOrNull()
 
-            // Pass rawTitle for display in the app UI
             newMovieSearchResponse(rawTitle, href, TvType.TvSeries) {
                 this.posterUrl = poster
                 this.score = Score.from10(rating)
@@ -286,7 +285,6 @@ class Toonstream : MainAPI() {
         val rawTitle = this.selectFirst("article > header > h2, article h2.entry-title")
             ?.text()?.replace(Regex("(?i)Watch Online"), "")?.trim() ?: return null
             
-        // Validate if title is usable after cleaning
         val cleanedTitle = cleanTitleText(rawTitle)
         if (cleanedTitle.isBlank()) return null
 
@@ -307,7 +305,6 @@ class Toonstream : MainAPI() {
             else                      -> TvType.Movie
         }
         
-        // Pass rawTitle for display in the app UI
         return newMovieSearchResponse(rawTitle, href, tvType) {
             this.posterUrl = poster
         }
