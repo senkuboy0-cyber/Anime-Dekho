@@ -33,7 +33,8 @@ import java.net.URLEncoder
 
 data class TmdbImages(
     @JsonProperty("logos") val logos: List<TmdbImage>? = null,
-    @JsonProperty("backdrops") val backdrops: List<TmdbImage>? = null
+    @JsonProperty("backdrops") val backdrops: List<TmdbImage>? = null,
+    @JsonProperty("posters") val posters: List<TmdbImage>? = null
 )
 
 data class TmdbImage(
@@ -148,11 +149,28 @@ class Toonstream : MainAPI() {
                 } else false
             } ?: validResults?.firstOrNull()
 
-            if (exactMatch?.posterPath != null) {
-                "$TMDB_IMG${exactMatch.posterPath}"
-            } else {
-                fallbackUrl
+            if (exactMatch != null) {
+                val mediaType = exactMatch.mediaType ?: if (isSeries) "tv" else "movie"
+                val images = app.get("$TMDB_API/$mediaType/${exactMatch.id}/images?api_key=$TMDB_KEY").parsedSafe<TmdbImages>()
+                
+                val posters = images?.posters
+                if (!posters.isNullOrEmpty()) {
+                    val bestPoster = posters.firstOrNull { it.lang == "en" }
+                        ?: posters.firstOrNull { it.lang == "hi" }
+                        ?: posters.firstOrNull { it.lang == "ja" }
+                        ?: posters.firstOrNull { it.lang == null }
+                        ?: posters.firstOrNull()
+                        
+                    if (bestPoster?.filePath != null) {
+                        return "$TMDB_IMG${bestPoster.filePath}"
+                    }
+                }
+                
+                if (exactMatch.posterPath != null) {
+                    return "$TMDB_IMG${exactMatch.posterPath}"
+                }
             }
+            fallbackUrl
         } catch (e: Exception) {
             fallbackUrl
         }
@@ -531,7 +549,7 @@ class Toonstream : MainAPI() {
                 truelink.contains("rubystm.com")     -> 3
                 truelink.contains("vidmoly.net")     -> 4
                 truelink.contains("abyssplayer.com") -> 5
-                truelink.contains("cloudy.upns.one") -> 6
+                truিন্ত("cloudy.upns.one") -> 6
                 else                                 -> 7
             }
             ServerInfo(truelink, serverlink, priority)
