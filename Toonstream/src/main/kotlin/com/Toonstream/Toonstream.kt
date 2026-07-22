@@ -18,7 +18,6 @@ import com.lagradost.cloudstream3.newTvSeriesLoadResponse
 import com.lagradost.cloudstream3.newEpisode
 import com.lagradost.cloudstream3.fixUrl
 import com.lagradost.cloudstream3.Score
-import com.lagradost.cloudstream3.amap
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
@@ -33,8 +32,7 @@ import java.net.URLEncoder
 
 data class TmdbImages(
     @JsonProperty("logos") val logos: List<TmdbImage>? = null,
-    @JsonProperty("backdrops") val backdrops: List<TmdbImage>? = null,
-    @JsonProperty("posters") val posters: List<TmdbImage>? = null
+    @JsonProperty("backdrops") val backdrops: List<TmdbImage>? = null
 )
 
 data class TmdbImage(
@@ -54,8 +52,7 @@ data class TmdbResult(
     @JsonProperty("name") val name: String? = null,
     @JsonProperty("release_date") val releaseDate: String? = null,
     @JsonProperty("first_air_date") val firstAirDate: String? = null,
-    @JsonProperty("overview") val overview: String? = null,
-    @JsonProperty("poster_path") val posterPath: String? = null
+    @JsonProperty("overview") val overview: String? = null
 )
 
 data class TmdbSearch(
@@ -130,50 +127,6 @@ class Toonstream : MainAPI() {
         if (siteYear == null || candidates.size == 1) return candidates.first()
         return candidates.firstOrNull { yearMatches(getResultYear(it), siteYear) }
             ?: candidates.first()
-    }
-
-    private suspend fun getTmdbPosterUrl(title: String, isSeries: Boolean, fallbackUrl: String?): String? {
-        return try {
-            val normTitle = normalizeTitle(cleanTitleText(title))
-            val safeTitle = encodeUri(cleanTitleText(title))
-            val searchRes = app.get("$TMDB_API/search/multi?api_key=$TMDB_KEY&query=$safeTitle")
-                .parsedSafe<TmdbSearch>()
-
-            val validResults = searchRes?.results?.filter { it.mediaType == "movie" || it.mediaType == "tv" }
-            
-            val exactMatch = validResults?.firstOrNull {
-                normalizeTitle(it.title) == normTitle || normalizeTitle(it.name) == normTitle
-            } ?: validResults?.firstOrNull { 
-                if (normTitle.length >= 6) {
-                    normalizeTitle(it.title ?: it.name).startsWith(normTitle)
-                } else false
-            } ?: validResults?.firstOrNull()
-
-            if (exactMatch != null) {
-                val mediaType = exactMatch.mediaType ?: if (isSeries) "tv" else "movie"
-                val images = app.get("$TMDB_API/$mediaType/${exactMatch.id}/images?api_key=$TMDB_KEY").parsedSafe<TmdbImages>()
-                
-                val posters = images?.posters
-                if (!posters.isNullOrEmpty()) {
-                    val bestPoster = posters.firstOrNull { it.lang == "en" }
-                        ?: posters.firstOrNull { it.lang == "hi" }
-                        ?: posters.firstOrNull { it.lang == "ja" }
-                        ?: posters.firstOrNull { it.lang == null }
-                        ?: posters.firstOrNull()
-                        
-                    if (bestPoster?.filePath != null) {
-                        return "$TMDB_IMG${bestPoster.filePath}"
-                    }
-                }
-                
-                if (exactMatch.posterPath != null) {
-                    return "$TMDB_IMG${exactMatch.posterPath}"
-                }
-            }
-            fallbackUrl
-        } catch (e: Exception) {
-            fallbackUrl
-        }
     }
 
     private suspend fun fetchTmdbAssets(document: Document, title: String, isSeries: Boolean, year: Int?): TmdbDetails {
@@ -295,15 +248,9 @@ class Toonstream : MainAPI() {
         val document = app.get(url).document
         val home = document.select("#movies-a ul > li").mapNotNull { it.toSearchResult() }
 
-        val enrichedHome = home.amap { item ->
-            val tmdbPoster = getTmdbPosterUrl(item.name, item.type == TvType.TvSeries, item.posterUrl)
-            if (tmdbPoster != null) item.posterUrl = tmdbPoster
-            item
-        }
-
         return newHomePageResponse(
-            list = HomePageList(name = request.name, list = enrichedHome, isHorizontalImages = false),
-            hasNext = enrichedHome.isNotEmpty()
+            list = HomePageList(name = request.name, list = home, isHorizontalImages = false),
+            hasNext = home.isNotEmpty()
         )
     }
 
@@ -318,7 +265,7 @@ class Toonstream : MainAPI() {
             it.select("article.post.dfx").isNotEmpty()
         } ?: return emptyList()
 
-        val items = section.select("article.post.dfx").mapNotNull { el ->
+        return section.select("article.post.dfx").mapNotNull { el ->
             val rawTitle = el.selectFirst("h2.entry-title")?.text()
                 ?.replace(Regex("(?i)Watch Online"), "")?.trim() ?: return@mapNotNull null
             
@@ -338,12 +285,6 @@ class Toonstream : MainAPI() {
                 this.posterUrl = poster
                 this.score = Score.from10(rating)
             }
-        }
-
-        return items.amap { item ->
-            val tmdbPoster = getTmdbPosterUrl(item.name, item.type == TvType.TvSeries, item.posterUrl)
-            if (tmdbPoster != null) item.posterUrl = tmdbPoster
-            item
         }
     }
 
@@ -392,14 +333,8 @@ class Toonstream : MainAPI() {
                 page = doc.select("article, .result-item, .item").mapNotNull { it.toSearchResult() }
             }
 
-            val enrichedPage = page.amap { item ->
-                val tmdbPoster = getTmdbPosterUrl(item.name, item.type == TvType.TvSeries, item.posterUrl)
-                if (tmdbPoster != null) item.posterUrl = tmdbPoster
-                item
-            }
-
-            if (enrichedPage.isEmpty() || results.containsAll(enrichedPage)) break
-            results.addAll(enrichedPage)
+            if (page.isEmpty() || results.containsAll(page)) break
+            results.addAll(page)
         }
         return results
     }
