@@ -549,7 +549,7 @@ class Toonstream : MainAPI() {
                 truelink.contains("rubystm.com")     -> 3
                 truelink.contains("vidmoly.net")     -> 4
                 truelink.contains("abyssplayer.com") -> 5
-                truিন্ত("cloudy.upns.one") -> 6
+                truelink.contains("cloudy.upns.one") -> 6
                 else                                 -> 7
             }
             ServerInfo(truelink, serverlink, priority)
