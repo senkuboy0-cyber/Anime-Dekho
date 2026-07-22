@@ -278,7 +278,7 @@ class Toonstream : MainAPI() {
         val home = document.select("#movies-a ul > li").mapNotNull { it.toSearchResult() }
 
         val enrichedHome = home.amap { item ->
-            val tmdbPoster = getTmdbPosterUrl(item.name, item.tvType == TvType.TvSeries, item.posterUrl)
+            val tmdbPoster = getTmdbPosterUrl(item.name, item.type == TvType.TvSeries, item.posterUrl)
             if (tmdbPoster != null) item.posterUrl = tmdbPoster
             item
         }
@@ -323,7 +323,7 @@ class Toonstream : MainAPI() {
         }
 
         return items.amap { item ->
-            val tmdbPoster = getTmdbPosterUrl(item.name, item.tvType == TvType.TvSeries, item.posterUrl)
+            val tmdbPoster = getTmdbPosterUrl(item.name, item.type == TvType.TvSeries, item.posterUrl)
             if (tmdbPoster != null) item.posterUrl = tmdbPoster
             item
         }
@@ -375,7 +375,7 @@ class Toonstream : MainAPI() {
             }
 
             val enrichedPage = page.amap { item ->
-                val tmdbPoster = getTmdbPosterUrl(item.name, item.tvType == TvType.TvSeries, item.posterUrl)
+                val tmdbPoster = getTmdbPosterUrl(item.name, item.type == TvType.TvSeries, item.posterUrl)
                 if (tmdbPoster != null) item.posterUrl = tmdbPoster
                 item
             }
