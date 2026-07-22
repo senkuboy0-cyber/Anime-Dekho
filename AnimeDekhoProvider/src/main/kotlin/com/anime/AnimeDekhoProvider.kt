@@ -292,15 +292,6 @@ open class AnimeDekhoProvider : MainAPI() {
         mainPageJson("category", "none", "telugu", "none")      to "Telugu"
     )
 
-    // Using amap to fetch all categories on the main page simultaneously
-    override suspend fun getMainPage(page: Int): List<HomePageResponse> {
-        return mainPage.amap { request ->
-            runCatching {
-                getMainPage(page, request)
-            }.getOrNull()
-        }.filterNotNull()
-    }
-
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val isSeries   = request.data.contains("type\":\"series")
         val isMovie    = request.data.contains("type\":\"movie")
