@@ -13,7 +13,6 @@ import com.lagradost.cloudstream3.Episode
 import com.lagradost.cloudstream3.mainPageOf
 import com.lagradost.cloudstream3.newHomePageResponse
 import com.lagradost.cloudstream3.newMovieSearchResponse
-import com.lagradost.cloudstream3.newTvSeriesSearchResponse
 import com.lagradost.cloudstream3.newMovieLoadResponse
 import com.lagradost.cloudstream3.newTvSeriesLoadResponse
 import com.lagradost.cloudstream3.newEpisode
@@ -181,18 +180,18 @@ class Toonstream : MainAPI() {
                                 val movieMatch = findRes.movies?.firstOrNull()
 
                                 if (isSeries) {
-                                    if (tvMatch != null) { 
-                                        tmdbId = tvMatch.id; actualMediaType = "tv"; tmdbOverview = tvMatch.overview 
+                                    if (tvMatch != null) {
+                                        tmdbId = tvMatch.id; actualMediaType = "tv"; tmdbOverview = tvMatch.overview
                                     }
-                                    else if (movieMatch != null) { 
-                                        tmdbId = movieMatch.id; actualMediaType = "movie"; tmdbOverview = movieMatch.overview 
+                                    else if (movieMatch != null) {
+                                        tmdbId = movieMatch.id; actualMediaType = "movie"; tmdbOverview = movieMatch.overview
                                     }
                                 } else {
-                                    if (movieMatch != null) { 
-                                        tmdbId = movieMatch.id; actualMediaType = "movie"; tmdbOverview = movieMatch.overview 
+                                    if (movieMatch != null) {
+                                        tmdbId = movieMatch.id; actualMediaType = "movie"; tmdbOverview = movieMatch.overview
                                     }
-                                    else if (tvMatch != null) { 
-                                        tmdbId = tvMatch.id; actualMediaType = "tv"; tmdbOverview = tvMatch.overview 
+                                    else if (tvMatch != null) {
+                                        tmdbId = tvMatch.id; actualMediaType = "tv"; tmdbOverview = tvMatch.overview
                                     }
                                 }
                             }
@@ -269,7 +268,7 @@ class Toonstream : MainAPI() {
         return section.select("article.post.dfx").mapNotNull { el ->
             val rawTitle = el.selectFirst("h2.entry-title")?.text()
                 ?.replace(Regex("(?i)Watch Online"), "")?.trim() ?: return@mapNotNull null
-            
+
             val cleanedTitle = cleanTitleText(rawTitle)
             if (cleanedTitle.isBlank()) return@mapNotNull null
 
@@ -292,7 +291,7 @@ class Toonstream : MainAPI() {
     private fun Element.toSearchResult(): SearchResponse? {
         val rawTitle = this.selectFirst("article > header > h2, article h2.entry-title")
             ?.text()?.replace(Regex("(?i)Watch Online"), "")?.trim() ?: return null
-            
+
         val cleanedTitle = cleanTitleText(rawTitle)
         if (cleanedTitle.isBlank()) return null
 
@@ -312,7 +311,7 @@ class Toonstream : MainAPI() {
             href.contains("/movies/") -> TvType.Movie
             else                      -> TvType.Movie
         }
-        
+
         return newMovieSearchResponse(rawTitle, href, tvType) {
             this.posterUrl = poster
         }
@@ -340,6 +339,73 @@ class Toonstream : MainAPI() {
         return results
     }
 
+    /**
+     * NEW: Parses the "Related Series" section from a series/movie details page
+     * and converts each card into a SearchResponse for the recommendations row.
+     *
+     * HTML structure on the site:
+     *   <h3>Related Series</h3>
+     *   <div class="owl-carousel owl-theme">
+     *     <article class="post dfx fcl movies">
+     *       <header class="entry-header">
+     *         <h2 class="entry-title">Title</h2>
+     *         <div class="entry-meta">
+     *           <span class="vote"><span>TMDB</span> 8.5</span>
+     *         </div>
+     *       </header>
+     *       <div class="post-thumbnail or-1">
+     *         <figure><img src="..." alt="Image Title"></figure>
+     *       </div>
+     *       <a href="/series/slug" class="lnk-blk"></a>
+     *     </article>
+     *     ...
+     *   </div>
+     */
+    private fun parseRecommendations(document: Document): List<SearchResponse> {
+        return try {
+            val relatedHeader = document.select("h3").firstOrNull {
+                it.text().contains("Related Series", ignoreCase = true)
+            } ?: return emptyList()
+
+            val relatedSection = relatedHeader.parents().firstOrNull { parent ->
+                parent.select(".owl-carousel article.post.dfx").isNotEmpty()
+            } ?: return emptyList()
+
+            relatedSection.select(".owl-carousel article.post.dfx").mapNotNull { el ->
+                val title = el.selectFirst("h2.entry-title")?.text()?.trim()
+                    ?: return@mapNotNull null
+
+                val hrefRaw = el.selectFirst("a.lnk-blk")?.attr("href")
+                    ?: return@mapNotNull null
+                val href = fixUrl(hrefRaw)
+
+                val posterRaw = el.selectFirst("img")?.attr("src") ?: ""
+                val poster = when {
+                    posterRaw.isEmpty()         -> null
+                    posterRaw.startsWith("http") -> posterRaw
+                    posterRaw.startsWith("//")   -> "https:$posterRaw"
+                    else                         -> posterRaw
+                }
+
+                val rating = el.selectFirst("span.vote")?.text()
+                    ?.replace("TMDB", "")?.trim()?.toDoubleOrNull()
+
+                val tvType = when {
+                    href.contains("/series/") -> TvType.TvSeries
+                    href.contains("/movies/") -> TvType.Movie
+                    else                      -> TvType.Movie
+                }
+
+                newMovieSearchResponse(title, href, tvType) {
+                    this.posterUrl = poster
+                    this.score = Score.from10(rating)
+                }
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
     override suspend fun load(url: String): LoadResponse {
         val document   = app.get(url).document
 
@@ -357,7 +423,7 @@ class Toonstream : MainAPI() {
         val tmdbAssets  = fetchTmdbAssets(document, cleanTitle, isSeries, year)
         val logoUrl     = tmdbAssets.logoUrl
         val backdropUrl = tmdbAssets.backdropUrl
-        
+
         val finalDescription = if (!tmdbAssets.overview.isNullOrBlank()) {
             tmdbAssets.overview
         } else {
@@ -366,29 +432,14 @@ class Toonstream : MainAPI() {
 
         val displayTitle = rawTitle
 
-        val recommendationsList = mutableListOf<SearchResponse>()
-        document.select(".series-grid .series-card").forEach { el ->
-            val recTitle = el.selectFirst("h4")?.text()?.trim()
-            val recHref = el.selectFirst("a")?.attr("href")
-            
-            if (!recTitle.isNullOrEmpty() && !recHref.isNullOrEmpty()) {
-                val recPosterRaw = el.selectFirst("img")?.attr("src") ?: ""
-                val recPoster = when {
-                    recPosterRaw.startsWith("http") -> recPosterRaw
-                    recPosterRaw.startsWith("//")   -> "https:$recPosterRaw"
-                    recPosterRaw.isNotEmpty()       -> recPosterRaw
-                    else -> null
-                }
-                recommendationsList.add(
-                    newTvSeriesSearchResponse(recTitle, fixUrl(recHref), TvType.TvSeries) {
-                        this.posterUrl = recPoster
-                    }
-                )
-            }
-        }
+        // NEW: pull the Related Series row from the same document
+        val recommendations = parseRecommendations(document)
 
         return if (isSeries) {
-            loadSeries(url, document, displayTitle, poster, finalDescription, logoUrl, backdropUrl, year, recommendationsList)
+            loadSeries(
+                url, document, displayTitle, poster, finalDescription,
+                logoUrl, backdropUrl, year, recommendations
+            )
         } else {
             newMovieLoadResponse(displayTitle, url, TvType.Movie, url) {
                 this.posterUrl           = poster
@@ -396,7 +447,7 @@ class Toonstream : MainAPI() {
                 this.plot                = finalDescription
                 this.year                = year
                 this.logoUrl             = logoUrl
-                this.recommendations     = recommendationsList
+                this.recommendations     = recommendations   // NEW
             }
         }
     }
@@ -410,7 +461,7 @@ class Toonstream : MainAPI() {
         logoUrl: String?,
         backdropUrl: String?,
         year: Int?,
-        recommendationsList: List<SearchResponse>
+        recommendations: List<SearchResponse> = emptyList()   // NEW param
     ): LoadResponse {
         val episodes = mutableListOf<Episode>()
 
@@ -447,7 +498,7 @@ class Toonstream : MainAPI() {
                     ?.let { if (it.startsWith("http")) it else "https:$it" }
                 val epName = ep.selectFirst("h5.entry-title1, h2.entry-title, h3.entry-title")
                     ?.text()?.trim() ?: "Episode"
-                
+
                 val currentEpisodeNumber = epNum
                 epNum += 1
 
@@ -470,7 +521,7 @@ class Toonstream : MainAPI() {
                 val epName   = ep.selectFirst("h5.entry-title1")?.text()?.trim() ?: "Episode"
                 val numEpi   = ep.selectFirst("span.num-epi")?.text()?.trim()
                 val epSeason = numEpi?.substringBefore("x")?.toIntOrNull() ?: 1
-                
+
                 val currentCount = seasonCounters[epSeason] ?: 0
                 val newCount = currentCount + 1
                 seasonCounters[epSeason] = newCount
@@ -490,7 +541,7 @@ class Toonstream : MainAPI() {
             this.plot                = description
             this.year                = year
             this.logoUrl             = logoUrl
-            this.recommendations     = recommendationsList
+            this.recommendations     = recommendations   // NEW
         }
     }
 
