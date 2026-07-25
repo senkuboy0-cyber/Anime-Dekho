@@ -365,8 +365,23 @@ class Toonstream : MainAPI() {
 
         val displayTitle = rawTitle
 
+        val recommendations = document.select(".series-grid .series-card").mapNotNull { el ->
+            val recTitle = el.selectFirst("h4")?.text()?.trim() ?: return@mapNotNull null
+            val recHref = el.selectFirst("a")?.attr("href") ?: return@mapNotNull null
+            val recPosterRaw = el.selectFirst("img")?.attr("src") ?: ""
+            val recPoster = when {
+                recPosterRaw.startsWith("http") -> recPosterRaw
+                recPosterRaw.startsWith("//")   -> "https:$recPosterRaw"
+                recPosterRaw.isNotEmpty()       -> recPosterRaw
+                else -> null
+            }
+            newMovieSearchResponse(recTitle, fixUrl(recHref), TvType.TvSeries) {
+                this.posterUrl = recPoster
+            }
+        }
+
         return if (isSeries) {
-            loadSeries(url, document, displayTitle, poster, finalDescription, logoUrl, backdropUrl, year)
+            loadSeries(url, document, displayTitle, poster, finalDescription, logoUrl, backdropUrl, year, recommendations)
         } else {
             newMovieLoadResponse(displayTitle, url, TvType.Movie, url) {
                 this.posterUrl           = poster
@@ -374,6 +389,7 @@ class Toonstream : MainAPI() {
                 this.plot                = finalDescription
                 this.year                = year
                 this.logoUrl             = logoUrl
+                this.recommendations     = recommendations
             }
         }
     }
@@ -386,7 +402,8 @@ class Toonstream : MainAPI() {
         description: String?,
         logoUrl: String?,
         backdropUrl: String?,
-        year: Int?
+        year: Int?,
+        recommendationsList: List<SearchResponse>?
     ): LoadResponse {
         val episodes = mutableListOf<Episode>()
 
@@ -466,6 +483,7 @@ class Toonstream : MainAPI() {
             this.plot                = description
             this.year                = year
             this.logoUrl             = logoUrl
+            this.recommendations     = recommendationsList
         }
     }
 
