@@ -415,6 +415,8 @@ class Toonstream : MainAPI() {
                 catch (e: Exception) { seasonDoc }
             } else seasonDoc
 
+            var epNum = 1
+
             finalDoc.select("article.post.episodes, article.post").forEach { ep ->
                 val epHref = ep.selectFirst("a.lnk-blk, a")?.attr("href") ?: return@forEach
                 val epPoster = ep.selectFirst("img")?.attr("src")
@@ -425,11 +427,14 @@ class Toonstream : MainAPI() {
                     this.name      = epName
                     this.posterUrl = epPoster
                     this.season    = season
+                    this.episode   = epNum++
                 })
             }
         }
 
         if (episodes.isEmpty()) {
+            val seasonCounters = mutableMapOf<Int, Int>()
+
             document.select("#episode_by_temp article.post").forEach { ep ->
                 val epHref = ep.selectFirst("a.lnk-blk, a")?.attr("href") ?: return@forEach
                 val epPoster = ep.selectFirst("img")?.attr("src")
@@ -437,10 +442,15 @@ class Toonstream : MainAPI() {
                 val epName   = ep.selectFirst("h5.entry-title1")?.text()?.trim() ?: "Episode"
                 val numEpi   = ep.selectFirst("span.num-epi")?.text()?.trim()
                 val epSeason = numEpi?.substringBefore("x")?.toIntOrNull() ?: 1
+                
+                val count = seasonCounters.getOrDefault(epSeason, 0) + 1
+                seasonCounters[epSeason] = count
+
                 episodes.add(newEpisode(fixUrl(epHref)) {
                     this.name      = epName
                     this.posterUrl = epPoster
                     this.season    = epSeason
+                    this.episode   = count
                 })
             }
         }
