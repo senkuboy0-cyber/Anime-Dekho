@@ -91,7 +91,7 @@ class Toonstream : MainAPI() {
         clean = clean.replace("(?i)\\s*english\\s*dub.*".toRegex(), "")
         clean = clean.replace("(?i)\\s*dual\\s*audio.*".toRegex(), "")
         clean = clean.replace("(?i)\\s*multi\\s*audio.*".toRegex(), "")
-        clean = clean.replace("(?i)\\s*fan\s*dub.*".toRegex(), "")
+        clean = clean.replace("(?i)\\s*fan\\s*dub.*".toRegex(), "")
         clean = clean.replace("(?i)\\s*fandub.*".toRegex(), "")
         clean = clean.substringBefore("(")
         clean = clean.substringBefore("[")
@@ -343,32 +343,6 @@ class Toonstream : MainAPI() {
      * Parses the "Related Series" (on /series/... pages) or
      * "Related Movies" (on /movies/... pages) section and converts each
      * card into a SearchResponse for the recommendations row.
-     *
-     * Series page structure:
-     *   <section>
-     *     <header><div><h3>Related Series</h3></div></header>
-     *     <div class="owl-carousel owl-theme">
-     *       <article class="post dfx fcl movies">
-     *         <header class="entry-header">
-     *           <h2 class="entry-title">Title</h2>
-     *           <div class="entry-meta">
-     *             <span class="vote"><span>TMDB</span> 8.5</span>
-     *           </div>
-     *         </header>
-     *         <div class="post-thumbnail or-1">
-     *           <figure><img src="..." alt="Image Title"></figure>
-     *         </div>
-     *         <a href="/series/slug" class="lnk-blk"></a>
-     *       </article>
-     *     </div>
-     *   </section>
-     *
-     * Movie page structure:
-     *   <section class="section episodes">
-     *     <header><div><h3>Related Movies</h3></div></header>
-     *     <div class="owl-carousel owl-theme"> ... </div>
-     *   </section>
-     *   (article body identical, only href prefix differs: /movies/slug)
      */
     private fun parseRecommendations(document: Document): List<SearchResponse> {
         return try {
