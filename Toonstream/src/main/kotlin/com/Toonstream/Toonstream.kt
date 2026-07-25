@@ -423,11 +423,15 @@ class Toonstream : MainAPI() {
                     ?.let { if (it.startsWith("http")) it else "https:$it" }
                 val epName = ep.selectFirst("h5.entry-title1, h2.entry-title, h3.entry-title")
                     ?.text()?.trim() ?: "Episode"
+                
+                val currentEpisodeNumber = epNum
+                epNum += 1
+
                 episodes.add(newEpisode(fixUrl(epHref)) {
                     this.name      = epName
                     this.posterUrl = epPoster
                     this.season    = season
-                    this.episode   = epNum++
+                    this.episode   = currentEpisodeNumber
                 })
             }
         }
@@ -443,14 +447,15 @@ class Toonstream : MainAPI() {
                 val numEpi   = ep.selectFirst("span.num-epi")?.text()?.trim()
                 val epSeason = numEpi?.substringBefore("x")?.toIntOrNull() ?: 1
                 
-                val count = seasonCounters.getOrDefault(epSeason, 0) + 1
-                seasonCounters[epSeason] = count
+                val currentCount = seasonCounters[epSeason] ?: 0
+                val newCount = currentCount + 1
+                seasonCounters[epSeason] = newCount
 
                 episodes.add(newEpisode(fixUrl(epHref)) {
                     this.name      = epName
                     this.posterUrl = epPoster
                     this.season    = epSeason
-                    this.episode   = count
+                    this.episode   = newCount
                 })
             }
         }
