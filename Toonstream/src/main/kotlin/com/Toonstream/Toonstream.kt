@@ -6,7 +6,6 @@ import com.lagradost.cloudstream3.HomePageResponse
 import com.lagradost.cloudstream3.HomePageList
 import com.lagradost.cloudstream3.MainPageRequest
 import com.lagradost.cloudstream3.SearchResponse
-import com.lagradost.cloudstream3.SearchResponseList
 import com.lagradost.cloudstream3.LoadResponse
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.TvType
@@ -14,8 +13,6 @@ import com.lagradost.cloudstream3.Episode
 import com.lagradost.cloudstream3.mainPageOf
 import com.lagradost.cloudstream3.newHomePageResponse
 import com.lagradost.cloudstream3.newMovieSearchResponse
-import com.lagradost.cloudstream3.newSearchResponseList
-import com.lagradost.cloudstream3.toNewSearchResponseList
 import com.lagradost.cloudstream3.newMovieLoadResponse
 import com.lagradost.cloudstream3.newTvSeriesLoadResponse
 import com.lagradost.cloudstream3.newEpisode
@@ -320,28 +317,33 @@ class Toonstream : MainAPI() {
         }
     }
 
-    override suspend fun search(query: String, page: Int): SearchResponseList {
-        val safeQuery = encodeUri(query)
-        val searchUrl = "$mainUrl/s?q=$safeQuery&type=all&page=$page"
-        val doc = app.get(searchUrl).document
+    override suspend fun search(query: String): List<SearchResponse> {
+        val results = mutableListOf<SearchResponse>()
+        for (i in 1..3) {
+            val searchUrl = if (i == 1) {
+                "$mainUrl/s?q=$query"
+            } else {
+                "$mainUrl/page/$i/s?q=$query"
+            }
 
-        var pageResults = doc.select("#movies-a ul > li").mapNotNull { it.toSearchResult() }
-        if (pageResults.isEmpty()) {
-            pageResults = doc.select("article, .result-item, .item").mapNotNull { it.toSearchResult() }
-        }
+            val doc = app.get(searchUrl).document
 
-        if (pageResults.isEmpty()) {
-            return newSearchResponseList(emptyList())
-        }
+            var page = doc.select("#movies-a ul > li").mapNotNull { it.toSearchResult() }
+            if (page.isEmpty()) {
+                page = doc.select("article, .result-item, .item").mapNotNull { it.toSearchResult() }
+            }
 
-        val searchList = mutableListOf<SearchResponse>()
-        for (result in pageResults) {
-            searchList.add(result)
+            if (page.isEmpty() || results.containsAll(page)) break
+            results.addAll(page)
         }
-        
-        return searchList.toNewSearchResponseList()
+        return results
     }
 
+    /**
+     * Parses the "Related Series" (on /series/... pages) or
+     * "Related Movies" (on /movies/... pages) section and converts each
+     * card into a SearchResponse for the recommendations row.
+     */
     private fun parseRecommendations(document: Document): List<SearchResponse> {
         return try {
             val relatedHeader = document.select("h3").firstOrNull { h ->
