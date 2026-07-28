@@ -14,12 +14,13 @@ import com.lagradost.cloudstream3.Episode
 import com.lagradost.cloudstream3.mainPageOf
 import com.lagradost.cloudstream3.newHomePageResponse
 import com.lagradost.cloudstream3.newMovieSearchResponse
+import com.lagradost.cloudstream3.newSearchResponseList
+import com.lagradost.cloudstream3.toNewSearchResponseList
 import com.lagradost.cloudstream3.newMovieLoadResponse
 import com.lagradost.cloudstream3.newTvSeriesLoadResponse
 import com.lagradost.cloudstream3.newEpisode
 import com.lagradost.cloudstream3.fixUrl
 import com.lagradost.cloudstream3.Score
-import com.lagradost.cloudstream3.toNewSearchResponseList
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
@@ -320,15 +321,25 @@ class Toonstream : MainAPI() {
     }
 
     override suspend fun search(query: String, page: Int): SearchResponseList {
-        val searchUrl = "$mainUrl/s?q=$query&type=all&page=$page"
+        val safeQuery = encodeUri(query)
+        val searchUrl = "$mainUrl/s?q=$safeQuery&type=all&page=$page"
         val doc = app.get(searchUrl).document
 
-        var searchResults = doc.select("#movies-a ul > li").mapNotNull { it.toSearchResult() }
-        if (searchResults.isEmpty()) {
-            searchResults = doc.select("article, .result-item, .item").mapNotNull { it.toSearchResult() }
+        var pageResults = doc.select("#movies-a ul > li").mapNotNull { it.toSearchResult() }
+        if (pageResults.isEmpty()) {
+            pageResults = doc.select("article, .result-item, .item").mapNotNull { it.toSearchResult() }
         }
 
-        return searchResults.toNewSearchResponseList()
+        if (pageResults.isEmpty()) {
+            return newSearchResponseList(emptyList())
+        }
+
+        val searchList = mutableListOf<SearchResponse>()
+        for (result in pageResults) {
+            searchList.add(result)
+        }
+        
+        return searchList.toNewSearchResponseList()
     }
 
     private fun parseRecommendations(document: Document): List<SearchResponse> {
