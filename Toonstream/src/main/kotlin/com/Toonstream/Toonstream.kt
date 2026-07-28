@@ -6,7 +6,6 @@ import com.lagradost.cloudstream3.HomePageResponse
 import com.lagradost.cloudstream3.HomePageList
 import com.lagradost.cloudstream3.MainPageRequest
 import com.lagradost.cloudstream3.SearchResponse
-import com.lagradost.cloudstream3.SearchResponseList
 import com.lagradost.cloudstream3.LoadResponse
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.TvType
@@ -19,7 +18,6 @@ import com.lagradost.cloudstream3.newTvSeriesLoadResponse
 import com.lagradost.cloudstream3.newEpisode
 import com.lagradost.cloudstream3.fixUrl
 import com.lagradost.cloudstream3.Score
-import com.lagradost.cloudstream3.toNewSearchResponseList
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
@@ -319,16 +317,30 @@ class Toonstream : MainAPI() {
         }
     }
 
-    override suspend fun search(query: String, page: Int): SearchResponseList {
-        val searchUrl = "$mainUrl/s?q=$query&type=all&page=$page"
-        val doc = app.get(searchUrl).document
+    override suspend fun search(query: String): List<SearchResponse> {
+        val results = mutableListOf<SearchResponse>()
+        
+        for (page in 1..3) {
+            val searchUrl = "$mainUrl/s?q=$query&type=all&page=$page"
+            val doc = app.get(searchUrl).document
 
-        var searchResults = doc.select("#movies-a ul > li").mapNotNull { it.toSearchResult() }
-        if (searchResults.isEmpty()) {
-            searchResults = doc.select("article, .result-item, .item").mapNotNull { it.toSearchResult() }
+            var pageResults = doc.select("#movies-a ul > li").mapNotNull { it.toSearchResult() }
+            if (pageResults.isEmpty()) {
+                pageResults = doc.select("article, .result-item, .item").mapNotNull { it.toSearchResult() }
+            }
+
+            if (pageResults.isEmpty()) break
+            
+            val newResults = pageResults.filter { newRes -> 
+                results.none { it.url == newRes.url }
+            }
+            
+            if (newResults.isEmpty()) break
+            
+            results.addAll(newResults)
         }
-
-        return searchResults.toNewSearchResponseList()
+        
+        return results
     }
 
     private fun parseRecommendations(document: Document): List<SearchResponse> {
