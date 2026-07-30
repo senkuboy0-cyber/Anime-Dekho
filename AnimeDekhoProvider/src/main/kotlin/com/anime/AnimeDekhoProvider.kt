@@ -290,11 +290,13 @@ open class AnimeDekhoProvider : MainAPI() {
             ).parsedSafe<TmdbImages>()
 
             val logo = images?.logos?.firstOrNull { it.lang == "en" }
+                ?: images?.logos?.firstOrNull { it.lang == "xx" }
                 ?: images?.logos?.firstOrNull { it.lang == null }
                 ?: images?.logos?.firstOrNull { it.lang == "ja" }
                 ?: images?.logos?.firstOrNull()
 
-            val backdrop = images?.backdrops?.firstOrNull { it.lang == null }
+            val backdrop = images?.backdrops?.firstOrNull { it.lang == "xx" }
+                ?: images?.backdrops?.firstOrNull { it.lang == null }
                 ?: images?.backdrops?.firstOrNull { it.lang == "en" }
                 ?: images?.backdrops?.firstOrNull()
 
