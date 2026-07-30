@@ -87,29 +87,17 @@ open class AnimeDekhoProvider : MainAPI() {
     private val fanDubRegex2 = Regex("(?i)\\s*fandub.*")
     private val normalizeRegex = Regex("[^a-zA-Z0-9]")
 
-    /**
-     * Extracts year from a TmdbResult using release_date or first_air_date
-     */
     private fun getResultYear(result: TmdbResult): Int? {
         return (result.releaseDate ?: result.firstAirDate)
             ?.substringBefore("-")
             ?.toIntOrNull()
     }
 
-    /**
-     * Returns true if TMDB year and site year are within +-1 tolerance.
-     * If either year is unknown, returns true to avoid filtering out valid results.
-     */
     private fun yearMatches(tmdbYear: Int?, siteYear: Int?): Boolean {
         if (siteYear == null || tmdbYear == null) return true
         return Math.abs(tmdbYear - siteYear) <= 1
     }
 
-    /**
-     * Picks the best result from candidates.
-     * If multiple candidates exist and siteYear is known, prefers the year-matching one.
-     * Falls back to first candidate if no year match found.
-     */
     private fun pickBestResult(candidates: List<TmdbResult>, siteYear: Int?): TmdbResult? {
         if (candidates.isEmpty()) return null
         if (siteYear == null || candidates.size == 1) return candidates.first()
@@ -117,9 +105,6 @@ open class AnimeDekhoProvider : MainAPI() {
             ?: candidates.first()
     }
 
-    /**
-     * A helper function to deeply clean the title for TMDB searching.
-     */
     private fun cleanTitleText(title: String): String {
         var clean = title.replace(Regex("Watch Online", RegexOption.IGNORE_CASE), "")
 
@@ -135,9 +120,6 @@ open class AnimeDekhoProvider : MainAPI() {
         return clean.trim()
     }
 
-    /**
-     * Custom crash-proof URL encoder to safely handle all special characters
-     */
     private fun encodeUri(text: String): String {
         return text.replace("%", "%25")
             .replace(" ", "%20")
@@ -152,16 +134,10 @@ open class AnimeDekhoProvider : MainAPI() {
             .replace(",", "%2C")
     }
 
-    /**
-     * Normalizes title for exact matching comparison by removing ALL spaces and special characters
-     */
     private fun normalizeTitle(s: String?): String {
         return s?.replace(normalizeRegex, "")?.lowercase() ?: ""
     }
 
-    /**
-     * Extracted to prevent compiler crashes and dynamically clean titles
-     */
     private fun extractRawTitle(title: String): String? {
         return title
             .replace(Regex("Watch Online ", RegexOption.IGNORE_CASE), "")
@@ -185,9 +161,6 @@ open class AnimeDekhoProvider : MainAPI() {
             }
     }
 
-    /**
-     * Fetches year via AJAX request if not found directly in the DOM
-     */
     private suspend fun fetchYearViaAjax(movieUrl: String, pageHtml: String): Int? {
         return try {
             val nonce = Regex("\"nonce\"\\s*:\\s*\"([^\"]+)\"").find(pageHtml)?.groupValues?.get(1) ?: return null
@@ -220,9 +193,6 @@ open class AnimeDekhoProvider : MainAPI() {
         }
     }
 
-    /**
-     * Fetches TMDB Details (ID, MediaType, Logo, Backdrop)
-     */
     private suspend fun fetchTmdbDetails(document: Document, title: String, isSeries: Boolean, year: Int?): TmdbDetails {
         return try {
             var tmdbId: Int? = null
