@@ -289,10 +289,14 @@ open class AnimeDekhoProvider : MainAPI() {
                 "$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY"
             ).parsedSafe<TmdbImages>()
 
-            val logo = images?.logos?.firstOrNull { it.lang == "en" }
-                ?: images?.logos?.firstOrNull { it.lang == null }
-                ?: images?.logos?.firstOrNull { it.lang == "ja" }
-                ?: images?.logos?.firstOrNull()
+            val validLogos = images?.logos?.filter { 
+                it.filePath != null && !it.filePath.endsWith(".svg", ignoreCase = true) 
+            }
+
+            val logo = validLogos?.firstOrNull { it.lang == "en" }
+                ?: validLogos?.firstOrNull { it.lang == null }
+                ?: validLogos?.firstOrNull { it.lang == "ja" }
+                ?: validLogos?.firstOrNull()
 
             val backdrop = images?.backdrops?.firstOrNull { it.lang == null }
                 ?: images?.backdrops?.firstOrNull { it.lang == "en" }
