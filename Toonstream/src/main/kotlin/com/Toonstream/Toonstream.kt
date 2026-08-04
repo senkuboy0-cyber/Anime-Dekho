@@ -205,10 +205,15 @@ class Toonstream : MainAPI() {
                 "$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY"
             ).parsedSafe<TmdbImages>()
 
-            val logo = images?.logos?.firstOrNull { it.lang == "en" && it.filePath != null && !it.filePath.contains(".svg") && !it.filePath.contains(".SVG") }
-                ?: images?.logos?.firstOrNull { it.lang == null && it.filePath != null && !it.filePath.contains(".svg") && !it.filePath.contains(".SVG") }
-                ?: images?.logos?.firstOrNull { it.lang == "ja" && it.filePath != null && !it.filePath.contains(".svg") && !it.filePath.contains(".SVG") }
-                ?: images?.logos?.firstOrNull { it.filePath != null && !it.filePath.contains(".svg") && !it.filePath.contains(".SVG") }
+            val logo = images?.logos?.firstOrNull { 
+                it.filePath != null && !it.filePath.endsWith(".svg") && !it.filePath.endsWith(".SVG") && it.lang == "en"
+            } ?: images?.logos?.firstOrNull { 
+                it.filePath != null && !it.filePath.endsWith(".svg") && !it.filePath.endsWith(".SVG") && it.lang == null
+            } ?: images?.logos?.firstOrNull { 
+                it.filePath != null && !it.filePath.endsWith(".svg") && !it.filePath.endsWith(".SVG") && it.lang == "ja"
+            } ?: images?.logos?.firstOrNull { 
+                it.filePath != null && !it.filePath.endsWith(".svg") && !it.filePath.endsWith(".SVG")
+            }
 
             val backdrop = images?.backdrops?.firstOrNull { it.lang == null }
                 ?: images?.backdrops?.firstOrNull { it.lang == "en" }
