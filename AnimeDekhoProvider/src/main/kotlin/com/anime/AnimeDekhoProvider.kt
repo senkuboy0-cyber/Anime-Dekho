@@ -289,9 +289,9 @@ open class AnimeDekhoProvider : MainAPI() {
                 "$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY"
             ).parsedSafe<TmdbImages>()
 
-            val validLogos = images?.logos?.filter { image ->
-                val path = image.filePath
-                path != null && !path.endsWith(".svg", ignoreCase = true)
+            val validLogos = images?.logos?.filter { 
+                val path = it.filePath ?: ""
+                !path.endsWith(".svg") && !path.endsWith(".SVG") 
             }
 
             val logo = validLogos?.firstOrNull { it.lang == "en" }
