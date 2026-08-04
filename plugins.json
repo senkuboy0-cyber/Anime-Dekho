@@ -9,7 +9,7 @@
             "senkuboy0-cyber"
         ],
         "description": "Hindi Dubbed Anime On AnimeDekho",
-        "fileSize": 71682,
+        "fileSize": 71726,
         "repositoryUrl": "https://github.com/senkuboy0-cyber/Anime-Dekho",
         "language": "hi",
         "tvTypes": [
@@ -19,10 +19,10 @@
         ],
         "iconUrl": "https://animedekho.app/wp-content/uploads/2023/07/AnimeDekho-Logo-300x-1.png",
         "apiVersion": 1,
-        "fileHash": "sha256-e49a688aaff0b0a6bc2af0eef7c5b420657af9a6628e8165fc19a4940e578143",
-        "jarFileSize": 295688,
+        "fileHash": "sha256-f76aa84d476397c8e0714aa46ef8564e6390099c858152c391186b897ff3a55a",
+        "jarFileSize": 295720,
         "jarUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/AnimeDekhoProvider.jar",
-        "jarHash": "sha256-e3c656d59613ba1b2b211127909084fe78e11bdf46ca212fd489cf5cb781fef0"
+        "jarHash": "sha256-3e267c38d5f655659cd6eb7cf46c6800de3775000df8dbb1bb909316b175b7c5"
     },
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/Toonstream.cs3",
