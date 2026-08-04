@@ -205,15 +205,10 @@ class Toonstream : MainAPI() {
                 "$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY"
             ).parsedSafe<TmdbImages>()
 
-            val validLogos = images?.logos?.filter { 
-                val path = it.filePath ?: ""
-                !path.endsWith(".svg") && !path.endsWith(".SVG") 
-            }
-
-            val logo = validLogos?.firstOrNull { it.lang == "en" }
-                ?: validLogos?.firstOrNull { it.lang == null }
-                ?: validLogos?.firstOrNull { it.lang == "ja" }
-                ?: validLogos?.firstOrNull()
+            val logo = images?.logos?.firstOrNull { it.lang == "en" && it.filePath != null && !it.filePath.contains(".svg") && !it.filePath.contains(".SVG") }
+                ?: images?.logos?.firstOrNull { it.lang == null && it.filePath != null && !it.filePath.contains(".svg") && !it.filePath.contains(".SVG") }
+                ?: images?.logos?.firstOrNull { it.lang == "ja" && it.filePath != null && !it.filePath.contains(".svg") && !it.filePath.contains(".SVG") }
+                ?: images?.logos?.firstOrNull { it.filePath != null && !it.filePath.contains(".svg") && !it.filePath.contains(".SVG") }
 
             val backdrop = images?.backdrops?.firstOrNull { it.lang == null }
                 ?: images?.backdrops?.firstOrNull { it.lang == "en" }
@@ -344,11 +339,6 @@ class Toonstream : MainAPI() {
         return results
     }
 
-    /**
-     * Parses the "Related Series" (on /series/... pages) or
-     * "Related Movies" (on /movies/... pages) section and converts each
-     * card into a SearchResponse for the recommendations row.
-     */
     private fun parseRecommendations(document: Document): List<SearchResponse> {
         return try {
             val relatedHeader = document.select("h3").firstOrNull { h ->
