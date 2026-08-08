@@ -74,8 +74,6 @@ open class AnimeDekhoProvider : MainAPI() {
         TvType.Movie,
     )
 
-    private var cachedSearchNonce: String = ""
-
     // ─── TMDB API Features ──────────────────────────────────────────
     private val TMDB_API = "https://api.themoviedb.org/3"
     private val TMDB_KEY = "1865f43a0549ca50d341dd9ab8b29f49"
@@ -174,7 +172,7 @@ open class AnimeDekhoProvider : MainAPI() {
                                  
             val type = if (movieUrl.contains("series")) "series" else "movies"
 
-            val vars = """{"_wpsearch":"$nonce","search":"$searchTerm","type":"$type","genres":[],"years":[],"sort":1,"page":1}"""
+            val vars = "{\"_wpsearch\":\"" + nonce + "\",\"search\":\"" + searchTerm + "\",\"type\":\"" + type + "\",\"genres\":[],\"years\":[],\"sort\":1,\"page\":1}"
 
             val response = app.post(
                 "$mainUrl/wp-admin/admin-ajax.php",
@@ -304,7 +302,7 @@ open class AnimeDekhoProvider : MainAPI() {
         val isCategory = !isSeries && !isMovie
 
         if (isCategory) {
-            val term      = Regex("\"term\":\"([^\"]+)\"").find(request.data)?.groupValues?.get(1) ?: ""
+            val term      = Regex("\"term\":\"([^\"]+)\"").find(request.data)?.groupValues?.getOrNull(1) ?: ""
             val pageUrl   = "$mainUrl/category/$term/"
             val pagedUrl  = if (page == 1) pageUrl else "${pageUrl}page/$page/"
             val document  = app.get(pagedUrl).document
@@ -322,7 +320,7 @@ open class AnimeDekhoProvider : MainAPI() {
         }
 
         val pageDoc = app.get(pageUrl).document
-        val nonce   = Regex("\"nonce\":\"([^\"]+)\"").find(pageDoc.html())?.groupValues?.get(1) ?: ""
+        val nonce   = Regex("\"nonce\":\"([^\"]+)\"").find(pageDoc.html())?.groupValues?.getOrNull(1) ?: ""
 
         val filterEl  = pageDoc.selectFirst("[data-taxonomy]")
         val taxonomy  = filterEl?.attr("data-taxonomy") ?: "none"
@@ -330,7 +328,7 @@ open class AnimeDekhoProvider : MainAPI() {
         val searchVal = filterEl?.attr("data-search")   ?: "none"
         val typeVal   = filterEl?.attr("data-type")     ?: "none"
 
-        val vars = """{"_wpsearch":"$nonce","taxonomy":"$taxonomy","search":"$searchVal","term":"$termVal","type":"$typeVal","genres":[],"years":[],"sort":1,"page":$page}"""
+        val vars = "{\"_wpsearch\":\"" + nonce + "\",\"taxonomy\":\"" + taxonomy + "\",\"search\":\"" + searchVal + "\",\"term\":\"" + termVal + "\",\"type\":\"" + typeVal + "\",\"genres\":[],\"years\":[],\"sort\":1,\"page\":" + page + "}"
 
         val response = app.post(
             "$mainUrl/wp-admin/admin-ajax.php",
@@ -353,7 +351,7 @@ open class AnimeDekhoProvider : MainAPI() {
     private fun Element.toSearchResult(): AnimeSearchResponse? {
         val href      = this.selectFirst("a.lnk-blk")?.attr("href") ?: return null
         var posterUrl = this.selectFirst("div figure img")?.attr("src")
-        if (posterUrl!!.contains("data:image")) {
+        if (posterUrl != null && posterUrl.contains("data:image")) {
             posterUrl = this.selectFirst("div figure img")?.attr("data-lazy-src")
         }
         val imgAlt = this.selectFirst("div figure img")?.attr("alt")?.trim()
@@ -369,62 +367,70 @@ open class AnimeDekhoProvider : MainAPI() {
     }
 
     override suspend fun search(query: String, page: Int): SearchResponseList {
-        val results = mutableListOf<AnimeSearchResponse>()
+        val results = mutableListOf<SearchResponse>()
         var hasNext = false
 
-        if (page == 1) {
-            val searchUrl = "$mainUrl/?s=$query"
-            val document = app.get(searchUrl).document
-            val html = document.html()
-            
-            val nonceMatch = Regex("\"nonce\"\\s*:\\s*\"([^\"]+)\"").find(html) 
-                ?: Regex("\"_wpsearch\"\\s*:\\s*\"([^\"]+)\"").find(html)
-                
-            if (nonceMatch != null) {
-                cachedSearchNonce = nonceMatch.groupValues[1]
+        val searchUrl = "$mainUrl/?s=$query"
+        val document = app.get(searchUrl).document
+        val html = document.html()
+        
+        var nonce = ""
+        val nonceMatch1 = Regex("\"nonce\"\\s*:\\s*\"([^\"]+)\"").find(html)
+        val nonceMatch2 = Regex("\"_wpsearch\"\\s*:\\s*\"([^\"]+)\"").find(html)
+        
+        if (nonceMatch1 != null) {
+            val extracted = nonceMatch1.groupValues.getOrNull(1)
+            if (extracted != null) {
+                nonce = extracted
             }
+        } else if (nonceMatch2 != null) {
+            val extracted = nonceMatch2.groupValues.getOrNull(1)
+            if (extracted != null) {
+                nonce = extracted
+            }
+        }
 
+        if (page == 1) {
             var elements = document.select("ul[data-results] li article")
             if (elements.isEmpty()) {
                 elements = document.select("article")
             }
             
-            val mapped = elements.mapNotNull { it.toSearchResult() }
-            results.addAll(mapped)
-            
-            hasNext = mapped.isNotEmpty()
-        } else {
-            if (cachedSearchNonce.isEmpty()) {
-                val searchUrl = "$mainUrl/?s=$query"
-                val document = app.get(searchUrl).document
-                val html = document.html()
-                
-                val nonceMatch = Regex("\"nonce\"\\s*:\\s*\"([^\"]+)\"").find(html) 
-                    ?: Regex("\"_wpsearch\"\\s*:\\s*\"([^\"]+)\"").find(html)
-                    
-                if (nonceMatch != null) {
-                    cachedSearchNonce = nonceMatch.groupValues[1]
+            for (element in elements) {
+                val res = element.toSearchResult()
+                if (res != null) {
+                    results.add(res)
                 }
             }
             
-            if (cachedSearchNonce.isNotEmpty()) {
-                val vars = """{"_wpsearch":"$cachedSearchNonce","taxonomy":"none","search":"$query","season":"none","type":"mixed","genres":[],"years":[],"sort":"1","page":$page}"""
+            if (results.isNotEmpty()) {
+                hasNext = true
+            }
+        } else {
+            if (nonce.isNotEmpty()) {
+                val vars = "{\"_wpsearch\":\"" + nonce + "\",\"taxonomy\":\"none\",\"search\":\"" + query + "\",\"season\":\"none\",\"type\":\"mixed\",\"genres\":[],\"years\":[],\"sort\":\"1\",\"page\":" + page + "}"
                 
                 val response = app.post(
-                    "$mainUrl/wp-admin/admin-ajax.php",
+                    url = "$mainUrl/wp-admin/admin-ajax.php",
                     data = mapOf("action" to "action_search", "vars" to vars),
                     headers = mapOf(
                         "Content-Type"     to "application/x-www-form-urlencoded",
-                        "X-WP-Nonce"       to cachedSearchNonce,
+                        "X-WP-Nonce"       to nonce,
                         "X-Requested-With" to "XMLHttpRequest",
-                        "Referer"          to "$mainUrl/?s=$query"
+                        "Referer"          to searchUrl
                     )
                 ).text
 
                 val json = parseJson<AjaxResponse>(response)
                 val htmlDoc = Jsoup.parse(json.html)
                 
-                results.addAll(htmlDoc.select("article").mapNotNull { it.toSearchResult() })
+                val elements = htmlDoc.select("article")
+                for (element in elements) {
+                    val res = element.toSearchResult()
+                    if (res != null) {
+                        results.add(res)
+                    }
+                }
                 hasNext = json.next
             }
         }
