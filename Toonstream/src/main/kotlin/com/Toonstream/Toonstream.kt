@@ -333,16 +333,24 @@ class Toonstream : MainAPI() {
 
         val doc = app.get(searchUrl).document
 
-        // Remove the Random Series section entirely from the DOM before parsing
-        val randomHeader = doc.select("h3, h2, h1").firstOrNull { it.text().contains("Random", ignoreCase = true) }
-        if (randomHeader != null) {
-            var currentNode = randomHeader.nextSibling()
-            while (currentNode != null) {
-                val nextNode = currentNode.nextSibling()
-                currentNode.remove()
-                currentNode = nextNode
+        var boundaryElement = doc.select("h1, h2, h3, h4, h5, h6").firstOrNull {
+            val text = it.text().trim()
+            text.equals("Random Series", ignoreCase = true) || 
+            text.equals("Random Movies", ignoreCase = true) || 
+            text.equals("Random", ignoreCase = true)
+        }
+
+        while (boundaryElement != null && boundaryElement.tagName() != "body" && boundaryElement.tagName() != "html") {
+            var currentSibling = boundaryElement.nextSibling()
+            while (currentSibling != null) {
+                val next = currentSibling.nextSibling()
+                currentSibling.remove()
+                currentSibling = next
             }
-            randomHeader.remove()
+            
+            val parentElement = boundaryElement.parent()
+            boundaryElement.remove()
+            boundaryElement = parentElement
         }
 
         var pageResults = doc.select("#movies-a ul > li").mapNotNull { it.toSearchResult() }
@@ -350,9 +358,8 @@ class Toonstream : MainAPI() {
             pageResults = doc.select("article, .result-item, .item").mapNotNull { it.toSearchResult() }
         }
         
-        // Fallback if the site just uses simple divs for results
         if (pageResults.isEmpty()) {
-            pageResults = doc.select("div:has(h2):has(img)").mapNotNull { it.toSearchResult() }
+            pageResults = doc.select("div:has(h2):has(a):has(img)").mapNotNull { it.toSearchResult() }
         }
 
         return newSearchResponseList(
