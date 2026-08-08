@@ -254,7 +254,27 @@ class Toonstream : MainAPI() {
         }
 
         val path = request.data
-        val url = if (page == 1) "$mainUrl/$path/" else "$mainUrl/$path/?page=$page"
+        var url = ""
+        
+        if (path == "category/anime-series") {
+            if (page == 1) {
+                url = "$mainUrl/category/anime%20series?type=series"
+            } else {
+                url = "$mainUrl/category/anime-series?type=series&page=$page"
+            }
+        } else if (path == "category/anime-movies") {
+            if (page == 1) {
+                url = "$mainUrl/category/anime%20movies?type=movies"
+            } else {
+                url = "$mainUrl/category/anime-movies?type=movies&page=$page"
+            }
+        } else {
+            if (page == 1) {
+                url = "$mainUrl/$path/"
+            } else {
+                url = "$mainUrl/$path/?page=$page"
+            }
+        }
 
         val document = app.get(url).document
         
@@ -287,15 +307,8 @@ class Toonstream : MainAPI() {
         val articles = section.select("article.post.dfx")
         
         for (el in articles) {
-            val h2Text = el.selectFirst("h2.entry-title")?.text()?.replace(Regex("(?i)Watch Online"), "")?.trim()
-            if (h2Text.isNullOrBlank()) continue
-            
-            val epiSpan = el.selectFirst("span.num-epi, .episodes")?.text()?.trim()
-            val rawTitle = if (epiSpan != null && !h2Text.contains(epiSpan)) {
-                "$h2Text $epiSpan"
-            } else {
-                h2Text
-            }
+            val rawTitle = el.selectFirst("h2.entry-title")?.text()?.replace(Regex("(?i)Watch Online"), "")?.trim()
+            if (rawTitle.isNullOrBlank()) continue
 
             val cleanedTitle = cleanTitleText(rawTitle)
             if (cleanedTitle.isBlank()) continue
@@ -310,12 +323,12 @@ class Toonstream : MainAPI() {
             val rating = el.selectFirst("span.vote")?.text()?.replace("TMDB", "")?.trim()?.toDoubleOrNull()
             
             val tmdbAssets = fetchTmdbAssets(null, cleanedTitle, true, null)
-            val finalPoster = tmdbAssets.backdropUrl ?: fallbackPoster
+            val backdrop = tmdbAssets.backdropUrl ?: fallbackPoster
             
             val mediaJson = Gson().toJson(ToonMedia(href, fallbackPoster))
 
             val res = newMovieSearchResponse(rawTitle, mediaJson, TvType.TvSeries) {
-                this.posterUrl = finalPoster
+                this.posterUrl = backdrop
                 this.score = Score.from10(rating)
             }
             results.add(res)
@@ -325,17 +338,8 @@ class Toonstream : MainAPI() {
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        val h2Text = this.selectFirst("article > header > h2, article h2.entry-title, h2")
-            ?.text()?.replace(Regex("(?i)Watch Online"), "")?.trim()
-            
-        val epiSpan = this.selectFirst("span.num-epi, .episodes")?.text()?.trim()
-        val rawTitle = if (h2Text != null && epiSpan != null && !h2Text.contains(epiSpan)) {
-            "$h2Text $epiSpan"
-        } else {
-            h2Text
-        }
-            
-        if (rawTitle.isNullOrBlank()) return null
+        val rawTitle = this.selectFirst("article > header > h2, article h2.entry-title, h2")
+            ?.text()?.replace(Regex("(?i)Watch Online"), "")?.trim() ?: return null
 
         val cleanedTitle = cleanTitleText(rawTitle)
         if (cleanedTitle.isBlank()) return null
