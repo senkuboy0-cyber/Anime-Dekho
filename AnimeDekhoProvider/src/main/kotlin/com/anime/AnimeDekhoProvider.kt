@@ -74,6 +74,8 @@ open class AnimeDekhoProvider : MainAPI() {
         TvType.Movie,
     )
 
+    private var cachedSearchNonce: String = ""
+
     // ─── TMDB API Features ──────────────────────────────────────────
     private val TMDB_API = "https://api.themoviedb.org/3"
     private val TMDB_KEY = "1865f43a0549ca50d341dd9ab8b29f49"
@@ -87,29 +89,17 @@ open class AnimeDekhoProvider : MainAPI() {
     private val fanDubRegex2 = Regex("(?i)\\s*fandub.*")
     private val normalizeRegex = Regex("[^a-zA-Z0-9]")
 
-    /**
-     * Extracts year from a TmdbResult using release_date or first_air_date
-     */
     private fun getResultYear(result: TmdbResult): Int? {
         return (result.releaseDate ?: result.firstAirDate)
             ?.substringBefore("-")
             ?.toIntOrNull()
     }
 
-    /**
-     * Returns true if TMDB year and site year are within +-1 tolerance.
-     * If either year is unknown, returns true to avoid filtering out valid results.
-     */
     private fun yearMatches(tmdbYear: Int?, siteYear: Int?): Boolean {
         if (siteYear == null || tmdbYear == null) return true
         return Math.abs(tmdbYear - siteYear) <= 1
     }
 
-    /**
-     * Picks the best result from candidates.
-     * If multiple candidates exist and siteYear is known, prefers the year-matching one.
-     * Falls back to first candidate if no year match found.
-     */
     private fun pickBestResult(candidates: List<TmdbResult>, siteYear: Int?): TmdbResult? {
         if (candidates.isEmpty()) return null
         if (siteYear == null || candidates.size == 1) return candidates.first()
@@ -117,9 +107,6 @@ open class AnimeDekhoProvider : MainAPI() {
             ?: candidates.first()
     }
 
-    /**
-     * A helper function to deeply clean the title for TMDB searching.
-     */
     private fun cleanTitleText(title: String): String {
         var clean = title.replace(Regex("Watch Online", RegexOption.IGNORE_CASE), "")
 
@@ -135,9 +122,6 @@ open class AnimeDekhoProvider : MainAPI() {
         return clean.trim()
     }
 
-    /**
-     * Custom crash-proof URL encoder to safely handle all special characters
-     */
     private fun encodeUri(text: String): String {
         return text.replace("%", "%25")
             .replace(" ", "%20")
@@ -152,16 +136,10 @@ open class AnimeDekhoProvider : MainAPI() {
             .replace(",", "%2C")
     }
 
-    /**
-     * Normalizes title for exact matching comparison by removing ALL spaces and special characters
-     */
     private fun normalizeTitle(s: String?): String {
         return s?.replace(normalizeRegex, "")?.lowercase() ?: ""
     }
 
-    /**
-     * Extracted to prevent compiler crashes and dynamically clean titles
-     */
     private fun extractRawTitle(title: String): String? {
         return title
             .replace(Regex("Watch Online ", RegexOption.IGNORE_CASE), "")
@@ -185,9 +163,6 @@ open class AnimeDekhoProvider : MainAPI() {
             }
     }
 
-    /**
-     * Fetches year via AJAX request if not found directly in the DOM
-     */
     private suspend fun fetchYearViaAjax(movieUrl: String, pageHtml: String): Int? {
         return try {
             val nonce = Regex("\"nonce\"\\s*:\\s*\"([^\"]+)\"").find(pageHtml)?.groupValues?.get(1) ?: return null
@@ -220,9 +195,6 @@ open class AnimeDekhoProvider : MainAPI() {
         }
     }
 
-    /**
-     * Fetches TMDB Details (ID, MediaType, Logo, Backdrop)
-     */
     private suspend fun fetchTmdbDetails(document: Document, title: String, isSeries: Boolean, year: Int?): TmdbDetails {
         return try {
             var tmdbId: Int? = null
@@ -311,7 +283,6 @@ open class AnimeDekhoProvider : MainAPI() {
             TmdbDetails(null, null, null, null)
         }
     }
-    // ─────────────────────────────────────────────────────────────
 
     private fun mainPageJson(taxonomy: String, search: String, term: String, type: String): String {
         return "{\"taxonomy\":\"$taxonomy\",\"search\":\"$search\",\"term\":\"$term\",\"type\":\"$type\"}"
@@ -397,9 +368,68 @@ open class AnimeDekhoProvider : MainAPI() {
         }
     }
 
-    override suspend fun search(query: String): List<AnimeSearchResponse> {
-        val document = app.get("$mainUrl/?s=$query").document
-        return document.select("ul[data-results] li article").mapNotNull { it.toSearchResult() }
+    override suspend fun search(query: String, page: Int): SearchResponseList {
+        val results = mutableListOf<AnimeSearchResponse>()
+        var hasNext = false
+
+        if (page == 1) {
+            val searchUrl = "$mainUrl/?s=$query"
+            val document = app.get(searchUrl).document
+            val html = document.html()
+            
+            val nonceMatch = Regex("\"nonce\"\\s*:\\s*\"([^\"]+)\"").find(html) 
+                ?: Regex("\"_wpsearch\"\\s*:\\s*\"([^\"]+)\"").find(html)
+                
+            if (nonceMatch != null) {
+                cachedSearchNonce = nonceMatch.groupValues[1]
+            }
+
+            var elements = document.select("ul[data-results] li article")
+            if (elements.isEmpty()) {
+                elements = document.select("article")
+            }
+            
+            val mapped = elements.mapNotNull { it.toSearchResult() }
+            results.addAll(mapped)
+            
+            hasNext = mapped.isNotEmpty()
+        } else {
+            if (cachedSearchNonce.isEmpty()) {
+                val searchUrl = "$mainUrl/?s=$query"
+                val document = app.get(searchUrl).document
+                val html = document.html()
+                
+                val nonceMatch = Regex("\"nonce\"\\s*:\\s*\"([^\"]+)\"").find(html) 
+                    ?: Regex("\"_wpsearch\"\\s*:\\s*\"([^\"]+)\"").find(html)
+                    
+                if (nonceMatch != null) {
+                    cachedSearchNonce = nonceMatch.groupValues[1]
+                }
+            }
+            
+            if (cachedSearchNonce.isNotEmpty()) {
+                val vars = """{"_wpsearch":"$cachedSearchNonce","taxonomy":"none","search":"$query","season":"none","type":"mixed","genres":[],"years":[],"sort":"1","page":$page}"""
+                
+                val response = app.post(
+                    "$mainUrl/wp-admin/admin-ajax.php",
+                    data = mapOf("action" to "action_search", "vars" to vars),
+                    headers = mapOf(
+                        "Content-Type"     to "application/x-www-form-urlencoded",
+                        "X-WP-Nonce"       to cachedSearchNonce,
+                        "X-Requested-With" to "XMLHttpRequest",
+                        "Referer"          to "$mainUrl/?s=$query"
+                    )
+                ).text
+
+                val json = parseJson<AjaxResponse>(response)
+                val htmlDoc = Jsoup.parse(json.html)
+                
+                results.addAll(htmlDoc.select("article").mapNotNull { it.toSearchResult() })
+                hasNext = json.next
+            }
+        }
+
+        return newSearchResponseList(results, hasNext)
     }
 
     override suspend fun load(url: String): LoadResponse {
