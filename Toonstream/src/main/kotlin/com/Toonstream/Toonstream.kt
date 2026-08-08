@@ -287,8 +287,15 @@ class Toonstream : MainAPI() {
         val articles = section.select("article.post.dfx")
         
         for (el in articles) {
-            val rawTitle = el.selectFirst("h2.entry-title")?.text()?.replace(Regex("(?i)Watch Online"), "")?.trim()
-            if (rawTitle.isNullOrBlank()) continue
+            val h2Text = el.selectFirst("h2.entry-title")?.text()?.replace(Regex("(?i)Watch Online"), "")?.trim()
+            if (h2Text.isNullOrBlank()) continue
+            
+            val epiSpan = el.selectFirst("span.num-epi, .episodes")?.text()?.trim()
+            val rawTitle = if (epiSpan != null && !h2Text.contains(epiSpan)) {
+                "$h2Text $epiSpan"
+            } else {
+                h2Text
+            }
 
             val cleanedTitle = cleanTitleText(rawTitle)
             if (cleanedTitle.isBlank()) continue
@@ -305,7 +312,7 @@ class Toonstream : MainAPI() {
             val tmdbAssets = fetchTmdbAssets(null, cleanedTitle, true, null)
             val finalPoster = tmdbAssets.backdropUrl ?: fallbackPoster
             
-            val mediaJson = Gson().toJson(ToonMedia(href, finalPoster))
+            val mediaJson = Gson().toJson(ToonMedia(href, fallbackPoster))
 
             val res = newMovieSearchResponse(rawTitle, mediaJson, TvType.TvSeries) {
                 this.posterUrl = finalPoster
@@ -318,8 +325,17 @@ class Toonstream : MainAPI() {
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        val rawTitle = this.selectFirst("article > header > h2, article h2.entry-title, h2")
-            ?.text()?.replace(Regex("(?i)Watch Online"), "")?.trim() ?: return null
+        val h2Text = this.selectFirst("article > header > h2, article h2.entry-title, h2")
+            ?.text()?.replace(Regex("(?i)Watch Online"), "")?.trim()
+            
+        val epiSpan = this.selectFirst("span.num-epi, .episodes")?.text()?.trim()
+        val rawTitle = if (h2Text != null && epiSpan != null && !h2Text.contains(epiSpan)) {
+            "$h2Text $epiSpan"
+        } else {
+            h2Text
+        }
+            
+        if (rawTitle.isNullOrBlank()) return null
 
         val cleanedTitle = cleanTitleText(rawTitle)
         if (cleanedTitle.isBlank()) return null
