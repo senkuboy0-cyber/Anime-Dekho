@@ -30,6 +30,7 @@ import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.app
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.Document
+import org.jsoup.Jsoup
 import java.net.URLEncoder
 
 data class TmdbImages(
@@ -331,27 +332,16 @@ class Toonstream : MainAPI() {
             "$mainUrl/s?q=$query&type=all&page=$page"
         }
 
-        val doc = app.get(searchUrl).document
-
-        var boundaryElement = doc.select("h1, h2, h3, h4, h5, h6").firstOrNull {
-            val text = it.text().trim()
-            text.equals("Random Series", ignoreCase = true) || 
-            text.equals("Random Movies", ignoreCase = true) || 
-            text.equals("Random", ignoreCase = true)
+        var htmlText = app.get(searchUrl).text
+        
+        val regex = Regex("(?i)<[^>]+>\\s*(Random Series|Random Movies|Random)\\s*</[^>]+>")
+        val match = regex.find(htmlText)
+        
+        if (match != null) {
+            htmlText = htmlText.substring(0, match.range.first)
         }
 
-        while (boundaryElement != null && boundaryElement.tagName() != "body" && boundaryElement.tagName() != "html") {
-            var currentSibling = boundaryElement.nextSibling()
-            while (currentSibling != null) {
-                val next = currentSibling.nextSibling()
-                currentSibling.remove()
-                currentSibling = next
-            }
-            
-            val parentElement = boundaryElement.parent()
-            boundaryElement.remove()
-            boundaryElement = parentElement
-        }
+        val doc = Jsoup.parse(htmlText)
 
         var pageResults = doc.select("#movies-a ul > li").mapNotNull { it.toSearchResult() }
         if (pageResults.isEmpty()) {
@@ -490,7 +480,7 @@ class Toonstream : MainAPI() {
                     headers = mapOf("X-Requested-With" to "XMLHttpRequest")
                 ).document
             } catch (e: Exception) {
-                org.jsoup.Jsoup.parse("")
+                Jsoup.parse("")
             }
 
             val finalDoc = if (seasonDoc.select("article").isEmpty()) {
