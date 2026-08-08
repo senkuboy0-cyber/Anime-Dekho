@@ -1,6 +1,7 @@
 package com.Toonstream
 
 import com.fasterxml.jackson.annotation.JsonProperty
+import com.google.gson.Gson
 import com.lagradost.cloudstream3.MainAPI
 import com.lagradost.cloudstream3.HomePageResponse
 import com.lagradost.cloudstream3.HomePageList
@@ -70,6 +71,8 @@ data class TmdbDetails(
 
 data class ServerInfo(val truelink: String, val referer: String, val priority: Int)
 
+data class ToonMedia(val url: String, val poster: String?)
+
 class Toonstream : MainAPI() {
     override var mainUrl              = "https://toon-stream.site"
     override var name                 = "Toonstream"
@@ -132,7 +135,7 @@ class Toonstream : MainAPI() {
             ?: candidates.first()
     }
 
-    private suspend fun fetchTmdbAssets(document: Document, title: String, isSeries: Boolean, year: Int?): TmdbDetails {
+    private suspend fun fetchTmdbAssets(document: Document?, title: String, isSeries: Boolean, year: Int?): TmdbDetails {
         return try {
             var tmdbId: Int? = null
             var actualMediaType = if (isSeries) "tv" else "movie"
@@ -171,9 +174,9 @@ class Toonstream : MainAPI() {
                     actualMediaType = startsWithMatch.mediaType ?: actualMediaType
                     tmdbOverview = startsWithMatch.overview
                 } else {
-                    val imdbId = document.select("a[href*='imdb.com/title']").attr("href")
-                        .substringAfter("title/").substringBefore("/")
-                        .takeIf { it.startsWith("tt") }
+                    val imdbId = document?.select("a[href*='imdb.com/title']")?.attr("href")
+                        ?.substringAfter("title/")?.substringBefore("/")
+                        ?.takeIf { it.startsWith("tt") }
 
                     if (imdbId != null) {
                         app.get("$TMDB_API/find/$imdbId?api_key=$TMDB_KEY&external_source=imdb_id")
@@ -254,7 +257,16 @@ class Toonstream : MainAPI() {
         val url = if (page == 1) "$mainUrl/$path/" else "$mainUrl/$path/?page=$page"
 
         val document = app.get(url).document
-        val home = document.select("#movies-a ul > li").mapNotNull { it.toSearchResult() }
+        
+        val home = mutableListOf<SearchResponse>()
+        val elements = document.select("#movies-a ul > li")
+        
+        for (el in elements) {
+            val res = el.toSearchResult()
+            if (res != null) {
+                home.add(res)
+            }
+        }
 
         return newHomePageResponse(
             list = HomePageList(name = request.name, list = home, isHorizontalImages = false),
@@ -265,35 +277,44 @@ class Toonstream : MainAPI() {
     private suspend fun fetchFreshDrop(): List<SearchResponse> {
         val document = app.get("$mainUrl/home/").document
 
-        val header = document.select("h3.section-title")
-            .firstOrNull { it.text().contains("Fresh Drop", ignoreCase = true) }
-            ?: return emptyList()
+        val header = document.select("h3.section-title").firstOrNull { it.text().contains("Fresh Drop", ignoreCase = true) }
+        if (header == null) return emptyList()
 
-        val section = header.parents().firstOrNull {
-            it.select("article.post.dfx").isNotEmpty()
-        } ?: return emptyList()
+        val section = header.parents().firstOrNull { it.select("article.post.dfx").isNotEmpty() }
+        if (section == null) return emptyList()
 
-        return section.select("article.post.dfx").mapNotNull { el ->
-            val rawTitle = el.selectFirst("h2.entry-title")?.text()
-                ?.replace(Regex("(?i)Watch Online"), "")?.trim() ?: return@mapNotNull null
+        val results = mutableListOf<SearchResponse>()
+        val articles = section.select("article.post.dfx")
+        
+        for (el in articles) {
+            val rawTitle = el.selectFirst("h2.entry-title")?.text()?.replace(Regex("(?i)Watch Online"), "")?.trim()
+            if (rawTitle.isNullOrBlank()) continue
 
             val cleanedTitle = cleanTitleText(rawTitle)
-            if (cleanedTitle.isBlank()) return@mapNotNull null
+            if (cleanedTitle.isBlank()) continue
 
-            val href  = el.selectFirst("a.lnk-blk")?.attr("href")?.let { fixUrl(it) }
-                ?: return@mapNotNull null
+            val hrefRaw = el.selectFirst("a.lnk-blk")?.attr("href")
+            if (hrefRaw.isNullOrBlank()) continue
+            val href = fixUrl(hrefRaw)
+            
             val posterRaw = el.selectFirst("img")?.attr("src")
-            val poster = if (posterRaw.isNullOrEmpty()) null
-                else if (posterRaw.startsWith("http")) posterRaw
-                else "https:$posterRaw"
-            val rating = el.selectFirst("span.vote")?.text()
-                ?.replace("TMDB", "")?.trim()?.toDoubleOrNull()
+            val fallbackPoster = if (posterRaw.isNullOrEmpty()) null else if (posterRaw.startsWith("http")) posterRaw else "https:$posterRaw"
+            
+            val rating = el.selectFirst("span.vote")?.text()?.replace("TMDB", "")?.trim()?.toDoubleOrNull()
+            
+            val tmdbAssets = fetchTmdbAssets(null, cleanedTitle, true, null)
+            val finalPoster = tmdbAssets.backdropUrl ?: fallbackPoster
+            
+            val mediaJson = Gson().toJson(ToonMedia(href, finalPoster))
 
-            newMovieSearchResponse(rawTitle, href, TvType.TvSeries) {
-                this.posterUrl = poster
+            val res = newMovieSearchResponse(rawTitle, mediaJson, TvType.TvSeries) {
+                this.posterUrl = finalPoster
                 this.score = Score.from10(rating)
             }
+            results.add(res)
         }
+        
+        return results
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
@@ -319,8 +340,10 @@ class Toonstream : MainAPI() {
             href.contains("/movies/") -> TvType.Movie
             else                      -> TvType.Movie
         }
+        
+        val mediaJson = Gson().toJson(ToonMedia(href, poster))
 
-        return newMovieSearchResponse(rawTitle, href, tvType) {
+        return newMovieSearchResponse(rawTitle, mediaJson, tvType) {
             this.posterUrl = poster
         }
     }
@@ -342,14 +365,23 @@ class Toonstream : MainAPI() {
         }
 
         val doc = Jsoup.parse(htmlText)
-
-        var pageResults = doc.select("#movies-a ul > li").mapNotNull { it.toSearchResult() }
-        if (pageResults.isEmpty()) {
-            pageResults = doc.select("article, .result-item, .item").mapNotNull { it.toSearchResult() }
+        
+        val pageResults = mutableListOf<SearchResponse>()
+        var elements = doc.select("#movies-a ul > li")
+        
+        if (elements.isEmpty()) {
+            elements = doc.select("article, .result-item, .item")
         }
         
-        if (pageResults.isEmpty()) {
-            pageResults = doc.select("div:has(h2):has(a):has(img)").mapNotNull { it.toSearchResult() }
+        if (elements.isEmpty()) {
+            elements = doc.select("div:has(h2):has(a):has(img)")
+        }
+        
+        for (el in elements) {
+            val res = el.toSearchResult()
+            if (res != null) {
+                pageResults.add(res)
+            }
         }
 
         return newSearchResponseList(
@@ -359,23 +391,28 @@ class Toonstream : MainAPI() {
     }
 
     private fun parseRecommendations(document: Document): List<SearchResponse> {
-        return try {
+        val results = mutableListOf<SearchResponse>()
+        try {
             val relatedHeader = document.select("h3").firstOrNull { h ->
                 val t = h.text().trim()
                 t.equals("Related Series", ignoreCase = true) ||
                 t.equals("Related Movies", ignoreCase = true)
-            } ?: return emptyList()
+            }
+            if (relatedHeader == null) return emptyList()
 
             val relatedSection = relatedHeader.parents().firstOrNull { parent ->
                 parent.select(".owl-carousel article.post.dfx").isNotEmpty()
-            } ?: return emptyList()
+            }
+            if (relatedSection == null) return emptyList()
 
-            relatedSection.select(".owl-carousel article.post.dfx").mapNotNull { el ->
+            val articles = relatedSection.select(".owl-carousel article.post.dfx")
+            
+            for (el in articles) {
                 val title = el.selectFirst("h2.entry-title")?.text()?.trim()
-                    ?: return@mapNotNull null
+                if (title.isNullOrBlank()) continue
 
                 val hrefRaw = el.selectFirst("a.lnk-blk")?.attr("href")
-                    ?: return@mapNotNull null
+                if (hrefRaw.isNullOrBlank()) continue
                 val href = fixUrl(hrefRaw)
 
                 val posterRaw = el.selectFirst("img")?.attr("src") ?: ""
@@ -386,36 +423,49 @@ class Toonstream : MainAPI() {
                     else                         -> posterRaw
                 }
 
-                val rating = el.selectFirst("span.vote")?.text()
-                    ?.replace("TMDB", "")?.trim()?.toDoubleOrNull()
+                val rating = el.selectFirst("span.vote")?.text()?.replace("TMDB", "")?.trim()?.toDoubleOrNull()
 
                 val tvType = when {
                     href.contains("/series/") -> TvType.TvSeries
                     href.contains("/movies/") -> TvType.Movie
                     else                      -> TvType.Movie
                 }
+                
+                val mediaJson = Gson().toJson(ToonMedia(href, poster))
 
-                newMovieSearchResponse(title, href, tvType) {
+                val res = newMovieSearchResponse(title, mediaJson, tvType) {
                     this.posterUrl = poster
                     this.score = Score.from10(rating)
                 }
+                results.add(res)
             }
         } catch (e: Exception) {
-            emptyList()
+            // Ignored
         }
+        return results
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val document   = app.get(url).document
+        val media = try {
+            Gson().fromJson(url, ToonMedia::class.java)
+        } catch (e: Exception) {
+            ToonMedia(url, null)
+        }
+        
+        val actualUrl = media.url
+        val document   = app.get(actualUrl).document
 
         val rawTitle   = document.selectFirst("header.entry-header > h1")
             ?.text()?.replace(Regex("(?i)Watch Online"), "")?.trim() ?: ""
         val cleanTitle = cleanTitleText(rawTitle)
 
-        val posterRaw  = document.select("div.bghd > img").attr("src")
-        val poster     = if (posterRaw.startsWith("http")) posterRaw else "https:$posterRaw"
+        val posterRaw  = document.select("div.bghd > img").attr("src") ?: ""
+        val fallbackPoster = if (posterRaw.startsWith("http")) posterRaw else "https:$posterRaw"
+        
+        val poster = media.poster ?: fallbackPoster
+        
         val description = document.selectFirst("div.description > p")?.text()?.trim()
-        val isSeries   = url.contains("/series/")
+        val isSeries   = actualUrl.contains("/series/")
 
         val year = document.selectFirst("span.year")?.text()?.trim()?.toIntOrNull()
 
@@ -439,7 +489,7 @@ class Toonstream : MainAPI() {
                 logoUrl, backdropUrl, year, recommendations
             )
         } else {
-            newMovieLoadResponse(displayTitle, url, TvType.Movie, url) {
+            newMovieLoadResponse(displayTitle, url, TvType.Movie, actualUrl) {
                 this.posterUrl           = poster
                 this.backgroundPosterUrl = backdropUrl ?: poster
                 this.plot                = finalDescription
@@ -463,9 +513,22 @@ class Toonstream : MainAPI() {
     ): LoadResponse {
         val episodes = mutableListOf<Episode>()
 
-        val seasonNumbers = document.select("a.season-btn").mapNotNull { el ->
-            el.attr("data-season").toIntOrNull()
-        }.distinct().sorted()
+        val seasonElements = document.select("a.season-btn")
+        val seasonNumbers = mutableListOf<Int>()
+        for (el in seasonElements) {
+            val s = el.attr("data-season").toIntOrNull()
+            if (s != null && !seasonNumbers.contains(s)) {
+                seasonNumbers.add(s)
+            }
+        }
+        seasonNumbers.sort()
+        
+        val media = try {
+            Gson().fromJson(url, ToonMedia::class.java)
+        } catch (e: Exception) {
+            ToonMedia(url, null)
+        }
+        val actualUrl = media.url
 
         for (season in seasonNumbers) {
             val seasonDoc = try {
@@ -484,18 +547,23 @@ class Toonstream : MainAPI() {
             }
 
             val finalDoc = if (seasonDoc.select("article").isEmpty()) {
-                try { app.get("$url/season/$season").document }
+                try { app.get("$actualUrl/season/$season").document }
                 catch (e: Exception) { seasonDoc }
             } else seasonDoc
 
             var epNum = 1
-
-            finalDoc.select("article.post.episodes, article.post").forEach { ep ->
-                val epHref = ep.selectFirst("a.lnk-blk, a")?.attr("href") ?: return@forEach
-                val epPoster = ep.selectFirst("img")?.attr("src")
-                    ?.let { if (it.startsWith("http")) it else "https:$it" }
-                val epName = ep.selectFirst("h5.entry-title1, h2.entry-title, h3.entry-title")
-                    ?.text()?.trim() ?: "Episode"
+            val episodeElements = finalDoc.select("article.post.episodes, article.post")
+            
+            for (ep in episodeElements) {
+                val epHref = ep.selectFirst("a.lnk-blk, a")?.attr("href")
+                if (epHref.isNullOrBlank()) continue
+                
+                val epPosterRaw = ep.selectFirst("img")?.attr("src")
+                val epPoster = if (epPosterRaw != null) {
+                    if (epPosterRaw.startsWith("http")) epPosterRaw else "https:$epPosterRaw"
+                } else null
+                
+                val epName = ep.selectFirst("h5.entry-title1, h2.entry-title, h3.entry-title")?.text()?.trim() ?: "Episode"
 
                 val currentEpisodeNumber = epNum
                 epNum += 1
@@ -511,13 +579,19 @@ class Toonstream : MainAPI() {
 
         if (episodes.isEmpty()) {
             val seasonCounters = mutableMapOf<Int, Int>()
-
-            document.select("#episode_by_temp article.post").forEach { ep ->
-                val epHref = ep.selectFirst("a.lnk-blk, a")?.attr("href") ?: return@forEach
-                val epPoster = ep.selectFirst("img")?.attr("src")
-                    ?.let { if (it.startsWith("http")) it else "https:$it" }
-                val epName   = ep.selectFirst("h5.entry-title1")?.text()?.trim() ?: "Episode"
-                val numEpi   = ep.selectFirst("span.num-epi")?.text()?.trim()
+            val backupElements = document.select("#episode_by_temp article.post")
+            
+            for (ep in backupElements) {
+                val epHref = ep.selectFirst("a.lnk-blk, a")?.attr("href")
+                if (epHref.isNullOrBlank()) continue
+                
+                val epPosterRaw = ep.selectFirst("img")?.attr("src")
+                val epPoster = if (epPosterRaw != null) {
+                    if (epPosterRaw.startsWith("http")) epPosterRaw else "https:$epPosterRaw"
+                } else null
+                
+                val epName = ep.selectFirst("h5.entry-title1")?.text()?.trim() ?: "Episode"
+                val numEpi = ep.selectFirst("span.num-epi")?.text()?.trim()
                 val epSeason = numEpi?.substringBefore("x")?.toIntOrNull() ?: 1
 
                 val currentCount = seasonCounters[epSeason] ?: 0
