@@ -6,6 +6,7 @@ import com.lagradost.cloudstream3.HomePageResponse
 import com.lagradost.cloudstream3.HomePageList
 import com.lagradost.cloudstream3.MainPageRequest
 import com.lagradost.cloudstream3.SearchResponse
+import com.lagradost.cloudstream3.SearchResponseList
 import com.lagradost.cloudstream3.LoadResponse
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.TvType
@@ -16,6 +17,7 @@ import com.lagradost.cloudstream3.newMovieSearchResponse
 import com.lagradost.cloudstream3.newMovieLoadResponse
 import com.lagradost.cloudstream3.newTvSeriesLoadResponse
 import com.lagradost.cloudstream3.newEpisode
+import com.lagradost.cloudstream3.newSearchResponseList
 import com.lagradost.cloudstream3.fixUrl
 import com.lagradost.cloudstream3.Score
 import com.lagradost.cloudstream3.utils.ExtractorApi
@@ -294,17 +296,17 @@ class Toonstream : MainAPI() {
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        val rawTitle = this.selectFirst("article > header > h2, article h2.entry-title")
+        val rawTitle = this.selectFirst("article > header > h2, article h2.entry-title, h2")
             ?.text()?.replace(Regex("(?i)Watch Online"), "")?.trim() ?: return null
 
         val cleanedTitle = cleanTitleText(rawTitle)
         if (cleanedTitle.isBlank()) return null
 
         val href  = fixUrl(
-            this.selectFirst("article > a.lnk-blk, article a.lnk-blk")
+            this.selectFirst("article > a.lnk-blk, article a.lnk-blk, a")
                 ?.attr("href") ?: return null
         )
-        val posterRaw = this.selectFirst("article img")?.attr("src") ?: ""
+        val posterRaw = this.selectFirst("article img, img")?.attr("src") ?: ""
         val poster = when {
             posterRaw.startsWith("http") -> posterRaw
             posterRaw.startsWith("//")   -> "https:$posterRaw"
@@ -322,26 +324,41 @@ class Toonstream : MainAPI() {
         }
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {
-        val results = mutableListOf<SearchResponse>()
-        for (i in 1..3) {
-            val searchUrl = if (i == 1) {
-                "$mainUrl/s?q=$query"
-            } else {
-                "$mainUrl/page/$i/s?q=$query"
-            }
-
-            val doc = app.get(searchUrl).document
-
-            var page = doc.select("#movies-a ul > li").mapNotNull { it.toSearchResult() }
-            if (page.isEmpty()) {
-                page = doc.select("article, .result-item, .item").mapNotNull { it.toSearchResult() }
-            }
-
-            if (page.isEmpty() || results.containsAll(page)) break
-            results.addAll(page)
+    override suspend fun search(query: String, page: Int): SearchResponseList {
+        val searchUrl = if (page == 1) {
+            "$mainUrl/s?q=$query&type=all"
+        } else {
+            "$mainUrl/s?q=$query&type=all&page=$page"
         }
-        return results
+
+        val doc = app.get(searchUrl).document
+
+        // Remove the Random Series section entirely from the DOM before parsing
+        val randomHeader = doc.select("h3, h2, h1").firstOrNull { it.text().contains("Random", ignoreCase = true) }
+        if (randomHeader != null) {
+            var currentNode = randomHeader.nextSibling()
+            while (currentNode != null) {
+                val nextNode = currentNode.nextSibling()
+                currentNode.remove()
+                currentNode = nextNode
+            }
+            randomHeader.remove()
+        }
+
+        var pageResults = doc.select("#movies-a ul > li").mapNotNull { it.toSearchResult() }
+        if (pageResults.isEmpty()) {
+            pageResults = doc.select("article, .result-item, .item").mapNotNull { it.toSearchResult() }
+        }
+        
+        // Fallback if the site just uses simple divs for results
+        if (pageResults.isEmpty()) {
+            pageResults = doc.select("div:has(h2):has(img)").mapNotNull { it.toSearchResult() }
+        }
+
+        return newSearchResponseList(
+            list = pageResults,
+            hasNext = pageResults.isNotEmpty()
+        )
     }
 
     private fun parseRecommendations(document: Document): List<SearchResponse> {
