@@ -1,12 +1,12 @@
-# <img src="assets/icons/star.svg" width="28" height="28"/> AnimeDekho Provider - Cloudstream Extension
+# <img src="assets/icons/star.svg" width="28" height="28"/> Cloudstream Extension: AnimeDekho & ToonStream
 
-A **Cloudstream** extension dedicated to streaming anime, cartoons, and movies from **AnimeDekho** with high-quality Hindi dubbing and subtitle support.
+A **Cloudstream** extension dedicated to streaming anime, cartoons, and movies from **AnimeDekho** and **ToonStream** with high-quality multi-language audio, Hindi dubbing, and subtitle support.
 
 ---
 
 ## <img src="assets/icons/features.svg" width="24" height="24"/> Features
 
-- <img src="assets/icons/check.svg" width="16" height="16"/> **Hindi Dubbed** Anime and Cartoons
+- <img src="assets/icons/check.svg" width="16" height="16"/> **Hindi & Multi-Language** Dubbed Anime and Cartoons
 - <img src="assets/icons/check.svg" width="16" height="16"/> **Anime Series & Movies** Streaming
 - <img src="assets/icons/check.svg" width="16" height="16"/> **Multiple Server** Support
 - <img src="assets/icons/check.svg" width="16" height="16"/> **Search** Functionality
@@ -15,11 +15,12 @@ A **Cloudstream** extension dedicated to streaming anime, cartoons, and movies f
 
 ---
 
-## <img src="assets/icons/package.svg" width="24" height="24"/> Supported Source
+## <img src="assets/icons/package.svg" width="24" height="24"/> Supported Sources
 
 | Source | Language | Type |
 |--------|----------|------|
-| [AnimeDekho](https://animedekho.app) | Hindi | Anime, Movies, Series, Cartoon |
+| [AnimeDekho](https://animedekho.app/home/) | Hindi | Anime, Movies, Series, Cartoon |
+| [ToonStream](https://toon-stream.site/home/) | Multi-Language | Anime, Movies, Cartoon |
 
 ---
 
@@ -29,7 +30,6 @@ A **Cloudstream** extension dedicated to streaming anime, cartoons, and movies f
 - <img src="assets/icons/star.svg" width="16" height="16"/> **Movies**
 - <img src="assets/icons/star.svg" width="16" height="16"/> **Anime**
 - <img src="assets/icons/star.svg" width="16" height="16"/> **Cartoon**
-- <img src="assets/icons/star.svg" width="16" height="16"/> **Crunchyroll**
 - <img src="assets/icons/star.svg" width="16" height="16"/> **Hindi Dub**
 - <img src="assets/icons/star.svg" width="16" height="16"/> **Tamil & Telugu**
 
@@ -69,12 +69,20 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 
 ---
 
+<br>
+
 <div align="center">
-
-**Made with <img src="assets/icons/heart.svg" width="16" height="16"/> for Anime Lovers**
-
-[![Cloudstream](https://img.shields.io/badge/Cloudstream-Extension-blue?style=for-the-badge)](https://github.com/recloudstream/cloudstream)
-[![Kotlin](https://img.shields.io/badge/Kotlin-1.9-purple?style=for-the-badge&logo=kotlin)](https://kotlinlang.org)
-[![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
-
+  <h3>✨ Elevating Your Streaming Experience ✨</h3>
+  <br>
+  <a href="https://github.com/recloudstream/cloudstream">
+    <img src="https://img.shields.io/badge/Powered_by-Cloudstream-6A0DAD?style=for-the-badge&logo=android&logoColor=white" alt="Cloudstream"/>
+  </a>
+  <a href="https://kotlinlang.org">
+    <img src="https://img.shields.io/badge/Code-Kotlin-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white" alt="Kotlin"/>
+  </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/License-MIT-101010?style=for-the-badge&logo=law&logoColor=white" alt="License"/>
+  </a>
+  <br><br>
+  <i>Developed for the community, by the community.</i>
 </div>
