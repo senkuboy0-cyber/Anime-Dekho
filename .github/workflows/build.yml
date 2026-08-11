@@ -39,8 +39,8 @@ jobs:
           cp Toonstream/build/*.cs3 build_output/ || true
           cp build/plugins.json build_output/plugins.json
           echo '{
-            "name": "AnimeDekho Provider",
-            "description": "AnimeDekho - Hindi Anime, Cartoon and Movies Streaming Extension",
+            "name": "Anime Provider",
+            "description": "The ultimate CloudStream repository for high-quality Hindi and multi-language dubbed Anime, Movies, and Cartoons.",
             "manifestVersion": 1,
             "pluginLists": [
               "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/plugins.json"
