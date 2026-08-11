@@ -1,9 +1,9 @@
-version = 3
+Version = 3
 
 cloudstream {
     language = "hi"
     authors = listOf("senkuboy0-cyber")
-    description = "Hindi Dubbed Anime On AnimeDekho"
+    description = "AnimeDekho: The best place for Hindi Dubbed Anime, Movies & Cartoons."
     /**
      * Status int as the following:
      * 0: Down
