@@ -29,7 +29,8 @@ data class TmdbResult(
     @JsonProperty("title") val title: String? = null,
     @JsonProperty("name") val name: String? = null,
     @JsonProperty("release_date") val releaseDate: String? = null,
-    @JsonProperty("first_air_date") val firstAirDate: String? = null
+    @JsonProperty("first_air_date") val firstAirDate: String? = null,
+    @JsonProperty("genre_ids") val genreIds: List<Int>? = null
 )
 data class TmdbSearch(
     @JsonProperty("results") val results: List<TmdbResult>? = null
@@ -100,9 +101,23 @@ open class AnimeDekhoProvider : MainAPI() {
 
     private fun pickBestResult(candidates: List<TmdbResult>, siteYear: Int?): TmdbResult? {
         if (candidates.isEmpty()) return null
-        if (siteYear == null || candidates.size == 1) return candidates.first()
-        return candidates.firstOrNull { yearMatches(getResultYear(it), siteYear) }
-            ?: candidates.first()
+        
+        if (siteYear != null && candidates.size > 1) {
+            val yearMatched = candidates.filter { yearMatches(getResultYear(it), siteYear) }
+            if (yearMatched.isNotEmpty()) {
+                val animationMatch = yearMatched.firstOrNull { it.genreIds?.contains(16) == true }
+                return animationMatch ?: yearMatched.first()
+            }
+        }
+        
+        if (candidates.size > 1) {
+            val animationMatch = candidates.firstOrNull { it.genreIds?.contains(16) == true }
+            if (animationMatch != null) {
+                return animationMatch
+            }
+        }
+        
+        return candidates.first()
     }
 
     private fun cleanTitleText(title: String): String {
