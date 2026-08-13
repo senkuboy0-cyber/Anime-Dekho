@@ -33,10 +33,11 @@ import org.jsoup.nodes.Element
 import org.jsoup.nodes.Document
 import org.jsoup.Jsoup
 import java.net.URLEncoder
+import java.util.ArrayList
 
 data class TmdbImages(
-    @JsonProperty("logos") val logos: List<TmdbImage>? = null,
-    @JsonProperty("backdrops") val backdrops: List<TmdbImage>? = null
+    @JsonProperty("logos") val logos: ArrayList<TmdbImage>? = null,
+    @JsonProperty("backdrops") val backdrops: ArrayList<TmdbImage>? = null
 )
 
 data class TmdbImage(
@@ -45,8 +46,8 @@ data class TmdbImage(
 )
 
 data class TmdbFind(
-    @JsonProperty("movie_results") val movies: List<TmdbResult>? = null,
-    @JsonProperty("tv_results")    val tvShows: List<TmdbResult>? = null
+    @JsonProperty("movie_results") val movies: ArrayList<TmdbResult>? = null,
+    @JsonProperty("tv_results")    val tvShows: ArrayList<TmdbResult>? = null
 )
 
 data class TmdbResult(
@@ -56,11 +57,12 @@ data class TmdbResult(
     @JsonProperty("name") val name: String? = null,
     @JsonProperty("release_date") val releaseDate: String? = null,
     @JsonProperty("first_air_date") val firstAirDate: String? = null,
-    @JsonProperty("overview") val overview: String? = null
+    @JsonProperty("overview") val overview: String? = null,
+    @JsonProperty("genre_ids") val genreIds: ArrayList<Int>? = null
 )
 
 data class TmdbSearch(
-    @JsonProperty("results") val results: List<TmdbResult>? = null
+    @JsonProperty("results") val results: ArrayList<TmdbResult>? = null
 )
 
 data class TmdbDetails(
@@ -114,93 +116,191 @@ class Toonstream : MainAPI() {
     }
 
     private fun normalizeTitle(s: String?): String {
-        return s?.replace(Regex("[^a-zA-Z0-9]"), "")?.lowercase() ?: ""
+        if (s == null) return ""
+        return s.replace(Regex("[^a-zA-Z0-9]"), "").lowercase()
     }
 
     private fun getResultYear(result: TmdbResult): Int? {
-        return (result.releaseDate ?: result.firstAirDate)
-            ?.substringBefore("-")
-            ?.toIntOrNull()
+        var dateString = result.releaseDate
+        if (dateString == null) {
+            dateString = result.firstAirDate
+        }
+        
+        if (dateString != null && dateString.contains("-")) {
+            val yearString = dateString.substringBefore("-")
+            return yearString.toIntOrNull()
+        }
+        return null
     }
 
     private fun yearMatches(tmdbYear: Int?, siteYear: Int?): Boolean {
         if (siteYear == null || tmdbYear == null) return true
-        return Math.abs(tmdbYear - siteYear) <= 1
+        val diff = tmdbYear - siteYear
+        return (diff == 0 || diff == 1 || diff == -1)
     }
 
-    private fun pickBestResult(candidates: List<TmdbResult>, siteYear: Int?): TmdbResult? {
+    private fun pickBestResult(candidates: ArrayList<TmdbResult>, siteYear: Int?): TmdbResult? {
         if (candidates.isEmpty()) return null
-        if (siteYear == null || candidates.size == 1) return candidates.first()
-        return candidates.firstOrNull { yearMatches(getResultYear(it), siteYear) }
-            ?: candidates.first()
+
+        if (siteYear != null) {
+            val yearMatched = ArrayList<TmdbResult>()
+            for (i in 0 until candidates.size) {
+                val candidate = candidates.get(i)
+                if (yearMatches(getResultYear(candidate), siteYear)) {
+                    yearMatched.add(candidate)
+                }
+            }
+
+            if (yearMatched.size > 0) {
+                if (yearMatched.size == 1) {
+                    return yearMatched.get(0)
+                }
+                
+                for (i in 0 until yearMatched.size) {
+                    val match = yearMatched.get(i)
+                    val genres = match.genreIds
+                    if (genres != null) {
+                        for (j in 0 until genres.size) {
+                            if (genres.get(j) == 16) {
+                                return match
+                            }
+                        }
+                    }
+                }
+                
+                return yearMatched.get(0)
+            }
+        }
+
+        return candidates.get(0)
     }
 
     private suspend fun fetchTmdbAssets(document: Document?, title: String, isSeries: Boolean, year: Int?): TmdbDetails {
         return try {
             var tmdbId: Int? = null
-            var actualMediaType = if (isSeries) "tv" else "movie"
+            var actualMediaType = "movie"
+            if (isSeries) {
+                actualMediaType = "tv"
+            }
             var tmdbOverview: String? = null
 
             val safeTitle = encodeUri(title)
             val searchRes = app.get("$TMDB_API/search/multi?api_key=$TMDB_KEY&query=$safeTitle")
                 .parsedSafe<TmdbSearch>()
 
-            val validResults = searchRes?.results?.filter { it.mediaType == "movie" || it.mediaType == "tv" }
+            val validResults = ArrayList<TmdbResult>()
+            if (searchRes != null && searchRes.results != null) {
+                for (i in 0 until searchRes.results.size) {
+                    val res = searchRes.results.get(i)
+                    if (res.mediaType == "movie" || res.mediaType == "tv") {
+                        validResults.add(res)
+                    }
+                }
+            }
+            
             val normTitle = normalizeTitle(title)
 
-            val exactCandidates = validResults?.filter {
-                normalizeTitle(it.title) == normTitle ||
-                normalizeTitle(it.name) == normTitle
-            } ?: emptyList()
+            val exactCandidates = ArrayList<TmdbResult>()
+            for (i in 0 until validResults.size) {
+                val res = validResults.get(i)
+                var resNorm = ""
+                if (res.title != null) resNorm = normalizeTitle(res.title)
+                else if (res.name != null) resNorm = normalizeTitle(res.name)
+                
+                if (resNorm == normTitle) {
+                    exactCandidates.add(res)
+                }
+            }
 
             val exactMatch = pickBestResult(exactCandidates, year)
 
             if (exactMatch != null) {
                 tmdbId = exactMatch.id
-                actualMediaType = exactMatch.mediaType ?: actualMediaType
+                if (exactMatch.mediaType != null) {
+                    actualMediaType = exactMatch.mediaType
+                }
                 tmdbOverview = exactMatch.overview
             } else {
-                val startsWithCandidates = if (normTitle.length >= 6) {
-                    validResults?.filter { result ->
-                        val tmdbNorm = normalizeTitle(result.title ?: result.name)
-                        tmdbNorm.startsWith(normTitle)
-                    } ?: emptyList()
-                } else emptyList()
+                val startsWithCandidates = ArrayList<TmdbResult>()
+                if (normTitle.length >= 6) {
+                    for (i in 0 until validResults.size) {
+                        val res = validResults.get(i)
+                        var tmdbNorm = ""
+                        if (res.title != null) {
+                            tmdbNorm = normalizeTitle(res.title)
+                        } else if (res.name != null) {
+                            tmdbNorm = normalizeTitle(res.name)
+                        }
+                        
+                        if (tmdbNorm.isNotEmpty() && tmdbNorm.startsWith(normTitle)) {
+                            startsWithCandidates.add(res)
+                        }
+                    }
+                }
 
                 val startsWithMatch = pickBestResult(startsWithCandidates, year)
 
                 if (startsWithMatch != null) {
                     tmdbId = startsWithMatch.id
-                    actualMediaType = startsWithMatch.mediaType ?: actualMediaType
+                    if (startsWithMatch.mediaType != null) {
+                        actualMediaType = startsWithMatch.mediaType
+                    }
                     tmdbOverview = startsWithMatch.overview
                 } else {
-                    val imdbId = document?.select("a[href*='imdb.com/title']")?.attr("href")
-                        ?.substringAfter("title/")?.substringBefore("/")
-                        ?.takeIf { it.startsWith("tt") }
-
-                    if (imdbId != null) {
-                        app.get("$TMDB_API/find/$imdbId?api_key=$TMDB_KEY&external_source=imdb_id")
-                            .parsedSafe<TmdbFind>()
-                            ?.let { findRes ->
-                                val tvMatch = findRes.tvShows?.firstOrNull()
-                                val movieMatch = findRes.movies?.firstOrNull()
-
-                                if (isSeries) {
-                                    if (tvMatch != null) {
-                                        tmdbId = tvMatch.id; actualMediaType = "tv"; tmdbOverview = tvMatch.overview
-                                    }
-                                    else if (movieMatch != null) {
-                                        tmdbId = movieMatch.id; actualMediaType = "movie"; tmdbOverview = movieMatch.overview
-                                    }
-                                } else {
-                                    if (movieMatch != null) {
-                                        tmdbId = movieMatch.id; actualMediaType = "movie"; tmdbOverview = movieMatch.overview
-                                    }
-                                    else if (tvMatch != null) {
-                                        tmdbId = tvMatch.id; actualMediaType = "tv"; tmdbOverview = tvMatch.overview
-                                    }
+                    var imdbId: String? = null
+                    if (document != null) {
+                        val imdbLinks = document.select("a[href*='imdb.com/title']")
+                        for (i in 0 until imdbLinks.size) {
+                            val link = imdbLinks.get(i)
+                            val href = link.attr("href")
+                            if (href.contains("title/")) {
+                                val afterTitle = href.substringAfter("title/")
+                                val possibleId = afterTitle.substringBefore("/")
+                                if (possibleId.startsWith("tt")) {
+                                    imdbId = possibleId
+                                    break
                                 }
                             }
+                        }
+                    }
+
+                    if (imdbId != null) {
+                        val findRes = app.get("$TMDB_API/find/$imdbId?api_key=$TMDB_KEY&external_source=imdb_id")
+                            .parsedSafe<TmdbFind>()
+                            
+                        if (findRes != null) {
+                            var tvMatch: TmdbResult? = null
+                            if (findRes.tvShows != null && findRes.tvShows.size > 0) {
+                                tvMatch = findRes.tvShows.get(0)
+                            }
+                            
+                            var movieMatch: TmdbResult? = null
+                            if (findRes.movies != null && findRes.movies.size > 0) {
+                                movieMatch = findRes.movies.get(0)
+                            }
+
+                            if (isSeries) {
+                                if (tvMatch != null) { 
+                                    tmdbId = tvMatch.id
+                                    actualMediaType = "tv"    
+                                    tmdbOverview = tvMatch.overview
+                                } else if (movieMatch != null) { 
+                                    tmdbId = movieMatch.id
+                                    actualMediaType = "movie" 
+                                    tmdbOverview = movieMatch.overview
+                                }
+                            } else {
+                                if (movieMatch != null) { 
+                                    tmdbId = movieMatch.id
+                                    actualMediaType = "movie" 
+                                    tmdbOverview = movieMatch.overview
+                                } else if (tvMatch != null) { 
+                                    tmdbId = tvMatch.id
+                                    actualMediaType = "tv"    
+                                    tmdbOverview = tvMatch.overview
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -211,22 +311,84 @@ class Toonstream : MainAPI() {
                 "$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY"
             ).parsedSafe<TmdbImages>()
 
-            val logo = images?.logos?.firstOrNull { 
-                it.filePath != null && !it.filePath.endsWith(".svg") && !it.filePath.endsWith(".SVG") && it.lang == "en"
-            } ?: images?.logos?.firstOrNull { 
-                it.filePath != null && !it.filePath.endsWith(".svg") && !it.filePath.endsWith(".SVG") && it.lang == null
-            } ?: images?.logos?.firstOrNull { 
-                it.filePath != null && !it.filePath.endsWith(".svg") && !it.filePath.endsWith(".SVG") && it.lang == "ja"
-            } ?: images?.logos?.firstOrNull { 
-                it.filePath != null && !it.filePath.endsWith(".svg") && !it.filePath.endsWith(".SVG")
+            var logoUrl: String? = null
+            var backdropUrl: String? = null
+
+            if (images != null) {
+                if (images.logos != null) {
+                    val validLogos = ArrayList<TmdbImage>()
+                    for (i in 0 until images.logos.size) {
+                        val logo = images.logos.get(i)
+                        var path = logo.filePath
+                        if (path == null) path = ""
+                        
+                        if (!path.endsWith(".svg") && !path.endsWith(".SVG")) {
+                            validLogos.add(logo)
+                        }
+                    }
+                    
+                    var bestLogo: TmdbImage? = null
+                    for (i in 0 until validLogos.size) {
+                        val logo = validLogos.get(i)
+                        if (logo.lang == "en") {
+                            bestLogo = logo
+                            break
+                        }
+                    }
+                    if (bestLogo == null) {
+                        for (i in 0 until validLogos.size) {
+                            val logo = validLogos.get(i)
+                            if (logo.lang == null) {
+                                bestLogo = logo
+                                break
+                            }
+                        }
+                    }
+                    if (bestLogo == null) {
+                        for (i in 0 until validLogos.size) {
+                            val logo = validLogos.get(i)
+                            if (logo.lang == "ja") {
+                                bestLogo = logo
+                                break
+                            }
+                        }
+                    }
+                    if (bestLogo == null && validLogos.size > 0) {
+                        bestLogo = validLogos.get(0)
+                    }
+                    
+                    if (bestLogo != null && bestLogo.filePath != null) {
+                        logoUrl = "$TMDB_IMG${bestLogo.filePath}"
+                    }
+                }
+                
+                if (images.backdrops != null) {
+                    var bestBackdrop: TmdbImage? = null
+                    for (i in 0 until images.backdrops.size) {
+                        val backdrop = images.backdrops.get(i)
+                        if (backdrop.lang == null) {
+                            bestBackdrop = backdrop
+                            break
+                        }
+                    }
+                    if (bestBackdrop == null) {
+                        for (i in 0 until images.backdrops.size) {
+                            val backdrop = images.backdrops.get(i)
+                            if (backdrop.lang == "en") {
+                                bestBackdrop = backdrop
+                                break
+                            }
+                        }
+                    }
+                    if (bestBackdrop == null && images.backdrops.size > 0) {
+                        bestBackdrop = images.backdrops.get(0)
+                    }
+                    
+                    if (bestBackdrop != null && bestBackdrop.filePath != null) {
+                        backdropUrl = "$TMDB_IMG${bestBackdrop.filePath}"
+                    }
+                }
             }
-
-            val backdrop = images?.backdrops?.firstOrNull { it.lang == null }
-                ?: images?.backdrops?.firstOrNull { it.lang == "en" }
-                ?: images?.backdrops?.firstOrNull()
-
-            val logoUrl     = logo?.filePath?.let { "$TMDB_IMG$it" }
-            val backdropUrl = backdrop?.filePath?.let { "$TMDB_IMG$it" }
 
             TmdbDetails(logoUrl, backdropUrl, tmdbOverview)
 
