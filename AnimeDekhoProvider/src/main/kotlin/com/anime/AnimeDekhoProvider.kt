@@ -9,19 +9,21 @@ import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import java.util.HashMap
+import java.util.ArrayList
 
 // ─── TMDB Data Classes ───
 data class TmdbImages(
-    @JsonProperty("logos") val logos: List<TmdbImage>? = null,
-    @JsonProperty("backdrops") val backdrops: List<TmdbImage>? = null
+    @JsonProperty("logos") val logos: ArrayList<TmdbImage>? = null,
+    @JsonProperty("backdrops") val backdrops: ArrayList<TmdbImage>? = null
 )
 data class TmdbImage(
     @JsonProperty("file_path") val filePath: String? = null,
     @JsonProperty("iso_639_1") val lang: String?     = null
 )
 data class TmdbFind(
-    @JsonProperty("movie_results") val movies: List<TmdbResult>? = null,
-    @JsonProperty("tv_results")    val tvShows: List<TmdbResult>? = null
+    @JsonProperty("movie_results") val movies: ArrayList<TmdbResult>? = null,
+    @JsonProperty("tv_results")    val tvShows: ArrayList<TmdbResult>? = null
 )
 data class TmdbResult(
     @JsonProperty("id") val id: Int? = null,
@@ -30,13 +32,13 @@ data class TmdbResult(
     @JsonProperty("name") val name: String? = null,
     @JsonProperty("release_date") val releaseDate: String? = null,
     @JsonProperty("first_air_date") val firstAirDate: String? = null,
-    @JsonProperty("genre_ids") val genreIds: List<Int>? = null
+    @JsonProperty("genre_ids") val genreIds: ArrayList<Int>? = null
 )
 data class TmdbSearch(
-    @JsonProperty("results") val results: List<TmdbResult>? = null
+    @JsonProperty("results") val results: ArrayList<TmdbResult>? = null
 )
 data class TmdbSeason(
-    @JsonProperty("episodes") val episodes: List<TmdbEpisode>? = null
+    @JsonProperty("episodes") val episodes: ArrayList<TmdbEpisode>? = null
 )
 data class TmdbEpisode(
     @JsonProperty("episode_number") val episodeNumber: Int? = null,
@@ -89,7 +91,11 @@ open class AnimeDekhoProvider : MainAPI() {
     private val normalizeRegex = Regex("[^a-zA-Z0-9]")
 
     private fun getResultYear(result: TmdbResult): Int? {
-        val dateString = result.releaseDate ?: result.firstAirDate
+        var dateString = result.releaseDate
+        if (dateString == null) {
+            dateString = result.firstAirDate
+        }
+        
         if (dateString != null && dateString.contains("-")) {
             val yearString = dateString.substringBefore("-")
             return yearString.toIntOrNull()
@@ -108,7 +114,8 @@ open class AnimeDekhoProvider : MainAPI() {
 
         if (siteYear != null) {
             val yearMatched = ArrayList<TmdbResult>()
-            for (candidate in candidates) {
+            for (i in 0 until candidates.size) {
+                val candidate = candidates.get(i)
                 if (yearMatches(getResultYear(candidate), siteYear)) {
                     yearMatched.add(candidate)
                 }
@@ -116,25 +123,26 @@ open class AnimeDekhoProvider : MainAPI() {
 
             if (yearMatched.size > 0) {
                 if (yearMatched.size == 1) {
-                    return yearMatched[0]
+                    return yearMatched.get(0)
                 }
                 
-                for (match in yearMatched) {
+                for (i in 0 until yearMatched.size) {
+                    val match = yearMatched.get(i)
                     val genres = match.genreIds
                     if (genres != null) {
-                        for (genre in genres) {
-                            if (genre == 16) {
+                        for (j in 0 until genres.size) {
+                            if (genres.get(j) == 16) {
                                 return match
                             }
                         }
                     }
                 }
                 
-                return yearMatched[0]
+                return yearMatched.get(0)
             }
         }
 
-        return candidates[0]
+        return candidates.get(0)
     }
 
     private fun cleanTitleText(title: String): String {
@@ -198,7 +206,7 @@ open class AnimeDekhoProvider : MainAPI() {
             val nonceMatch = Regex("\"nonce\"\\s*:\\s*\"([^\"]+)\"").find(pageHtml)
             if (nonceMatch == null) return null
             
-            val nonce = nonceMatch.groupValues[1]
+            val nonce = nonceMatch.groupValues.get(1)
             var slug = movieUrl.trimEnd('/')
             val lastSlashIndex = slug.lastIndexOf("/")
             if (lastSlashIndex != -1) {
@@ -230,7 +238,7 @@ open class AnimeDekhoProvider : MainAPI() {
             val json = parseJson<AjaxResponse>(response)
             val yearMatch = Regex("<span class=\"year\">(\\d{4})</span>").find(json.html)
             if (yearMatch != null) {
-                return yearMatch.groupValues[1].toIntOrNull()
+                return yearMatch.groupValues.get(1).toIntOrNull()
             }
             return null
         } catch (e: Exception) {
@@ -253,7 +261,8 @@ open class AnimeDekhoProvider : MainAPI() {
 
             val validResults = ArrayList<TmdbResult>()
             if (searchRes != null && searchRes.results != null) {
-                for (res in searchRes.results) {
+                for (i in 0 until searchRes.results.size) {
+                    val res = searchRes.results.get(i)
                     if (res.mediaType == "movie" || res.mediaType == "tv") {
                         validResults.add(res)
                     }
@@ -263,7 +272,8 @@ open class AnimeDekhoProvider : MainAPI() {
             val normTitle = normalizeTitle(title)
 
             val exactCandidates = ArrayList<TmdbResult>()
-            for (res in validResults) {
+            for (i in 0 until validResults.size) {
+                val res = validResults.get(i)
                 if (normalizeTitle(res.title) == normTitle || normalizeTitle(res.name) == normTitle) {
                     exactCandidates.add(res)
                 }
@@ -279,7 +289,8 @@ open class AnimeDekhoProvider : MainAPI() {
             } else {
                 val startsWithCandidates = ArrayList<TmdbResult>()
                 if (normTitle.length >= 6) {
-                    for (res in validResults) {
+                    for (i in 0 until validResults.size) {
+                        val res = validResults.get(i)
                         var tmdbNorm = ""
                         if (res.title != null) {
                             tmdbNorm = normalizeTitle(res.title)
@@ -303,7 +314,8 @@ open class AnimeDekhoProvider : MainAPI() {
                 } else {
                     var imdbId: String? = null
                     val imdbLinks = document.select("a[href*='imdb.com/title']")
-                    for (link in imdbLinks) {
+                    for (i in 0 until imdbLinks.size) {
+                        val link = imdbLinks.get(i)
                         val href = link.attr("href")
                         if (href.contains("title/")) {
                             val afterTitle = href.substringAfter("title/")
@@ -321,13 +333,13 @@ open class AnimeDekhoProvider : MainAPI() {
                             
                         if (findRes != null) {
                             var tvId: Int? = null
-                            if (findRes.tvShows != null && findRes.tvShows.isNotEmpty()) {
-                                tvId = findRes.tvShows[0].id
+                            if (findRes.tvShows != null && findRes.tvShows.size > 0) {
+                                tvId = findRes.tvShows.get(0).id
                             }
                             
                             var movieId: Int? = null
-                            if (findRes.movies != null && findRes.movies.isNotEmpty()) {
-                                movieId = findRes.movies[0].id
+                            if (findRes.movies != null && findRes.movies.size > 0) {
+                                movieId = findRes.movies.get(0).id
                             }
 
                             if (isSeries) {
@@ -364,22 +376,27 @@ open class AnimeDekhoProvider : MainAPI() {
             if (images != null) {
                 if (images.logos != null) {
                     val validLogos = ArrayList<TmdbImage>()
-                    for (logo in images.logos) {
-                        val path = logo.filePath ?: ""
+                    for (i in 0 until images.logos.size) {
+                        val logo = images.logos.get(i)
+                        var path = logo.filePath
+                        if (path == null) path = ""
+                        
                         if (!path.endsWith(".svg") && !path.endsWith(".SVG")) {
                             validLogos.add(logo)
                         }
                     }
                     
                     var bestLogo: TmdbImage? = null
-                    for (logo in validLogos) {
+                    for (i in 0 until validLogos.size) {
+                        val logo = validLogos.get(i)
                         if (logo.lang == "en") {
                             bestLogo = logo
                             break
                         }
                     }
                     if (bestLogo == null) {
-                        for (logo in validLogos) {
+                        for (i in 0 until validLogos.size) {
+                            val logo = validLogos.get(i)
                             if (logo.lang == null) {
                                 bestLogo = logo
                                 break
@@ -387,15 +404,16 @@ open class AnimeDekhoProvider : MainAPI() {
                         }
                     }
                     if (bestLogo == null) {
-                        for (logo in validLogos) {
+                        for (i in 0 until validLogos.size) {
+                            val logo = validLogos.get(i)
                             if (logo.lang == "ja") {
                                 bestLogo = logo
                                 break
                             }
                         }
                     }
-                    if (bestLogo == null && validLogos.isNotEmpty()) {
-                        bestLogo = validLogos[0]
+                    if (bestLogo == null && validLogos.size > 0) {
+                        bestLogo = validLogos.get(0)
                     }
                     
                     if (bestLogo != null && bestLogo.filePath != null) {
@@ -405,22 +423,24 @@ open class AnimeDekhoProvider : MainAPI() {
                 
                 if (images.backdrops != null) {
                     var bestBackdrop: TmdbImage? = null
-                    for (backdrop in images.backdrops) {
+                    for (i in 0 until images.backdrops.size) {
+                        val backdrop = images.backdrops.get(i)
                         if (backdrop.lang == null) {
                             bestBackdrop = backdrop
                             break
                         }
                     }
                     if (bestBackdrop == null) {
-                        for (backdrop in images.backdrops) {
+                        for (i in 0 until images.backdrops.size) {
+                            val backdrop = images.backdrops.get(i)
                             if (backdrop.lang == "en") {
                                 bestBackdrop = backdrop
                                 break
                             }
                         }
                     }
-                    if (bestBackdrop == null && images.backdrops.isNotEmpty()) {
-                        bestBackdrop = images.backdrops[0]
+                    if (bestBackdrop == null && images.backdrops.size > 0) {
+                        bestBackdrop = images.backdrops.get(0)
                     }
                     
                     if (bestBackdrop != null && bestBackdrop.filePath != null) {
@@ -466,7 +486,7 @@ open class AnimeDekhoProvider : MainAPI() {
             val termMatch = Regex("\"term\":\"([^\"]+)\"").find(request.data)
             var term = ""
             if (termMatch != null) {
-                term = termMatch.groupValues[1]
+                term = termMatch.groupValues.get(1)
             }
             
             val pageUrl   = "$mainUrl/category/$term/"
@@ -479,7 +499,8 @@ open class AnimeDekhoProvider : MainAPI() {
             
             val articles = document.select("article")
             val home = ArrayList<AnimeSearchResponse>()
-            for (article in articles) {
+            for (i in 0 until articles.size) {
+                val article = articles.get(i)
                 val searchResult = article.toSearchResult()
                 if (searchResult != null) {
                     home.add(searchResult)
@@ -499,7 +520,8 @@ open class AnimeDekhoProvider : MainAPI() {
             val document = app.get(pageUrl).document
             val articles = document.select("article")
             val home = ArrayList<AnimeSearchResponse>()
-            for (article in articles) {
+            for (i in 0 until articles.size) {
+                val article = articles.get(i)
                 val searchResult = article.toSearchResult()
                 if (searchResult != null) {
                     home.add(searchResult)
@@ -512,7 +534,7 @@ open class AnimeDekhoProvider : MainAPI() {
         val nonceMatch = Regex("\"nonce\":\"([^\"]+)\"").find(pageDoc.html())
         var nonce = ""
         if (nonceMatch != null) {
-            nonce = nonceMatch.groupValues[1]
+            nonce = nonceMatch.groupValues.get(1)
         }
 
         val filterEl  = pageDoc.selectFirst("[data-taxonomy]")
@@ -546,7 +568,8 @@ open class AnimeDekhoProvider : MainAPI() {
         
         val articles = htmlDoc.select("article")
         val home = ArrayList<AnimeSearchResponse>()
-        for (article in articles) {
+        for (i in 0 until articles.size) {
+            val article = articles.get(i)
             val searchResult = article.toSearchResult()
             if (searchResult != null) {
                 home.add(searchResult)
@@ -604,7 +627,7 @@ open class AnimeDekhoProvider : MainAPI() {
     }
 
     override suspend fun search(query: String, page: Int): SearchResponseList {
-        val results = mutableListOf<SearchResponse>()
+        val results = ArrayList<SearchResponse>()
         var hasNext = false
 
         val searchUrl = "$mainUrl/?s=$query"
@@ -616,9 +639,9 @@ open class AnimeDekhoProvider : MainAPI() {
         val nonceMatch2 = Regex("\"_wpsearch\"\\s*:\\s*\"([^\"]+)\"").find(html)
         
         if (nonceMatch1 != null) {
-            nonce = nonceMatch1.groupValues[1]
+            nonce = nonceMatch1.groupValues.get(1)
         } else if (nonceMatch2 != null) {
-            nonce = nonceMatch2.groupValues[1]
+            nonce = nonceMatch2.groupValues.get(1)
         }
 
         if (page == 1) {
@@ -627,14 +650,15 @@ open class AnimeDekhoProvider : MainAPI() {
                 elements = document.select("article")
             }
             
-            for (element in elements) {
+            for (i in 0 until elements.size) {
+                val element = elements.get(i)
                 val res = element.toSearchResult()
                 if (res != null) {
                     results.add(res)
                 }
             }
             
-            if (results.isNotEmpty()) {
+            if (results.size > 0) {
                 hasNext = true
             }
         } else {
@@ -656,7 +680,8 @@ open class AnimeDekhoProvider : MainAPI() {
                 val htmlDoc = Jsoup.parse(json.html)
                 
                 val elements = htmlDoc.select("article")
-                for (element in elements) {
+                for (i in 0 until elements.size) {
+                    val element = elements.get(i)
                     val res = element.toSearchResult()
                     if (res != null) {
                         results.add(res)
@@ -746,7 +771,10 @@ open class AnimeDekhoProvider : MainAPI() {
             }
         }
 
-        val cleanTitle = cleanTitleText(rawTitle!!)
+        var finalCleanTitle = ""
+        if (rawTitle != null) {
+            finalCleanTitle = cleanTitleText(rawTitle)
+        }
         
         var poster = media.poster
         val docPoster = document.selectFirst("div.post-thumbnail figure img")?.attr("src")
@@ -769,13 +797,16 @@ open class AnimeDekhoProvider : MainAPI() {
         }
 
         val lst = document.select("ul.seasons-lst li")
-        val isSeries = lst.isNotEmpty()
+        var isSeries = false
+        if (lst.size > 0) {
+            isSeries = true
+        }
 
         // ── Fetch TMDB Details ──
-        val tmdbDetails = fetchTmdbDetails(document, cleanTitle, isSeries, year)
+        val tmdbDetails = fetchTmdbDetails(document, finalCleanTitle, isSeries, year)
 
         if (!isSeries) {
-            return newMovieLoadResponse(rawTitle, url, TvType.Movie, Gson().toJson(Media(media.url, mediaType = 1))) {
+            return newMovieLoadResponse(rawTitle ?: "", url, TvType.Movie, Gson().toJson(Media(media.url, mediaType = 1))) {
                 this.posterUrl           = poster
                 if (tmdbDetails.backdrop != null) {
                     this.backgroundPosterUrl = tmdbDetails.backdrop
@@ -789,7 +820,8 @@ open class AnimeDekhoProvider : MainAPI() {
         } else {
             // ─── Phase 1: Parse Raw Site Episodes ───
             val rawEpisodes = ArrayList<SiteEpisode>()
-            for (li in lst) {
+            for (i in 0 until lst.size) {
+                val li = lst.get(i)
                 var name = "null"
                 val h3El = li.selectFirst("h3.title")
                 if (h3El != null) {
@@ -819,33 +851,47 @@ open class AnimeDekhoProvider : MainAPI() {
 
             // ─── Phase 2: Fix Episode Numbering (1-based per season) ───
             val seasonCounters = HashMap<Int?, Int>()
-            for (ep in rawEpisodes) {
+            for (i in 0 until rawEpisodes.size) {
+                val ep = rawEpisodes.get(i)
                 var count = 0
                 if (seasonCounters.containsKey(ep.season)) {
-                    count = seasonCounters[ep.season]!!
+                    val existingCount = seasonCounters.get(ep.season)
+                    if (existingCount != null) {
+                        count = existingCount
+                    }
                 }
                 count += 1
-                seasonCounters[ep.season] = count
+                seasonCounters.put(ep.season, count)
                 ep.calculatedEpNum = count
             }
 
             // ─── Phase 3: Smart TMDB Episode Fetching ───
             if (tmdbDetails.id != null && tmdbDetails.type == "tv") {
                 val seasonsGrouped = HashMap<Int?, ArrayList<SiteEpisode>>()
-                for (ep in rawEpisodes) {
+                for (i in 0 until rawEpisodes.size) {
+                    val ep = rawEpisodes.get(i)
                     if (!seasonsGrouped.containsKey(ep.season)) {
-                        seasonsGrouped[ep.season] = ArrayList<SiteEpisode>()
+                        seasonsGrouped.put(ep.season, ArrayList<SiteEpisode>())
                     }
-                    seasonsGrouped[ep.season]?.add(ep)
+                    val seasonList = seasonsGrouped.get(ep.season)
+                    if (seasonList != null) {
+                        seasonList.add(ep)
+                    }
                 }
                 
-                for ((seasonNum, eps) in seasonsGrouped) {
+                val iterator = seasonsGrouped.entries.iterator()
+                while (iterator.hasNext()) {
+                    val entry = iterator.next()
+                    val seasonNum = entry.key
+                    val eps = entry.value
+                    
                     if (seasonNum == null || seasonNum == 0) {
                         continue
                     }
                     
                     var hasMergedEpisodes = false
-                    for (ep in eps) {
+                    for (i in 0 until eps.size) {
+                        val ep = eps.get(i)
                         if (ep.rawName.contains("/")) {
                             hasMergedEpisodes = true
                             break
@@ -859,15 +905,17 @@ open class AnimeDekhoProvider : MainAPI() {
                                 
                             if (tmdbSeason != null && tmdbSeason.episodes != null) {
                                 val tmdbEpMap = HashMap<Int, TmdbEpisode>()
-                                for (tmdbEp in tmdbSeason.episodes) {
+                                for (j in 0 until tmdbSeason.episodes.size) {
+                                    val tmdbEp = tmdbSeason.episodes.get(j)
                                     if (tmdbEp.episodeNumber != null) {
-                                        tmdbEpMap[tmdbEp.episodeNumber] = tmdbEp
+                                        tmdbEpMap.put(tmdbEp.episodeNumber, tmdbEp)
                                     }
                                 }
                                 
-                                for (ep in eps) {
+                                for (k in 0 until eps.size) {
+                                    val ep = eps.get(k)
                                     if (tmdbEpMap.containsKey(ep.calculatedEpNum)) {
-                                        val tmdbData = tmdbEpMap[ep.calculatedEpNum]
+                                        val tmdbData = tmdbEpMap.get(ep.calculatedEpNum)
                                         if (tmdbData != null) {
                                             if (tmdbData.name != null && tmdbData.name.isNotEmpty()) {
                                                 ep.finalName = tmdbData.name
@@ -888,7 +936,8 @@ open class AnimeDekhoProvider : MainAPI() {
 
             // ─── Phase 4: Build Cloudstream Episodes ───
             val episodes = ArrayList<Episode>()
-            for (ep in rawEpisodes) {
+            for (i in 0 until rawEpisodes.size) {
+                val ep = rawEpisodes.get(i)
                 episodes.add(
                     newEpisode(Gson().toJson(Media(ep.href, mediaType = 2))) {
                         this.name      = ep.finalName
@@ -901,14 +950,20 @@ open class AnimeDekhoProvider : MainAPI() {
 
             val recommendations = ArrayList<SearchResponse>()
             val recArticles = document.select("div.swiper-wrapper article")
-            for (recArticle in recArticles) {
+            for (i in 0 until recArticles.size) {
+                val recArticle = recArticles.get(i)
                 val h2El = recArticle.selectFirst("h2")
                 val aEl = recArticle.selectFirst("a")
                 
                 if (h2El != null && aEl != null) {
                     val recName = h2El.text()
                     val recHref = aEl.attr("href")
-                    val recPoster = recArticle.selectFirst("figure img")?.attr("src")
+                    
+                    var recPoster: String? = null
+                    val figureImg = recArticle.selectFirst("figure img")
+                    if (figureImg != null) {
+                        recPoster = figureImg.attr("src")
+                    }
                     
                     recommendations.add(
                         newTvSeriesSearchResponse(recName, Gson().toJson(Media(recHref, recPoster, 0)), TvType.TvSeries) {
@@ -918,7 +973,7 @@ open class AnimeDekhoProvider : MainAPI() {
                 }
             }
 
-            return newTvSeriesLoadResponse(rawTitle, url, TvType.TvSeries, episodes) {
+            return newTvSeriesLoadResponse(rawTitle ?: "", url, TvType.TvSeries, episodes) {
                 this.posterUrl           = poster
                 if (tmdbDetails.backdrop != null) {
                     this.backgroundPosterUrl = tmdbDetails.backdrop
@@ -953,7 +1008,8 @@ open class AnimeDekhoProvider : MainAPI() {
         val doc = app.get(media.url, headers = headers).document
         
         val iframes = doc.select("iframe.serversel[src]")
-        for (iframe in iframes) {
+        for (i in 0 until iframes.size) {
+            val iframe = iframes.get(i)
             val serverUrl = iframe.attr("src")
             if (serverUrl.isNotEmpty()) {
                 var innerIframeUrl: String? = null
@@ -987,7 +1043,7 @@ open class AnimeDekhoProvider : MainAPI() {
         if (bodyClass != null) {
             val termMatch = Regex("(?:term|postid)-(\\d+)").find(bodyClass)
             if (termMatch != null) {
-                term = termMatch.groupValues[1]
+                term = termMatch.groupValues.get(1)
             }
         }
         
