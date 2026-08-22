@@ -90,6 +90,40 @@ open class AnimeDekhoProvider : MainAPI() {
     private val fanDubRegex2 = Regex("(?i)\\s*fandub.*")
     private val normalizeRegex = Regex("[^a-zA-Z0-9]")
 
+    // ─── Safe Tracker ID Fetcher for AniSkip ───
+    private suspend fun fetchTrackerId(redirectUrl: String?): String? {
+        if (redirectUrl == null || redirectUrl.isEmpty()) return null
+        return try {
+            val response = app.get(
+                redirectUrl,
+                headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                ),
+                timeout = 15
+            )
+            
+            val idRegex = Regex("anime/(\\d+)")
+            
+            // Check if ID is in the final resolved URL
+            var match = idRegex.find(response.url)
+            if (match != null && match.groupValues.size > 1) {
+                return match.groupValues.get(1)
+            }
+            
+            // Check if ID is present inside the HTML body (Meta refresh or JS redirect fallback)
+            match = idRegex.find(response.text)
+            if (match != null && match.groupValues.size > 1) {
+                return match.groupValues.get(1)
+            }
+            
+            null
+        } catch (e: Exception) {
+            Log.e("AnimeDekho", "Tracker ID fetch error: ${e.message}")
+            null
+        }
+    }
+
     private fun getResultYear(result: TmdbResult): Int? {
         var dateString = result.releaseDate
         if (dateString == null) {
@@ -805,37 +839,12 @@ open class AnimeDekhoProvider : MainAPI() {
         // ── Fetch TMDB Details ──
         val tmdbDetails = fetchTmdbDetails(document, finalCleanTitle, isSeries, year)
 
-        // ── Fetch AniSkip / Tracker IDs (Safe Logic) ──
-        val malRedirectUrl = document.selectFirst("a[href*=myanimelist.php]")?.attr("href")
-        val anilistRedirectUrl = document.selectFirst("a[href*=anilist.php]")?.attr("href")
+        // ── Safe AniSkip Sync Data Fetching ──
+        val malRedirect = document.selectFirst("a[href*=myanimelist.php]")?.attr("href")
+        val aniRedirect = document.selectFirst("a[href*=anilist.php]")?.attr("href")
 
-        var malId: String? = null
-        var anilistId: String? = null
-        val idRegex = Regex("anime/(\\d+)")
-
-        if (malRedirectUrl != null && malRedirectUrl.isNotEmpty()) {
-            try {
-                val finalMalUrl = app.get(malRedirectUrl).url
-                val match = idRegex.find(finalMalUrl)
-                if (match != null && match.groupValues.size > 1) {
-                    malId = match.groupValues.get(1)
-                }
-            } catch (e: Exception) {
-                Log.e("AnimeDekho", "Failed to fetch MAL ID: ${e.message}")
-            }
-        }
-
-        if (anilistRedirectUrl != null && anilistRedirectUrl.isNotEmpty()) {
-            try {
-                val finalAnilistUrl = app.get(anilistRedirectUrl).url
-                val match = idRegex.find(finalAnilistUrl)
-                if (match != null && match.groupValues.size > 1) {
-                    anilistId = match.groupValues.get(1)
-                }
-            } catch (e: Exception) {
-                Log.e("AnimeDekho", "Failed to fetch AniList ID: ${e.message}")
-            }
-        }
+        val malId = fetchTrackerId(malRedirect)
+        val anilistId = fetchTrackerId(aniRedirect)
 
         val trackerMap = HashMap<String, String>()
         if (malId != null) {
@@ -843,6 +852,7 @@ open class AnimeDekhoProvider : MainAPI() {
         }
         if (anilistId != null) {
             trackerMap.put("anilistId", anilistId)
+            trackerMap.put("aniListId", anilistId) 
         }
 
         if (!isSeries) {
