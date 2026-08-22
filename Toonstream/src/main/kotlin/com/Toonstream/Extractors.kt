@@ -260,7 +260,7 @@ class TurboViPlay : EmTurboVid() {
 // This extractor shows up as "Zephyrflick 1080p" in the sources list
 open class AsCdn21 : ExtractorApi() {
     override var name            = "Zephyrflick"   // displayed as this name in the sources list
-    override var mainUrl         = "https://as-cdn21.top"
+    override var mainUrl         = "https://as-cdn26.top"
     override val requiresReferer = true
 
     override suspend fun getUrl(
