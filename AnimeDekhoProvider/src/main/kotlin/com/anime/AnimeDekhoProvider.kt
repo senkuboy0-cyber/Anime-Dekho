@@ -91,8 +91,8 @@ open class AnimeDekhoProvider : MainAPI() {
     private val normalizeRegex = Regex("[^a-zA-Z0-9]")
 
     // ─── Safe Tracker ID Fetcher using Jikan API (Bypasses Site Block) ───
-    private suspend fun fetchSafeTrackerData(animeTitle: String): Map<String, String> {
-        val syncMap = HashMap<String, String>()
+    private suspend fun fetchSafeTrackerData(animeTitle: String): MutableMap<String, String> {
+        val syncMap = mutableMapOf<String, String>()
         try {
             if (animeTitle.isEmpty()) return syncMap
             
