@@ -805,6 +805,46 @@ open class AnimeDekhoProvider : MainAPI() {
         // ── Fetch TMDB Details ──
         val tmdbDetails = fetchTmdbDetails(document, finalCleanTitle, isSeries, year)
 
+        // ── Fetch AniSkip / Tracker IDs (Safe Logic) ──
+        val malRedirectUrl = document.selectFirst("a[href*=myanimelist.php]")?.attr("href")
+        val anilistRedirectUrl = document.selectFirst("a[href*=anilist.php]")?.attr("href")
+
+        var malId: String? = null
+        var anilistId: String? = null
+        val idRegex = Regex("anime/(\\d+)")
+
+        if (malRedirectUrl != null && malRedirectUrl.isNotEmpty()) {
+            try {
+                val finalMalUrl = app.get(malRedirectUrl).url
+                val match = idRegex.find(finalMalUrl)
+                if (match != null && match.groupValues.size > 1) {
+                    malId = match.groupValues.get(1)
+                }
+            } catch (e: Exception) {
+                Log.e("AnimeDekho", "Failed to fetch MAL ID: ${e.message}")
+            }
+        }
+
+        if (anilistRedirectUrl != null && anilistRedirectUrl.isNotEmpty()) {
+            try {
+                val finalAnilistUrl = app.get(anilistRedirectUrl).url
+                val match = idRegex.find(finalAnilistUrl)
+                if (match != null && match.groupValues.size > 1) {
+                    anilistId = match.groupValues.get(1)
+                }
+            } catch (e: Exception) {
+                Log.e("AnimeDekho", "Failed to fetch AniList ID: ${e.message}")
+            }
+        }
+
+        val trackerMap = HashMap<String, String>()
+        if (malId != null) {
+            trackerMap.put("malId", malId)
+        }
+        if (anilistId != null) {
+            trackerMap.put("anilistId", anilistId)
+        }
+
         if (!isSeries) {
             return newMovieLoadResponse(rawTitle ?: "", url, TvType.Movie, Gson().toJson(Media(media.url, mediaType = 1))) {
                 this.posterUrl           = poster
@@ -816,6 +856,10 @@ open class AnimeDekhoProvider : MainAPI() {
                 this.plot                = plot
                 this.year                = year
                 this.logoUrl             = tmdbDetails.logo
+                
+                if (trackerMap.isNotEmpty()) {
+                    this.syncData = trackerMap
+                }
             }
         } else {
             // ─── Phase 1: Parse Raw Site Episodes ───
@@ -984,6 +1028,10 @@ open class AnimeDekhoProvider : MainAPI() {
                 this.year                = year
                 this.logoUrl             = tmdbDetails.logo
                 this.recommendations     = recommendations
+                
+                if (trackerMap.isNotEmpty()) {
+                    this.syncData = trackerMap
+                }
             }
         }
     }
