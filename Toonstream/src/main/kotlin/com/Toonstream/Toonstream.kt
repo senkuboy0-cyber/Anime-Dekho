@@ -29,6 +29,8 @@ import com.lagradost.cloudstream3.utils.JsUnpacker
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.app
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.Document
 import org.jsoup.Jsoup
@@ -823,7 +825,7 @@ class Toonstream : MainAPI() {
             if (truelink.isEmpty()) return@mapNotNull null
 
             val priority = when {
-                truelink.contains("as-cdn21.top")    -> 0
+                truelink.contains("as-cdn") || truelink.contains("zephyrflick") || truelink.contains("awstream") -> 0
                 truelink.contains("emturbovid.com")  -> 1
                 truelink.contains("gdmirrorbot.nl")  -> 2
                 truelink.contains("rubystm.com")     -> 3
@@ -882,19 +884,27 @@ open class AWSStream : ExtractorApi() {
         val header   = mapOf("x-requested-with" to "XMLHttpRequest")
         val formdata = mapOf("hash" to extractedHash, "r" to mainUrl)
         val apiUrl   = "$mainUrl/player/index.php?data=$extractedHash&do=getVideo"
-        val response = app.post(apiUrl, headers = header, data = formdata)
-            .parsedSafe<Response>()
+        
+        coroutineScope {
+            val videoRequest = async {
+                app.post(apiUrl, headers = header, data = formdata).parsedSafe<Response>()
+            }
+            val subtitleRequest = async {
+                app.get(url).document
+            }
 
-        response?.videoSource?.let { m3u8 ->
-            callback(
-                newExtractorLink(name, name, url = m3u8, type = ExtractorLinkType.M3U8) {
-                    this.referer = ""
-                    this.quality = Qualities.P1080.value
-                }
-            )
-            val doc = app.get(url).document
-            val packed = doc.selectFirst("script:containsData(function(p,a,c,k,e,d))")?.data()
-                .orEmpty()
+            val response = videoRequest.await()
+            response?.videoSource?.let { m3u8 ->
+                callback(
+                    newExtractorLink(name, name, url = m3u8, type = ExtractorLinkType.M3U8) {
+                        this.referer = ""
+                        this.quality = Qualities.P1080.value
+                    }
+                )
+            }
+
+            val doc = subtitleRequest.await()
+            val packed = doc.selectFirst("script:containsData(function(p,a,c,k,e,d))")?.data().orEmpty()
             JsUnpacker(packed).unpack()?.let { unpacked ->
                 Regex("""kind":\s*"captions"\s*,\s*"file":\s*"(https.*?\.srt)"""")
                     .find(unpacked)?.groupValues?.get(1)?.let { srtUrl ->
