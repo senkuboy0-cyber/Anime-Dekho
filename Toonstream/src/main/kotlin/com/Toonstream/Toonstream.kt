@@ -29,8 +29,6 @@ import com.lagradost.cloudstream3.utils.JsUnpacker
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.app
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.Document
 import org.jsoup.Jsoup
@@ -881,34 +879,39 @@ open class AWSStream : ExtractorApi() {
         callback: (ExtractorLink) -> Unit
     ) {
         val extractedHash = url.substringAfterLast("/")
-        val header   = mapOf("x-requested-with" to "XMLHttpRequest")
+        val doc = app.get(url).document
+        val m3u8Url = "$mainUrl/player/index.php?data=$extractedHash&do=getVideo"
+        val header = mapOf("x-requested-with" to "XMLHttpRequest")
         val formdata = mapOf("hash" to extractedHash, "r" to mainUrl)
-        val apiUrl   = "$mainUrl/player/index.php?data=$extractedHash&do=getVideo"
         
-        coroutineScope {
-            val videoRequest = async {
-                app.post(apiUrl, headers = header, data = formdata).parsedSafe<Response>()
-            }
-            val subtitleRequest = async {
-                app.get(url).document
-            }
+        val response = app.post(m3u8Url, headers = header, data = formdata).parsedSafe<Response>()
+        response?.videoSource?.let { m3u8 ->
+            callback.invoke(
+                newExtractorLink(
+                    name,
+                    name,
+                    url = m3u8,
+                    type = ExtractorLinkType.M3U8
+                ) {
+                    this.referer = ""
+                    this.quality = Qualities.P1080.value
+                }
+            )
+            
+            val extractedPack = doc.selectFirst("script:containsData(function(p,a,c,k,e,d))")?.data().orEmpty()
 
-            val response = videoRequest.await()
-            response?.videoSource?.let { m3u8 ->
-                callback(
-                    newExtractorLink(name, name, url = m3u8, type = ExtractorLinkType.M3U8) {
-                        this.referer = ""
-                        this.quality = Qualities.P1080.value
-                    }
-                )
-            }
-
-            val doc = subtitleRequest.await()
-            val packed = doc.selectFirst("script:containsData(function(p,a,c,k,e,d))")?.data().orEmpty()
-            JsUnpacker(packed).unpack()?.let { unpacked ->
-                Regex("""kind":\s*"captions"\s*,\s*"file":\s*"(https.*?\.srt)"""")
-                    .find(unpacked)?.groupValues?.get(1)?.let { srtUrl ->
-                        subtitleCallback(SubtitleFile("English", srtUrl))
+            JsUnpacker(extractedPack).unpack()?.let { unpacked ->
+                Regex("\"kind\":\\s*\"captions\"\\s*,\\s*\"file\":\\s*\"(https.*?\\.srt)\"")
+                    .find(unpacked)
+                    ?.groupValues
+                    ?.get(1)
+                    ?.let { subtitleUrl ->
+                        subtitleCallback.invoke(
+                            SubtitleFile(
+                                "English",
+                                subtitleUrl
+                            )
+                        )
                     }
             }
         }
