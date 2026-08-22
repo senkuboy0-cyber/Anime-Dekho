@@ -314,4 +314,3 @@ class AsCdn23 : AsCdnBase() {
     override var name = "Zephyrflick"
     override var mainUrl = "https://as-cdn23.top"
 }
-com.lagradost.cloudstream3.SubtitleFile
