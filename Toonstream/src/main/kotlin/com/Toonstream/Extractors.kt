@@ -28,9 +28,6 @@ class StreamSB8 : StreamSB() {
 }
 
 // ─── Cloudy / VidStack ───────────────────────────────────────────
-// NOTE: Cloudy (cloudy.upns.one) VidStack CDN occasionally returns 403.
-// Cause: CDN token is IP-bound or expires quickly.
-// Not fixable from the extractor side.
 class Cloudy : VidStack() {
     override var mainUrl = "https://cloudy.upns.one"
 }
@@ -125,7 +122,6 @@ class Techinmind : GDMirrorbot() {
 }
 
 // ─── Streamruby ──────────────────────────────────────────────────
-// Streamruby: POST /dl returns P.A.C.K.E.R. obfuscated JS — JsUnpacker decodes it to get m3u8
 open class Streamruby : ExtractorApi() {
     override var name            = "Streamruby"
     override var mainUrl         = "https://rubystm.com"
@@ -140,10 +136,8 @@ open class Streamruby : ExtractorApi() {
         val fileCode = url.substringAfterLast("/e/").substringBefore(".html")
         if (fileCode.isBlank()) return
 
-        // Step 1: GET embed page to initialize the session
         app.get("$mainUrl/e/$fileCode.html", referer = referer ?: mainUrl)
 
-        // Step 2: POST to /dl — returns HTML with P.A.C.K.E.R. obfuscated JS inside
         val html = app.post(
             url     = "$mainUrl/dl",
             data    = mapOf(
@@ -155,7 +149,6 @@ open class Streamruby : ExtractorApi() {
             referer = "$mainUrl/e/$fileCode.html"
         ).text
 
-        // Step 3: Find and decode packed JS — the m3u8 URL is hidden inside it
         val packed = Regex("""eval\(function\(p,a,c,k,e,d\)[\s\S]+?'\|'\)\)""")
             .find(html)?.value ?: return
         val unpacked = JsUnpacker(packed).unpack() ?: return
@@ -163,7 +156,6 @@ open class Streamruby : ExtractorApi() {
         val m3u8 = Regex("""file\s*:\s*"(https?://[^"]+\.m3u8[^"]*)"""")
             .find(unpacked)?.groupValues?.get(1) ?: return
 
-        // Extract subtitle tracks if present
         Regex("""file\s*:\s*"(https?://[^"]+_([a-z]{2,3})\.vtt[^"]*)"[\s\S]+?kind\s*:\s*"captions"""")
             .findAll(unpacked).forEach { match ->
                 subtitleCallback(SubtitleFile(match.groupValues[2], match.groupValues[1]))
@@ -197,8 +189,6 @@ class FileMoonnl : Filesim() {
 }
 
 // ─── VidMolyNet ──────────────────────────────────────────────────
-// NEW: Server 6 (Moly) -> vidmoly.net uses a different domain from vidmoly.me
-// Vidmolyme targets vidmoly.me and does not match vidmoly.net, so a new class is needed
 class VidMolyNet : ExtractorApi() {
     override var name            = "VidMolyNet"
     override var mainUrl         = "https://vidmoly.net"
@@ -206,10 +196,8 @@ class VidMolyNet : ExtractorApi() {
 
     override suspend fun getUrl(url: String, referer: String?): List<ExtractorLink>? {
         val txt = app.get(url, referer = referer ?: mainUrl).text
-        // file: '...' — key is unquoted in JS object, value uses single quotes
         val m3u8 = Regex("""file\s*:\s*['"]([^'"]+\.m3u8[^'"]*)['"]""")
             .find(txt)?.groupValues?.get(1)
-            // Fallback: raw m3u8 URL anywhere in the page
             ?: Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""").find(txt)?.value
             ?: return null
 
@@ -223,7 +211,6 @@ class VidMolyNet : ExtractorApi() {
 }
 
 // ─── EmTurboVid ──────────────────────────────────────────────────
-// NEW: Server 9 (Turbo) -> m3u8 is stored directly in the data-hash attribute
 open class EmTurboVid : ExtractorApi() {
     override var name            = "EmTurboVid"
     override var mainUrl         = "https://emturbovid.com"
@@ -254,13 +241,10 @@ class TurboViPlay : EmTurboVid() {
     override var mainUrl = "https://turboviplay.com"
 }
 
-// ─── AsCdn21 (Server 8 — Zephyrflick) ───────────────────────────
-// NEW: Server 8 (Play) -> as-cdn21.top — POST to player API returns m3u8 (same approach as AWSStream)
-// POST /player/index.php?data={hash}&do=getVideo -> { videoSource: "...m3u8..." }
-// This extractor shows up as "Zephyrflick 1080p" in the sources list
-open class AsCdn21 : ExtractorApi() {
-    override var name            = "Zephyrflick"   // displayed as this name in the sources list
-    override var mainUrl         = "https://as-cdn26.top"
+// ─── AWSStream Base Class (For Zephyrflick / as-cdn) ────────────
+open class AWSStream : ExtractorApi() {
+    override var name = "Zephyrflick"
+    override var mainUrl = "https://z.awstream.net"
     override val requiresReferer = true
 
     override suspend fun getUrl(
@@ -269,27 +253,64 @@ open class AsCdn21 : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        val hash     = url.substringAfterLast("/")
-        val header   = mapOf("x-requested-with" to "XMLHttpRequest")
-        val formdata = mapOf("hash" to hash, "r" to mainUrl)
-        val apiUrl   = "$mainUrl/player/index.php?data=$hash&do=getVideo"
-
-        val response = app.post(apiUrl, headers = header, data = formdata)
-            .parsedSafe<AWSStream.Response>()
-
-        response?.videoSource?.takeIf { it.isNotEmpty() }?.let { m3u8 ->
-            callback(
-                newExtractorLink(name, name, url = m3u8, type = ExtractorLinkType.M3U8) {
-                    this.referer = mainUrl
+        val extractedHash = url.substringAfterLast("/")
+        val doc = app.get(url).document
+        
+        val m3u8Url = "$mainUrl/player/index.php?data=$extractedHash&do=getVideo"
+        val header = mapOf("x-requested-with" to "XMLHttpRequest")
+        val formdata = mapOf("hash" to extractedHash, "r" to mainUrl)
+        
+        val response = app.post(m3u8Url, headers = header, data = formdata).parsedSafe<Response>()
+        
+        response?.videoSource?.let { m3u8 ->
+            callback.invoke(
+                newExtractorLink(
+                    name,
+                    name,
+                    url = m3u8,
+                    type = ExtractorLinkType.M3U8
+                ) {
+                    this.referer = ""
                     this.quality = Qualities.P1080.value
                 }
             )
+            
+            val extractedPack = doc.selectFirst("script:containsData(function(p,a,c,k,e,d))")?.data().orEmpty()
+            JsUnpacker(extractedPack).unpack()?.let { unpacked ->
+                Regex("\"kind\":\\s*\"captions\"\\s*,\\s*\"file\":\\s*\"(https.*?\\.srt)\"")
+                    .find(unpacked)
+                    ?.groupValues
+                    ?.get(1)
+                    ?.let { subtitleUrl ->
+                        subtitleCallback.invoke(
+                            SubtitleFile(
+                                "English",
+                                subtitleUrl
+                            )
+                        )
+                    }
+            }
         }
     }
+
+    data class Response(
+        val hls: Boolean,
+        val videoImage: String,
+        val videoSource: String,
+        val securedLink: String,
+        val downloadLinks: List<Any?>,
+        val attachmentLinks: List<Any?>,
+        val ck: String,
+    )
 }
 
-// as-cdn23.top mirror (same CDN, different hostname)
-class AsCdn23 : AsCdn21() {
-    override var name    = "Zephyrflick"
+// ─── AsCdn21 & AsCdn23 Classes ──────────────────────────────────
+class AsCdn21 : AWSStream() {
+    override var name = "Zephyrflick"
+    override var mainUrl = "https://as-cdn26.top"
+}
+
+class AsCdn23 : AWSStream() {
+    override var name = "Zephyrflick"
     override var mainUrl = "https://as-cdn23.top"
 }
