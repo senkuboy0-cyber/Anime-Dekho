@@ -241,8 +241,8 @@ class TurboViPlay : EmTurboVid() {
     override var mainUrl = "https://turboviplay.com"
 }
 
-// ─── AWSStream Base Class (For Zephyrflick / as-cdn) ────────────
-open class AWSStream : ExtractorApi() {
+// ─── AsCdnBase Class (For Zephyrflick / as-cdn) ────────────
+open class AsCdnBase : ExtractorApi() {
     override var name = "Zephyrflick"
     override var mainUrl = "https://z.awstream.net"
     override val requiresReferer = true
@@ -305,12 +305,13 @@ open class AWSStream : ExtractorApi() {
 }
 
 // ─── AsCdn21 & AsCdn23 Classes ──────────────────────────────────
-class AsCdn21 : AWSStream() {
+class AsCdn21 : AsCdnBase() {
     override var name = "Zephyrflick"
     override var mainUrl = "https://as-cdn26.top"
 }
 
-class AsCdn23 : AWSStream() {
+class AsCdn23 : AsCdnBase() {
     override var name = "Zephyrflick"
     override var mainUrl = "https://as-cdn23.top"
 }
+com.lagradost.cloudstream3.SubtitleFile
