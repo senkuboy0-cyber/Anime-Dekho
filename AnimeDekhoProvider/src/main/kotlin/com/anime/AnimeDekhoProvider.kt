@@ -90,6 +90,37 @@ open class AnimeDekhoProvider : MainAPI() {
     private val fanDubRegex2 = Regex("(?i)\\s*fandub.*")
     private val normalizeRegex = Regex("[^a-zA-Z0-9]")
 
+    // ─── Safe Tracker ID Fetcher using Jikan API (Bypasses Site Block) ───
+    private suspend fun fetchSafeTrackerData(animeTitle: String): Map<String, String> {
+        val syncMap = HashMap<String, String>()
+        try {
+            if (animeTitle.isEmpty()) return syncMap
+            
+            val safeSearchTitle = encodeUri(animeTitle)
+            val jikanUrl = "https://api.jikan.moe/v4/anime?q=$safeSearchTitle&limit=1"
+            
+            val response = app.get(
+                jikanUrl,
+                headers = mapOf(
+                    "Accept" to "application/json",
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                ),
+                timeout = 15
+            ).text
+            
+            val malIdMatch = Regex("\"mal_id\"\\s*:\\s*(\\d+)").find(response)
+            
+            if (malIdMatch != null && malIdMatch.groupValues.size > 1) {
+                val foundId = malIdMatch.groupValues.get(1)
+                syncMap.put("malId", foundId)
+                Log.d("AnimeDekho", "Successfully fetched MAL ID for AniSkip: $foundId")
+            }
+        } catch (e: Exception) {
+            Log.e("AnimeDekho", "Failed to fetch MAL ID from Jikan: ${e.message}")
+        }
+        return syncMap
+    }
+
     private fun getResultYear(result: TmdbResult): Int? {
         var dateString = result.releaseDate
         if (dateString == null) {
@@ -805,6 +836,9 @@ open class AnimeDekhoProvider : MainAPI() {
         // ── Fetch TMDB Details ──
         val tmdbDetails = fetchTmdbDetails(document, finalCleanTitle, isSeries, year)
 
+        // ── Fetch Safe Tracker Data for AniSkip ──
+        val aniskipSyncMap = fetchSafeTrackerData(finalCleanTitle)
+
         if (!isSeries) {
             return newMovieLoadResponse(rawTitle ?: "", url, TvType.Movie, Gson().toJson(Media(media.url, mediaType = 1))) {
                 this.posterUrl           = poster
@@ -816,9 +850,12 @@ open class AnimeDekhoProvider : MainAPI() {
                 this.plot                = plot
                 this.year                = year
                 this.logoUrl             = tmdbDetails.logo
+                
+                if (aniskipSyncMap.isNotEmpty()) {
+                    this.syncData = aniskipSyncMap
+                }
             }
         } else {
-            // ─── Phase 1: Parse Raw Site Episodes ───
             val rawEpisodes = ArrayList<SiteEpisode>()
             for (i in 0 until lst.size) {
                 val li = lst.get(i)
@@ -849,7 +886,6 @@ open class AnimeDekhoProvider : MainAPI() {
                 }
             }
 
-            // ─── Phase 2: Fix Episode Numbering (1-based per season) ───
             val seasonCounters = HashMap<Int?, Int>()
             for (i in 0 until rawEpisodes.size) {
                 val ep = rawEpisodes.get(i)
@@ -865,7 +901,6 @@ open class AnimeDekhoProvider : MainAPI() {
                 ep.calculatedEpNum = count
             }
 
-            // ─── Phase 3: Smart TMDB Episode Fetching ───
             if (tmdbDetails.id != null && tmdbDetails.type == "tv") {
                 val seasonsGrouped = HashMap<Int?, ArrayList<SiteEpisode>>()
                 for (i in 0 until rawEpisodes.size) {
@@ -934,7 +969,6 @@ open class AnimeDekhoProvider : MainAPI() {
                 }
             }
 
-            // ─── Phase 4: Build Cloudstream Episodes ───
             val episodes = ArrayList<Episode>()
             for (i in 0 until rawEpisodes.size) {
                 val ep = rawEpisodes.get(i)
@@ -984,6 +1018,10 @@ open class AnimeDekhoProvider : MainAPI() {
                 this.year                = year
                 this.logoUrl             = tmdbDetails.logo
                 this.recommendations     = recommendations
+                
+                if (aniskipSyncMap.isNotEmpty()) {
+                    this.syncData = aniskipSyncMap
+                }
             }
         }
     }
