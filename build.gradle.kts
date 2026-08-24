@@ -106,6 +106,9 @@ subprojects {
         implementation("com.google.code.gson:gson:2.14.0")
         implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
         implementation("org.bouncycastle:bcpkix-jdk18on:1.84")
+        // Required: jsoup 1.22+ references org.jspecify.annotations in its API,
+        // Kotlin type inference needs it on the classpath (TooniboyProvider)
+        implementation("org.jspecify:jspecify:1.0.0")
     }
 }
 
