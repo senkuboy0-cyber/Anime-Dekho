@@ -194,14 +194,25 @@ class VidMolyNet : ExtractorApi() {
     override var mainUrl         = "https://vidmoly.net"
     override val requiresReferer = false
 
-    override suspend fun getUrl(url: String, referer: String?): List<ExtractorLink>? {
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
         val txt = app.get(url, referer = referer ?: mainUrl).text
+
         val m3u8 = Regex("""file\s*:\s*['"]([^'"]+\.m3u8[^'"]*)['"]""")
             .find(txt)?.groupValues?.get(1)
             ?: Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""").find(txt)?.value
-            ?: return null
+            ?: return
 
-        return listOf(
+        Regex("""file\s*:\s*['"](https[^'"]+\.vtt[^'"]*)['"][\s\S]{0,200}?label\s*:\s*['"]([^'"]*)['"]""")
+            .find(txt)?.let { match ->
+                subtitleCallback(SubtitleFile(match.groupValues[2].ifBlank { "English" }, match.groupValues[1]))
+            }
+
+        callback(
             newExtractorLink(name, name, url = m3u8, type = ExtractorLinkType.M3U8) {
                 this.referer = mainUrl
                 this.quality = Qualities.Unknown.value
