@@ -1,6 +1,6 @@
-# <img src="assets/icons/star.svg" width="28" height="28"/> Cloudstream Extension: AnimeDekho & ToonStream
+# <img src="assets/icons/star.svg" width="28" height="28"/> Cloudstream Extension: AnimeDekho, ToonStream & Tooniboy
 
-A **Cloudstream** extension dedicated to streaming anime, cartoons, and movies from **AnimeDekho** and **ToonStream** with high-quality multi-language audio, Hindi dubbing, and subtitle support.
+A **Cloudstream** extension dedicated to streaming anime, cartoons, and movies from **AnimeDekho**, **ToonStream** and **Tooniboy** with high-quality multi-language audio, Hindi dubbing, and subtitle support.
 
 ---
 
@@ -8,10 +8,11 @@ A **Cloudstream** extension dedicated to streaming anime, cartoons, and movies f
 
 - <img src="assets/icons/check.svg" width="16" height="16"/> **Hindi & Multi-Language** Dubbed Anime and Cartoons
 - <img src="assets/icons/check.svg" width="16" height="16"/> **Anime Series & Movies** Streaming
-- <img src="assets/icons/check.svg" width="16" height="16"/> **Multiple Server** Support
+- <img src="assets/icons/check.svg" width="16" height="16"/> **Multiple Server** Support (Up to 10 Servers)
 - <img src="assets/icons/check.svg" width="16" height="16"/> **Search** Functionality
 - <img src="assets/icons/check.svg" width="16" height="16"/> **Cross-Platform** Compatibility
 - <img src="assets/icons/check.svg" width="16" height="16"/> **Subtitle** Support
+- <img src="assets/icons/check.svg" width="16" height="16"/> **TMDB Logo & Backdrop** Integration
 
 ---
 
@@ -21,6 +22,7 @@ A **Cloudstream** extension dedicated to streaming anime, cartoons, and movies f
 |--------|----------|------|
 | [AnimeDekho](https://animedekho.app/home/) | Hindi | Anime, Movies, Series, Cartoon |
 | [ToonStream](https://toon-stream.site/home/) | Multi-Language | Anime, Movies, Cartoon |
+| [Tooniboy](https://tooniboy.co/) | Hindi & Multi-Language | Anime, Movies, Series, Cartoon |
 
 ---
 
@@ -32,6 +34,7 @@ A **Cloudstream** extension dedicated to streaming anime, cartoons, and movies f
 - <img src="assets/icons/star.svg" width="16" height="16"/> **Cartoon**
 - <img src="assets/icons/star.svg" width="16" height="16"/> **Hindi Dub**
 - <img src="assets/icons/star.svg" width="16" height="16"/> **Tamil & Telugu**
+- <img src="assets/icons/star.svg" width="16" height="16"/> **Adventure**
 
 ---
 
