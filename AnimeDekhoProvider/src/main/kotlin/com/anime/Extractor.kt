@@ -205,7 +205,7 @@ class FileMoonNL : Filesim() {
     override val name = "FileMoon"
 }
 
-// ─── VidMoly (custom — same working method as TooniboyProvider) ──
+// ─── VidMoly ─────────────────────────────────────────────────────
 class Vidmolynet : ExtractorApi() {
     override var name = "VidMoly"
     override var mainUrl = "https://vidmoly.net"
