@@ -15,20 +15,21 @@ class ToonstreamProvider : BasePlugin() {
         // ─── Video extractors ─────────────────────────────────────
         registerExtractorAPI(StreamSB8())
         registerExtractorAPI(Vidmolyme())          // vidmoly.me
-        registerExtractorAPI(VidMolyNet())         // NEW: vidmoly.net (Server 6)
-        registerExtractorAPI(Streamruby())         // FIX: rubystm.com (was streamruby.com)
+        registerExtractorAPI(VidMolyNet())         // vidmoly.net (Server 6)
+        registerExtractorAPI(Streamruby())         // rubystm.com
         registerExtractorAPI(D000d())
         registerExtractorAPI(vidhidevip())
         registerExtractorAPI(Cdnwish())
         registerExtractorAPI(FileMoonnl())
-        registerExtractorAPI(Cloudy())             // cloudy.upns.one VidStack (Server 5)
-        registerExtractorAPI(GDMirrorbot())        // Server 2/3/4
+        registerExtractorAPI(Cloudy())             // cloudy.upns.one (UpnsPlayer, Server 5)
+        registerExtractorAPI(GDMirrorbot())        // Server 2/3/4 (StreamHG pipeline)
+        registerExtractorAPI(GDMirrorbotFHD())     // FHD sids on same root
         registerExtractorAPI(Techinmind())
         registerExtractorAPI(EmturbovidExtractor()) // built-in fallback
-        registerExtractorAPI(EmTurboVid())         // NEW: data-hash extractor (Server 9)
-        registerExtractorAPI(TurboViPlay())        // NEW: turboviplay.com mirror
-        registerExtractorAPI(AsCdn21())            // NEW: as-cdn21.top -> Zephyrflick (Server 8)
-        registerExtractorAPI(AsCdn23())            // NEW: as-cdn23.top mirror
+        registerExtractorAPI(EmTurboVid())         // data-hash extractor (Server 9)
+        registerExtractorAPI(TurboViPlay())        // turboviplay.com mirror
+        registerExtractorAPI(AsCdn21())            // as-cdn26.top -> Zephyrflick (Server 8)
+        registerExtractorAPI(AsCdn23())            // as-cdn23.top mirror
         registerExtractorAPI(Zephyrflick())        // play.zephyrflick.top
     }
 
