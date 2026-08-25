@@ -642,9 +642,3 @@ class AsCdn23 : AsCdnBase() {
     override var name = "Zephyrflick"
     override var mainUrl = "https://as-cdn23.top"
 }
-
-// ─── Zephyrflick (referenced in ToonstreamProvider.kt) ──────────
-class Zephyrflick : AsCdnBase() {
-    override var name = "Zephyrflick"
-    override var mainUrl = "https://play.zephyrflick.top"
-}
