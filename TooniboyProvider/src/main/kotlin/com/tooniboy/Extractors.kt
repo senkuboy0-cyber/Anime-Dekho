@@ -356,13 +356,37 @@ open class UpnsPlayer : ExtractorApi() {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Keys 3-4: SD/HD → gdmirrorbot.nl  (embedhelper sid API)
-// Key 5: FHD → fgdmirrorbot.nl
+// Keys 3-5: GDMirrorbot SD / HD / FHD
+//
+// VERIFIED LIVE PIPELINE (works for all three qualities):
+//  1. GET  https://gdmirrorbot.nl/embed/{sid}     ← ALWAYS root domain!
+//     → redirects to a player origin e.g. pro.iqsmartgames.com/svid/...
+//  2. POST {playerOrigin}/embedhelper2.php
+//       sid={sid}&UserFavSite=&currentDomain={playerHost}
+//     → JSON { sources:{smwh,strmp2,flmn,flls}, mresult: base64 }
+//  3. mresult decoded → {"smwh":"id","strmp2":"id","flmn":"id","flls":"id"}
+//  4. smwh (StreamHG) → GET https://hanerix.com/e/{id}
+//     → Dean-Edwards packed JS → JsUnpacker → links.hls2/hls3
+//     → verify manifest (#EXTM3U) & read RESOLUTION for quality
+//  5. strmp2 (StreamP2P) → cloudy.p2pplay.pro/#{id} → UpnsPlayer
+//
+// Quality auto-detected from manifest RESOLUTION:
+//   856x480 → 480p | 1280x720 → 720p | 1920x1080 → 1080p
+//
+// App display name: StreamHG (the mirror that actually serves the video)
 // ─────────────────────────────────────────────────────────────
 open class GDMirrorbot : ExtractorApi() {
-    override var name = "GDMirrorbot"
+    override var name = "StreamHG"
     override var mainUrl = "https://gdmirrorbot.nl"
     override val requiresReferer = true
+
+    companion object {
+        private const val STREAMHG_BASE = "https://hanerix.com/e/"
+        private val PACKED_REGEX =
+            Regex("""eval\(function\(p,a,c,k,e,d\)[\s\S]+?'\|'\)\)""")
+        private val HLS_LINKS_REGEX =
+            Regex(""""(hls\d)"\s*:\s*"(https?://[^"]+)"""")
+    }
 
     override suspend fun getUrl(
         url: String,
@@ -370,58 +394,55 @@ open class GDMirrorbot : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        val sid = url.substringAfterLast("embed/")
-        var sidValue = sid
+        // Extract sid; FORCE root domain (fgdmirrorbot.nl is DNS-dead but
+        // its sids resolve fine on gdmirrorbot.nl)
+        val sid = url.substringAfterLast("embed/").substringBefore("?").trimEnd('/')
+        if (sid.isBlank()) return
 
-        // Advanced embed with ?key=: resolve fileslug through API
-        if (url.contains("key=")) {
-            try {
-                var pageText = app.get(url).text
-                val finalId = Regex("""FinalID\s*=\s*"([^"]+)"""").find(pageText)?.groupValues?.get(1)
-                val myKey = Regex("""myKey\s*=\s*"([^"]+)"""").find(pageText)?.groupValues?.get(1)
-                val idType = Regex("""idType\s*=\s*"([^"]+)"""").find(pageText)?.groupValues?.get(1) ?: "imdbid"
-
-                if (finalId != null && myKey != null) {
-                    val apiUrl = if (url.contains("/tv/")) {
-                        val season = Regex("""/tv/\d+/(\d+)/""").find(url)?.groupValues?.get(1) ?: "1"
-                        val episode = Regex("""/tv/\d+/\d+/(\d+)""").find(url)?.groupValues?.get(1) ?: "1"
-                        "$mainUrl/myseriesapi?tmdbid=$finalId&season=$season&epname=$episode&key=$myKey"
-                    } else {
-                        "$mainUrl/mymovieapi?$idType=$finalId&key=$myKey"
-                    }
-                    pageText = app.get(apiUrl).text
-                    val embedData = tryParseJson<GDEmbedData>(pageText)
-                    sidValue = embedData?.data?.firstOrNull()?.fileslug
-                        ?.takeIf { it.isNotBlank() } ?: sid
-                }
-            } catch (e: Exception) {
-                Log.e(name, "key resolution failed: ${e.message}")
-            }
-        }
-
-        val host = try {
-            URI(url).let { "${it.scheme}://${it.host}" }
+        // ── Step 1: resolve embed page → player origin ──
+        val resolved = try {
+            app.get("$mainUrl/embed/$sid", referer = referer ?: mainUrl)
         } catch (e: Exception) {
-            mainUrl
+            Log.e(name, "embed resolve failed: ${e.message}")
+            return
         }
 
+        val playerOrigin = try {
+            val u = URI(resolved.url)
+            "${u.scheme}://${u.host}"
+        } catch (e: Exception) {
+            Log.e(name, "bad redirect url: ${resolved.url}")
+            return
+        }
+
+        // ── Step 2: helper API v2 on the resolved player origin ──
         val responseText = try {
-            app.post("$host/embedhelper.php", data = mapOf("sid" to sidValue)).text
+            app.post(
+                "$playerOrigin/embedhelper2.php",
+                data = mapOf(
+                    "sid" to sid,
+                    "UserFavSite" to "",
+                    "currentDomain" to playerOrigin.removePrefix("https://"),
+                ),
+                headers = mapOf(
+                    "Referer" to "$mainUrl/embed/$sid",
+                    "Origin" to playerOrigin,
+                    "X-Requested-With" to "XMLHttpRequest",
+                )
+            ).text
         } catch (e: Exception) {
-            Log.e(name, "embedhelper failed: ${e.message}")
+            Log.e(name, "embedhelper2 failed: ${e.message}")
             return
         }
 
         val root = tryParseJson<GDEmbedHelper>(responseText) ?: run {
-            Log.e(name, "embedhelper unparsable")
+            Log.e(name, "embedhelper2 unparsable")
             return
         }
-        val siteUrls = root.siteUrls ?: return
-        val siteFriendlyNames = root.siteFriendlyNames
 
-        // mresult: object OR base64 string (cloudstream base64Decode = cross-platform safe)
+        // mresult: object OR base64-encoded JSON string
         val rawMresult = root.mresult
-        val mresult: Map<String, String> = when (rawMresult) {
+        val mirrors: Map<String, String> = when (rawMresult) {
             is Map<*, *> -> @Suppress("UNCHECKED_CAST") (rawMresult as Map<String, String>)
             is String -> try {
                 val jo = JsonParser.parseString(base64Decode(rawMresult)).asJsonObject
@@ -436,30 +457,118 @@ open class GDMirrorbot : ExtractorApi() {
             }
         }
 
-        siteUrls.keys.intersect(mresult.keys).forEach { key ->
-            val base = siteUrls[key]?.trimEnd('/') ?: return@forEach
-            val path = mresult[key]?.trimStart('/') ?: return@forEach
-            val fullUrl = "$base/$path"
-            val friendlyName = siteFriendlyNames?.get(key) ?: key
+        // ── Step 3: route each mirror ──
 
+        // smwh = StreamHG (hanerix.com) — PRIMARY, fully extractable
+        mirrors["smwh"]?.takeIf { it.isNotBlank() }?.let { smwhId ->
             try {
-                when {
-                    // upns-family hosts need our custom player (dynamic config)
-                    base.contains("upns.") || base.contains("strp2p.") ||
-                        friendlyName.equals("RpmShare", true) ||
-                        friendlyName.equals("UpnShare", true) ||
-                        friendlyName.equals("StreamP2p", true)
-                        -> UpnsPlayer().apply {
-                            this.name = friendlyName
-                            this.mainUrl = getHost(fullUrl)
-                        }.getUrl(fullUrl, referer, subtitleCallback, callback)
-
-                    else -> loadExtractor(fullUrl, referer ?: mainUrl, subtitleCallback, callback)
-                }
+                extractStreamHg(smwhId, subtitleCallback, callback)
             } catch (e: Exception) {
-                Log.e(name, "Failed $friendlyName at $fullUrl: ${e.message}")
+                Log.e(name, "StreamHG failed: ${e.message}")
             }
         }
+
+        // strmp2 = StreamP2P (upns-family player) → our UpnsPlayer
+        mirrors["strmp2"]?.takeIf { it.isNotBlank() }?.let { p2pId ->
+            val siteUrl = root.sources?.get("strmp2")?.siteUrl
+                ?: "https://cloudy.p2pplay.pro/#"
+            val fullUrl = if (siteUrl.endsWith("#")) "$siteUrl$p2pId"
+                          else "${siteUrl.trimEnd('/')}#$p2pId"
+            try {
+                UpnsPlayer().apply {
+                    this.name = "StreamP2P"
+                    this.mainUrl = getHost(fullUrl)
+                }.getUrl(fullUrl, referer, subtitleCallback, callback)
+            } catch (e: Exception) {
+                Log.e(name, "StreamP2P failed: ${e.message}")
+            }
+        }
+
+        // flls (EarnVids) usually expired, flmn (Byse) captcha-protected:
+        // attempt generic extraction, failures are non-fatal
+        mirrors["flls"]?.takeIf { it.isNotBlank() }?.let { evId ->
+            val siteUrl = root.sources?.get("flls")?.siteUrl
+                ?: "https://smoothpre.com/v/"
+            try {
+                loadExtractor("${siteUrl.trimEnd('/')}/$evId", referer ?: mainUrl, subtitleCallback, callback)
+            } catch (e: Exception) {
+                Log.d(name, "EarnVids unavailable: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * StreamHG: unpack Dean-Edwards packer → pick first WORKING hls link
+     * (prefer .m3u8 variants, fall back to .txt master) → read manifest
+     * RESOLUTION for accurate quality label.
+     */
+    private suspend fun extractStreamHg(
+        mirrorId: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val html = try {
+            app.get("$STREAMHG_BASE$mirrorId", referer = mainUrl).text
+        } catch (e: Exception) {
+            Log.e(name, "StreamHG page failed: ${e.message}")
+            return
+        }
+
+        val packed = PACKED_REGEX.find(html)?.value ?: run {
+            Log.e(name, "StreamHG: no packed JS")
+            return
+        }
+        val unpacked = JsUnpacker(packed).unpack() ?: run {
+            Log.e(name, "StreamHG: unpack failed")
+            return
+        }
+
+        val hlsLinks = HLS_LINKS_REGEX.findAll(unpacked)
+            .associate { it.groupValues[1] to it.groupValues[2] }
+        if (hlsLinks.isEmpty()) {
+            Log.e(name, "StreamHG: no hls links found")
+            return
+        }
+
+        // Prefer real .m3u8 playlists; verify each until one responds
+        var chosenUrl: String? = null
+        var manifestBody: String? = null
+        for (key in listOf("hls2", "hls4", "hls3", "hls1")) {
+            val candidate = hlsLinks[key] ?: continue
+            try {
+                val body = app.get(candidate, referer = STREAMHG_BASE).text
+                if (body.contains("#EXTM3U")) {
+                    chosenUrl = candidate
+                    manifestBody = body
+                    break
+                }
+            } catch (e: Exception) {
+                Log.d(name, "$key unreachable, trying next")
+            }
+        }
+
+        val finalUrl = chosenUrl
+            // last resort: hand back unverified best-guess rather than nothing
+            ?: hlsLinks["hls2"]
+            ?: hlsLinks["hls3"]
+            ?: return
+
+        // Quality from manifest RESOLUTION (fallback: Unknown)
+        val quality = when {
+            manifestBody == null -> Qualities.Unknown.value
+            manifestBody.contains("1920x1080") -> Qualities.P1080.value
+            manifestBody.contains("1280x720") -> Qualities.P720.value
+            manifestBody.contains("856x480") || manifestBody.contains("854x480") ||
+                manifestBody.contains("640x360") -> Qualities.P480.value
+            else -> Qualities.Unknown.value
+        }
+
+        callback(
+            newExtractorLink(name, name, url = finalUrl, type = ExtractorLinkType.M3U8) {
+                this.referer = STREAMHG_BASE
+                this.quality = quality
+            }
+        )
     }
 
     protected fun getHost(url: String): String =
@@ -469,18 +578,25 @@ open class GDMirrorbot : ExtractorApi() {
             mainUrl
         }
 
-    data class GDEmbedData(val data: List<GDFileSlug>? = null)
-    data class GDFileSlug(val fileslug: String? = null)
+    data class GDSource(
+        val encryptedValue: String? = null,
+        val encryptedSiteName: String? = null,
+        val encryptedApiKey: String? = null,
+        val siteUrl: String? = null,
+        val embedSuffix: String? = null,
+        val friendlyName: String? = null,
+    )
+
     data class GDEmbedHelper(
-        val siteUrls: Map<String, String>? = null,
-        val siteFriendlyNames: Map<String, String>? = null,
+        val sources: Map<String, GDSource>? = null,
         val mresult: Any? = null,
+        val sid: String? = null,
     )
 }
 
 class GDMirrorbotFHD : GDMirrorbot() {
-    override var name = "GDMirrorbotFHD"
-    override var mainUrl = "https://fgdmirrorbot.nl"
+    override var name = "StreamHG"
+    override var mainUrl = "https://gdmirrorbot.nl"   // same root; sid differs
 }
 
 // ─────────────────────────────────────────────────────────────
