@@ -13,7 +13,8 @@ class AnimeDekhoPlugin: BasePlugin() {
     override fun load() {
         registerMainAPI(AnimeDekhoProvider())
         registerExtractorAPI(StreamRuby())
-        registerExtractorAPI(Vidmolynet())
+        registerExtractorAPI(Vidmolynet())   // vidmoly.net
+        registerExtractorAPI(Vidmolybiz())   // vidmoly.biz
         registerExtractorAPI(GDMirrorbot())
         registerExtractorAPI(Techinmind())
         registerExtractorAPI(Cdnwish())

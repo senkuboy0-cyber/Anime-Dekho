@@ -206,7 +206,7 @@ class FileMoonNL : Filesim() {
 }
 
 // ─── VidMoly ─────────────────────────────────────────────────────
-class Vidmolynet : ExtractorApi() {
+open class Vidmolynet : ExtractorApi() {
     override var name = "VidMoly"
     override var mainUrl = "https://vidmoly.net"
     override val requiresReferer = false
@@ -238,6 +238,12 @@ class Vidmolynet : ExtractorApi() {
             }
         )
     }
+}
+
+// .biz mirror domain — same extraction logic as VidMoly
+class Vidmolybiz : Vidmolynet() {
+    override var name = "VidMoly"
+    override var mainUrl = "https://vidmoly.biz"
 }
 
 class Cdnwish : StreamWishExtractor() {
