@@ -25,7 +25,7 @@ import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
-// ─── StreamSB ────────────────────────────────────────────────────
+// ─── StreamSB ────────────────────────────────────────────────
 class StreamSB8 : StreamSB() {
     override var mainUrl = "https://streamsb.net"
 }
@@ -641,4 +641,10 @@ class AsCdn21 : AsCdnBase() {
 class AsCdn23 : AsCdnBase() {
     override var name = "Zephyrflick"
     override var mainUrl = "https://as-cdn23.top"
+}
+
+// ─── Zephyrflick (referenced in ToonstreamProvider.kt) ──────────
+class Zephyrflick : AsCdnBase() {
+    override var name = "Zephyrflick"
+    override var mainUrl = "https://play.zephyrflick.top"
 }
