@@ -27,7 +27,7 @@
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/TooniboyProvider.cs3",
         "status": 1,
-        "version": 1,
+        "version": 11,
         "name": "TooniboyProvider",
         "internalName": "TooniboyProvider",
         "authors": [
@@ -45,7 +45,7 @@
         ],
         "iconUrl": "https://tooniboy.co/wp-content/uploads/2024/03/cropped-tooniboy-high-resolution-logo-transparent-7.png",
         "apiVersion": 1,
-        "fileHash": "sha256-2c2d94b86f738f1601c5911d3887014cbcd46635763dcc3d93fc56c982ef0c56",
+        "fileHash": "sha256-9ee75d8c05b739f43b2473424433062328cabca52b830314954f773abdabfab8",
         "jarFileSize": 345387,
         "jarUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/TooniboyProvider.jar",
         "jarHash": "sha256-2a498bb6b55984a647e4c856896cbb4ef824c04166c27da9187f7fb75d08c5cc"
