@@ -38,9 +38,6 @@ object FreshExtractorInterceptor : Interceptor {
     }
 }
 
-// ─────────────────────────────────────────────────────────────
-// ★ Default: VidStreamX → as-cdn26.top  (AWSStream pattern)
-// ─────────────────────────────────────────────────────────────
 class Zephyrflick : AWSStream() {
     override val name = "Zephyrflick"
     override val mainUrl = "https://as-cdn26.top"
@@ -61,8 +58,7 @@ open class AWSStream : ExtractorApi() {
         val extractedHash = url.substringAfterLast("/")
         val doc = app.get(
             url,
-            interceptor = FreshExtractorInterceptor,
-            cache = false
+            interceptor = FreshExtractorInterceptor
         ).document
         val m3u8Url = "$mainUrl/player/index.php?data=$extractedHash&do=getVideo"
         val header = mapOf("x-requested-with" to "XMLHttpRequest")
@@ -72,8 +68,7 @@ open class AWSStream : ExtractorApi() {
             m3u8Url,
             headers = header,
             data = formdata,
-            interceptor = FreshExtractorInterceptor,
-            cache = false
+            interceptor = FreshExtractorInterceptor
         ).parsedSafe<Response>()
 
         response?.videoSource?.let { m3u8 ->
@@ -105,9 +100,6 @@ open class AWSStream : ExtractorApi() {
     )
 }
 
-// ─────────────────────────────────────────────────────────────
-// Key 0: SHORT → abyssplayer.com  (enc-dec.app decrypt)
-// ─────────────────────────────────────────────────────────────
 class Abyss : ExtractorApi() {
     override var name = "Abyss"
     override var mainUrl = "https://abyssplayer.com"
@@ -128,8 +120,7 @@ class Abyss : ExtractorApi() {
         val document = app.get(
             url,
             headers = headers,
-            interceptor = FreshExtractorInterceptor,
-            cache = false
+            interceptor = FreshExtractorInterceptor
         ).document
         val scripts = document.select("script").joinToString("\n") { it.data() }
 
@@ -144,8 +135,7 @@ class Abyss : ExtractorApi() {
             "text": "$encrypted"
         }
     """.trimIndent().toRequestBody("application/json".toMediaType()),
-            interceptor = FreshExtractorInterceptor,
-            cache = false
+            interceptor = FreshExtractorInterceptor
         ).parsedSafe<AbyssResponse>()?.result ?: return
 
         decrypted.sources
@@ -176,9 +166,6 @@ class Abyss : ExtractorApi() {
     )
 }
 
-// ─────────────────────────────────────────────────────────────
-// Key 1: RUBY → rubystm.com  (/dl POST + JS unpack)
-// ─────────────────────────────────────────────────────────────
 class StreamRuby : ExtractorApi() {
     override var name = "StreamRuby"
     override var mainUrl = "https://rubystm.com"
@@ -196,8 +183,7 @@ class StreamRuby : ExtractorApi() {
         app.get(
             "$mainUrl/e/$fileCode.html",
             referer = referer ?: mainUrl,
-            interceptor = FreshExtractorInterceptor,
-            cache = false
+            interceptor = FreshExtractorInterceptor
         )
 
         val html = app.post(
@@ -209,8 +195,7 @@ class StreamRuby : ExtractorApi() {
                 "referer" to (referer ?: "")
             ),
             referer = "$mainUrl/e/$fileCode.html",
-            interceptor = FreshExtractorInterceptor,
-            cache = false
+            interceptor = FreshExtractorInterceptor
         ).text
 
         val packed = Regex("""eval\(function\(p,a,c,k,e,d\)[\s\S]+?'\|'\)\)""")
@@ -234,9 +219,6 @@ class StreamRuby : ExtractorApi() {
     }
 }
 
-// ─────────────────────────────────────────────────────────────
-// Key 2: CLOUDY → cloudy.upns.one
-// ─────────────────────────────────────────────────────────────
 class Cloudy : UpnsPlayer() {
     override var name = "Cloudy"
     override var mainUrl = "https://cloudy.upns.one"
@@ -275,8 +257,7 @@ open class UpnsPlayer : ExtractorApi() {
                 "$baseurl/api/v1/video?id=$hash&w=1280&h=720&r=$refHost",
                 headers = mapOf("User-Agent" to USER_AGENT, "Accept" to "*/*"),
                 referer = referer ?: "$baseurl/",
-                interceptor = FreshExtractorInterceptor,
-                cache = false
+                interceptor = FreshExtractorInterceptor
             ).text.trim()
         } catch (e: Exception) {
             Log.e(name, "API failed: ${e.message}")
@@ -386,9 +367,6 @@ open class UpnsPlayer : ExtractorApi() {
         }
 }
 
-// ─────────────────────────────────────────────────────────────
-// Keys 3-5: GDMirrorbot SD / HD / FHD
-// ─────────────────────────────────────────────────────────────
 open class GDMirrorbot : ExtractorApi() {
     override var name = "StreamHG"
     override var mainUrl = "https://gdmirrorbot.nl"
@@ -415,8 +393,7 @@ open class GDMirrorbot : ExtractorApi() {
             app.get(
                 "$mainUrl/embed/$sid",
                 referer = referer ?: mainUrl,
-                interceptor = FreshExtractorInterceptor,
-                cache = false
+                interceptor = FreshExtractorInterceptor
             )
         } catch (e: Exception) {
             Log.e(name, "embed resolve failed: ${e.message}")
@@ -444,8 +421,7 @@ open class GDMirrorbot : ExtractorApi() {
                     "Origin" to playerOrigin,
                     "X-Requested-With" to "XMLHttpRequest",
                 ),
-                interceptor = FreshExtractorInterceptor,
-                cache = false
+                interceptor = FreshExtractorInterceptor
             ).text
         } catch (e: Exception) {
             Log.e(name, "embedhelper2 failed: ${e.message}")
@@ -516,8 +492,7 @@ open class GDMirrorbot : ExtractorApi() {
             app.get(
                 "$STREAMHG_BASE$mirrorId",
                 referer = mainUrl,
-                interceptor = FreshExtractorInterceptor,
-                cache = false
+                interceptor = FreshExtractorInterceptor
             ).text
         } catch (e: Exception) {
             Log.e(name, "StreamHG page failed: ${e.message}")
@@ -548,8 +523,7 @@ open class GDMirrorbot : ExtractorApi() {
                 val body = app.get(
                     candidate,
                     referer = STREAMHG_BASE,
-                    interceptor = FreshExtractorInterceptor,
-                    cache = false
+                    interceptor = FreshExtractorInterceptor
                 ).text
                 if (body.contains("#EXTM3U")) {
                     chosenUrl = candidate
@@ -611,9 +585,6 @@ class GDMirrorbotFHD : GDMirrorbot() {
     override var mainUrl = "https://gdmirrorbot.nl"
 }
 
-// ─────────────────────────────────────────────────────────────
-// Key 6: TURBO → emturbovid.com  (data-hash attribute)
-// ─────────────────────────────────────────────────────────────
 class EmTurboVid : ExtractorApi() {
     override var name = "EmTurboVid"
     override var mainUrl = "https://emturbovid.com"
@@ -628,8 +599,7 @@ class EmTurboVid : ExtractorApi() {
         val doc = app.get(
             url,
             referer = referer ?: mainUrl,
-            interceptor = FreshExtractorInterceptor,
-            cache = false
+            interceptor = FreshExtractorInterceptor
         ).document
 
         var m3u8 = doc.selectFirst("#video_player[data-hash]")
@@ -657,9 +627,6 @@ class EmTurboVid : ExtractorApi() {
     }
 }
 
-// ─────────────────────────────────────────────────────────────
-// Key 7: VIDMOLY → vidmoly.net  (jwplayer file regex)
-// ─────────────────────────────────────────────────────────────
 class VidMolyNet : ExtractorApi() {
     override var name = "VidMolyNet"
     override var mainUrl = "https://vidmoly.net"
@@ -674,8 +641,7 @@ class VidMolyNet : ExtractorApi() {
         val txt = app.get(
             url,
             referer = referer ?: mainUrl,
-            interceptor = FreshExtractorInterceptor,
-            cache = false
+            interceptor = FreshExtractorInterceptor
         ).text
 
         val m3u8 = Regex("""file\s*:\s*['"]([^'"]+\.m3u8[^']*)['"]""")
@@ -697,9 +663,6 @@ class VidMolyNet : ExtractorApi() {
     }
 }
 
-// ─────────────────────────────────────────────────────────────
-// Key 8: MULTIQ → blakiteapi.xyz  (API → rumble CDN tar-HLS)
-// ─────────────────────────────────────────────────────────────
 class Blakite : ExtractorApi() {
     override var name = "Blakite"
     override var mainUrl = "https://blakiteapi.xyz"
@@ -744,8 +707,7 @@ class Blakite : ExtractorApi() {
                     "Accept" to "application/json",
                     "User-Agent" to USER_AGENT,
                 ),
-                interceptor = FreshExtractorInterceptor,
-                cache = false
+                interceptor = FreshExtractorInterceptor
             ).parsedSafe<BlakiteResponse>()
         } catch (e: Exception) {
             Log.e(name, "API failed: ${e.message}")
