@@ -34,7 +34,7 @@
             "senkuboy0-cyber"
         ],
         "description": "Tooniboy: The best place for Hindi & Multi-language Anime, Cartoons and Movies.",
-        "fileSize": 79520,
+        "fileSize": 80432,
         "repositoryUrl": "https://github.com/senkuboy0-cyber/Anime-Dekho",
         "language": "hi",
         "tvTypes": [
@@ -45,10 +45,10 @@
         ],
         "iconUrl": "https://tooniboy.co/wp-content/uploads/2024/03/cropped-tooniboy-high-resolution-logo-transparent-7.png",
         "apiVersion": 1,
-        "fileHash": "sha256-9ee75d8c05b739f43b2473424433062328cabca52b830314954f773abdabfab8",
-        "jarFileSize": 345387,
+        "fileHash": "sha256-837c1646d26ff39e1ed7d126c9443612035dc543e3e8256976194c8fd854e077",
+        "jarFileSize": 348635,
         "jarUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/TooniboyProvider.jar",
-        "jarHash": "sha256-2a498bb6b55984a647e4c856896cbb4ef824c04166c27da9187f7fb75d08c5cc"
+        "jarHash": "sha256-3f4330ce493363029bcd38f45f1a0e6fae6a34304ddf9deca886617b50dafb93"
     },
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/Toonstream.cs3",
