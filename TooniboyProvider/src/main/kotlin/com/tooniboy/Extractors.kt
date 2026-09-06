@@ -459,7 +459,7 @@ open class GDMirrorbot : ExtractorApi() {
                           else "${siteUrl.trimEnd('/')}#$p2pId"
             try {
                 UpnsPlayer().apply {
-                    this.name = "StreamP2P"
+                    this.name = "StreamPro"
                     this.mainUrl = getHost(fullUrl)
                 }.getUrl(fullUrl, referer, subtitleCallback, callback)
             } catch (e: Exception) {
