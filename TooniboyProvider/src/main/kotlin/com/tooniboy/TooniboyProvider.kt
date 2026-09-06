@@ -69,23 +69,33 @@ open class Tooniboy : MainAPI() {
         TvType.Cartoon,
     )
 
-    // ─── TMDB (Logo + Backdrop only) ────────────────────────────
+    // ─── Custom Extractor Instances ───
+    // We instantiate these here so we can call them directly in routeExtractor()
+    // rather than relying solely on CloudStream's loadExtractor() reflection.
+    private val extAbyss      = Abyss()
+    private val extStreamRuby = StreamRuby()
+    private val extCloudy     = Cloudy()
+    private val extGDMirror   = GDMirrorbot()
+    private val extFGDMirror  = GDMirrorbotFHD()
+    private val extTurbo      = EmTurboVid()
+    private val extVidMoly    = VidMolyNet()
+    private val extBlakite    = Blakite()
+    private val extZephyr     = Zephyrflick()
+
+    // ─── TMDB API Constants ───
     private val TMDB_API = "https://api.themoviedb.org/3"
     private val TMDB_KEY = "1865f43a0549ca50d341dd9ab8b29f49"
     private val TMDB_IMG = "https://image.tmdb.org/t/p/original"
 
     /**
-     * Full title cleaner (parity with AnimeDekho cleanTitleText + extractRawTitle):
-     * strips "Watch Online", episode patterns (1x08 / Episode 5),
-     * Season suffixes, dub/audio language suffixes (Hindi Dub / in Hindi etc.),
-     * fandub markers, and anything inside (...)/[...].
+     * Cleans up the raw title by removing unnecessary keywords, episode/season markers,
+     * and dub/sub labels before searching it on TMDB.
      */
     private fun cleanForTmdb(title: String): String {
         var t = title.replace(Regex("Watch Online", RegexOption.IGNORE_CASE), "")
-        t = t.replace(Regex("\\s+\\d+[x×]\\d+.*"), "")                       // " 1x8 ..." suffixes
+        t = t.replace(Regex("\\s+\\d+[x×]\\d+.*"), "")
         t = t.replace(Regex("\\s+Episode\\s+\\d+.*", RegexOption.IGNORE_CASE), "")
         t = t.replace(Regex("\\s+Season\\s+\\d+.*", RegexOption.IGNORE_CASE), "")
-        // trailing dub/language markers: "... Hindi Dub", "... in Hindi", "... Dubbed"
         t = t.replace(Regex("\\s+(?:in\\s+)?(?:hindi|tamil|telugu|english|japanese)\\s*(?:dub(?:bed)?)?\\s*$", RegexOption.IGNORE_CASE), "")
         t = t.replace(Regex("\\s+dub(?:bed)?\\s*$", RegexOption.IGNORE_CASE), "")
         t = t.replace(Regex("\\s*fan\\s*dub.*", RegexOption.IGNORE_CASE), "")
@@ -109,21 +119,16 @@ open class Tooniboy : MainAPI() {
     private fun yearMatches(tmdbYear: Int?, siteYear: Int?): Boolean {
         if (siteYear == null || tmdbYear == null) return true
         val diff = tmdbYear - siteYear
-        return diff == 0 || diff == 1 || diff == -1
+        return diff == 0 || diff == 1 || diff == -1 // Allows +/- 1 year tolerance
     }
 
-    /**
-     * Year verification (±1) then animation-genre preference,
-     * mirroring AnimeDekho pickBestResult.
-     */
     private fun pickBestResult(candidates: List<TmdbResult>, siteYear: Int?): TmdbResult? {
         if (candidates.isEmpty()) return null
-
         if (siteYear != null) {
             val yearMatched = candidates.filter { yearMatches(getResultYear(it), siteYear) }
             if (yearMatched.isNotEmpty()) {
                 if (yearMatched.size == 1) return yearMatched[0]
-                // Prefer animation genre (16)
+                // Prefer animation genre (ID 16) if multiple results have the same year
                 return yearMatched.firstOrNull { it.genreIds?.contains(16) == true }
                     ?: yearMatched[0]
             }
@@ -131,12 +136,6 @@ open class Tooniboy : MainAPI() {
         return candidates[0]
     }
 
-    /**
-     * Fetches ONLY logo + backdrop from TMDB.
-     * Matching chain: exact normalized title -> startsWith -> IMDB id.
-     * Logo langs: en -> none -> ja -> first (SVG skipped).
-     * Backdrop langs: none -> en -> first.
-     */
     private suspend fun fetchTmdbAssets(document: Document?, rawTitle: String, isSeries: Boolean, year: Int?): TmdbDetails {
         return try {
             val title = cleanForTmdb(rawTitle)
@@ -155,7 +154,7 @@ open class Tooniboy : MainAPI() {
 
             val normTitle = normalizeTitle(title)
 
-            // 1) Exact normalized-title match (title verification)
+            // Step 1: Exact title match
             val exactCandidates = validResults.filter {
                 normalizeTitle(it.title) == normTitle || normalizeTitle(it.name) == normTitle
             }
@@ -165,7 +164,7 @@ open class Tooniboy : MainAPI() {
                 exactMatch.mediaType?.let { mediaType = it }
             }
 
-            // 2) startsWith match
+            // Step 2: Starts-with match (if exact match fails)
             if (tmdbId == null && normTitle.length >= 6) {
                 val startsWithCandidates = validResults.filter {
                     val tn = normalizeTitle(it.title).ifEmpty { normalizeTitle(it.name) }
@@ -178,7 +177,7 @@ open class Tooniboy : MainAPI() {
                 }
             }
 
-            // 3) IMDB id fallback from page links
+            // Step 3: Extract IMDB ID directly from the webpage as a fallback
             if (tmdbId == null && document != null) {
                 var imdbId: String? = null
                 for (link in document.select("a[href*='imdb.com/title']")) {
@@ -208,7 +207,7 @@ open class Tooniboy : MainAPI() {
 
             if (tmdbId == null) return TmdbDetails(null, null, null, null)
 
-            // ── Fetch images: logo + backdrop ──
+            // Fetch the logo and backdrop images
             val images = app.get("$TMDB_API/$mediaType/$tmdbId/images?api_key=$TMDB_KEY")
                 .parsedSafe<TmdbImages>()
 
@@ -216,11 +215,10 @@ open class Tooniboy : MainAPI() {
             var backdropUrl: String? = null
 
             if (images != null) {
-                // Logo: skip SVGs; prefer en -> none -> ja -> first
                 images.logos?.let { logos ->
                     val validLogos = logos.filter { img ->
                         val p = img.filePath ?: ""
-                        p.isNotEmpty() && !p.endsWith(".svg") && !p.endsWith(".SVG")
+                        p.isNotEmpty() && !p.endsWith(".svg") && !p.endsWith(".SVG") // Prevent SVGs
                     }
                     val bestLogo = validLogos.firstOrNull { it.lang == "en" }
                         ?: validLogos.firstOrNull { it.lang == null }
@@ -228,8 +226,6 @@ open class Tooniboy : MainAPI() {
                         ?: validLogos.firstOrNull()
                     bestLogo?.filePath?.let { logoUrl = "$TMDB_IMG$it" }
                 }
-
-                // Backdrop: prefer none -> en -> first
                 images.backdrops?.let { backs ->
                     val bestBackdrop = backs.firstOrNull { it.lang == null }
                         ?: backs.firstOrNull { it.lang == "en" }
@@ -237,15 +233,12 @@ open class Tooniboy : MainAPI() {
                     bestBackdrop?.filePath?.let { backdropUrl = "$TMDB_IMG$it" }
                 }
             }
-
             TmdbDetails(tmdbId, mediaType, logoUrl, backdropUrl)
         } catch (e: Exception) {
             Log.e("Tooniboy", "TMDB failed: ${e.message}")
             TmdbDetails(null, null, null, null)
         }
     }
-
-    // ─── Helpers ────────────────────────────────────────────────
 
     private fun Element.getImageSrc(): String? {
         val img = this.selectFirst("img") ?: return null
@@ -258,22 +251,15 @@ open class Tooniboy : MainAPI() {
         return title.replace(Regex("\\s+"), " ").trim()
     }
 
-    /**
-     * Detects type from URL. NOTE: movies use PLURAL "/movies/".
-     */
     private fun detectType(href: String): TvType = when {
         href.contains("/movies/") -> TvType.Movie
-        href.contains("/movie/") -> TvType.Movie   // safety for singular too
+        href.contains("/movie/") -> TvType.Movie
         else -> TvType.TvSeries
     }
 
     private fun isMovieUrl(url: String): Boolean =
         url.contains("/movies/") || url.contains("/movie/")
 
-    /**
-     * Universal card parser for toroflix theme.
-     * Cards: <li class="TPostMv ..."><article class="TPost B"><a href>...
-     */
     private fun Element.toSearchResult(tvType: TvType): SearchResponse? {
         val anchor = this.selectFirst("a[href*='/series/'], a[href*='/movies/'], a[href*='/movie/']")
             ?: return null
@@ -285,7 +271,6 @@ open class Tooniboy : MainAPI() {
                 ?: return null
         )
         if (title.isBlank()) return null
-
         val poster = this.getImageSrc()
 
         return newMovieSearchResponse(title, Gson().toJson(ToonMedia(href, poster, title)), tvType) {
@@ -297,13 +282,10 @@ open class Tooniboy : MainAPI() {
         val home = mutableListOf<SearchResponse>()
         val seen = mutableSetOf<String>()
 
-        val elements = document.select(
-            "li.TPostMv, div.TPost.B, article.TPost.B"
-        )
+        val elements = document.select("li.TPostMv, div.TPost.B, article.TPost.B")
         for (el in elements) {
             val href = el.selectFirst("a[href]")?.attr("href") ?: continue
             if (!seen.add(href)) continue
-
             el.toSearchResult(detectType(href))?.let { home.add(it) }
         }
         return home
@@ -314,8 +296,7 @@ open class Tooniboy : MainAPI() {
         return Regex("(\\d+)").find(text)?.groupValues?.get(1)?.toIntOrNull()
     }
 
-    // ─── Main Page ──────────────────────────────────────────────
-
+    // ─── Main Page ───
     override val mainPage = mainPageOf(
         "series" to "Series",
         "movies" to "Movies",
@@ -334,15 +315,11 @@ open class Tooniboy : MainAPI() {
 
         val document = app.get(url).document
         val home = parseCardList(document)
-
         val hasNext = document.selectFirst(
             "nav.wp-pagenavi a, a.next.page-numbers, link[rel=next], .pagination .next"
         ) != null
-
         return newHomePageResponse(request.name, home, hasNext)
     }
-
-    // ─── Search ─────────────────────────────────────────────────
 
     override suspend fun search(query: String, page: Int): SearchResponseList {
         val url = if (page <= 1) {
@@ -357,8 +334,7 @@ open class Tooniboy : MainAPI() {
         return newSearchResponseList(results, hasNext)
     }
 
-    // ─── Load (Detail) ──────────────────────────────────────────
-
+    // ─── Detail View / Load ───
     override suspend fun load(url: String): LoadResponse {
         val media = try {
             Gson().fromJson(url, ToonMedia::class.java)
@@ -370,7 +346,6 @@ open class Tooniboy : MainAPI() {
         val movie = isMovieUrl(actualUrl)
         val document = app.get(actualUrl).document
 
-        // ── Title ──
         val rawTitle = media.title
             ?: cleanTitle(
                 document.selectFirst("h1.Title")?.text()
@@ -378,28 +353,18 @@ open class Tooniboy : MainAPI() {
                     ?: "Unknown"
             )
 
-        // ── Poster & Background ──
         val background = fixUrlNull(document.selectFirst("figure.Objf img.TPostBg")?.attr("src"))
         val poster = media.poster ?: background
-
-        // ── Description ──
         val description = extractDescription(document)
-
-        // ── Meta ──
         val year = document.selectFirst("span.Date")?.text()?.trim()?.toIntOrNull()
         val rating = document.selectFirst("div.post-ratings span")?.text()?.trim()?.toDoubleOrNull()
         val duration = document.selectFirst("span.Time")?.text()?.trim()
-
-        // ── Recommendations ──
         val recommendations = parseRecommendations(document)
 
-        // ── Series detection: real season links required ──
         val seasonLinks = document.select("section.SeasonBx .Title a[href*='/season/']")
             .map { fixUrl(it.attr("href")) }
             .filter { it.isNotBlank() }
         val isSeries = !movie && seasonLinks.isNotEmpty()
-
-        // ── TMDB: logo + backdrop only ──
         val tmdb = fetchTmdbAssets(document, rawTitle, isSeries, year)
 
         return if (isSeries) {
@@ -418,10 +383,6 @@ open class Tooniboy : MainAPI() {
         }
     }
 
-    /**
-     * Robust description extraction. Some entries (e.g. Demon Slayer)
-     * have an image-only first paragraph; real text lives in later ones.
-     */
     private fun extractDescription(document: Document): String? {
         val descDiv = document.selectFirst("div.Description") ?: return null
 
@@ -434,7 +395,7 @@ open class Tooniboy : MainAPI() {
         for (p in candidates) {
             if (p.hasClass("Genre") || p.hasClass("Cast") || p.hasClass("Tags")) continue
             val clone = p.clone()
-            clone.select("img").remove()          // strip images (Demon Slayer case)
+            clone.select("img").remove()
             clone.select("script,style").remove()
             val text = clone.text().trim()
             if (text.length > 20) return text
@@ -446,9 +407,6 @@ open class Tooniboy : MainAPI() {
         return null
     }
 
-    /**
-     * Parses ONLY the "More titles like this" carousel.
-     */
     private fun parseRecommendations(document: Document): List<SearchResponse> {
         val recs = mutableListOf<SearchResponse>()
         val seen = mutableSetOf<String>()
@@ -478,7 +436,6 @@ open class Tooniboy : MainAPI() {
         } catch (e: Exception) {
             Log.e("Tooniboy", "recommendations failed: ${e.message}")
         }
-
         return recs
     }
 
@@ -555,8 +512,7 @@ open class Tooniboy : MainAPI() {
         }
     }
 
-    // ─── Load Links (Servers) ───────────────────────────────────
-
+    // ─── Load Links (Video Extraction) ───
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -571,12 +527,9 @@ open class Tooniboy : MainAPI() {
         }
 
         val document = app.get(epData.url).document
-
-        // ── Server buttons carry data-typ (movie|episode), key and id ──
         val serverButtons = document.select("button[data-key][data-id]")
         val firstButton: Element? = serverButtons.firstOrNull()
 
-        // trtype: movies use 1, episodes use 2. Detect from page, fallback to stored value.
         val trtype = when {
             firstButton != null && firstButton.attr("data-typ") == "movie" -> 1
             isMovieUrl(epData.url) -> 1
@@ -589,34 +542,31 @@ open class Tooniboy : MainAPI() {
 
         var success = false
 
-        // ── Default player (VidStreamX → animedekho/as-cdn embed) ──
+        // 1. Process Default Iframe
         val defaultIframe = document.selectFirst("div.Video.on > iframe[src]")
         defaultIframe?.attr("src")?.takeIf { it.isNotBlank() }?.let { src ->
             try {
                 val resolved = resolveDefaultPlayer(src)
-                if (!resolved.isNullOrEmpty()) {
-                    loadExtractor(resolved, subtitleCallback, callback)
-                    success = true
-                } else {
-                    loadExtractor(src, epData.url, subtitleCallback, callback)
-                    success = true
-                }
+                val finalSrc = resolved ?: src
+                // Delegate to our custom routing function instead of loadExtractor
+                routeExtractor(finalSrc, epData.url, subtitleCallback, callback)
+                success = true
             } catch (e: Exception) {
                 Log.e("Tooniboy", "Default player failed: ${e.message}")
             }
         }
 
-        // ── trembed servers ──
+        // 2. Process all other Trembed Servers
         if (trid != null) {
             for (btn in serverButtons) {
                 val key = btn.attr("data-key").toIntOrNull() ?: continue
                 val label = btn.text().trim().ifBlank { "Server ${key + 1}" }
                 try {
                     val embedDoc = app.get("$mainUrl/?trembed=$key&trid=$trid&trtype=$trtype").document
-                    val iframeSrc = embedDoc.selectFirst("iframe[src]")?.attr("src")
-                        ?.replace("&amp;", "&")
+                    val iframeSrc = embedDoc.selectFirst("iframe[src]")?.attr("src")?.replace("&amp;", "&")
                     if (!iframeSrc.isNullOrBlank()) {
-                        loadExtractor(iframeSrc, epData.url, subtitleCallback, callback)
+                        // Delegate to our custom routing function
+                        routeExtractor(iframeSrc, epData.url, subtitleCallback, callback)
                         success = true
                         Log.d("Tooniboy", "[$label] $iframeSrc")
                     }
@@ -629,10 +579,6 @@ open class Tooniboy : MainAPI() {
         return success
     }
 
-    /**
-     * Default VidStreamX player resolves through animedekho.app embed
-     * to an as-cdn*.top video page handled by the Zephyrflick extractor.
-     */
     private suspend fun resolveDefaultPlayer(src: String): String? {
         return try {
             if (src.contains("as-cdn")) {
@@ -644,6 +590,51 @@ open class Tooniboy : MainAPI() {
             }
         } catch (e: Exception) {
             null
+        }
+    }
+
+    /**
+     * Intelligent Routing Function:
+     * This checks if the given iframe URL matches any of our known domains.
+     * If there's a match, we explicitly call our custom Extractor logic.
+     * If not, it safely falls back to CloudStream's standard built-in loadExtractor().
+     */
+    private suspend fun routeExtractor(
+        url: String,
+        referer: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        when {
+            url.contains("zephyrflick", ignoreCase = true) || url.contains("as-cdn", ignoreCase = true) || url.contains("awstream", ignoreCase = true) -> {
+                extZephyr.getUrl(url, referer, subtitleCallback, callback)
+            }
+            url.contains("abyssplayer", ignoreCase = true) || url.contains("playhydrax", ignoreCase = true) -> {
+                extAbyss.getUrl(url, referer, subtitleCallback, callback)
+            }
+            url.contains("rubystm", ignoreCase = true) || url.contains("streamruby", ignoreCase = true) -> {
+                extStreamRuby.getUrl(url, referer, subtitleCallback, callback)
+            }
+            url.contains("cloudy", ignoreCase = true) || url.contains("upns", ignoreCase = true) -> {
+                extCloudy.getUrl(url, referer, subtitleCallback, callback)
+            }
+            url.contains("gdmirrorbot", ignoreCase = true) || url.contains("fgdmirrorbot", ignoreCase = true) -> {
+                extGDMirror.getUrl(url, referer, subtitleCallback, callback)
+            }
+            url.contains("emturbovid", ignoreCase = true) -> {
+                extTurbo.getUrl(url, referer, subtitleCallback, callback)
+            }
+            url.contains("vidmoly", ignoreCase = true) -> {
+                extVidMoly.getUrl(url, referer, subtitleCallback, callback)
+            }
+            url.contains("blakite", ignoreCase = true) -> {
+                extBlakite.getUrl(url, referer, subtitleCallback, callback)
+            }
+            else -> {
+                // Unknown domain found! Fallback to standard CloudStream extractor
+                Log.i("Tooniboy", "No custom extractor matched. Falling back to CloudStream built-in for: $url")
+                loadExtractor(url, referer, subtitleCallback, callback)
+            }
         }
     }
 }
