@@ -76,7 +76,7 @@ data class ServerInfo(val truelink: String, val referer: String, val priority: I
 data class ToonMedia(val url: String, val poster: String?)
 
 class Toonstream : MainAPI() {
-    override var mainUrl              = "https://toon-stream.site"
+    override var mainUrl              = "https://toonstream.vip"
     override var name                 = "Toonstream"
     override val hasMainPage          = true
     override var lang                 = "hi"
