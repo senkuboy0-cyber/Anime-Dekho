@@ -20,13 +20,8 @@ buildscript {
     }
 }
 
-subprojects {
-    tasks.withType<KotlinCompile>().configureEach {
-        compilerOptions {
-            freeCompilerArgs.add("-Xannotation-default-target=param-property")
-        }
-    }
-}
+// Note: Removed the subprojects block that only contained the redundant 
+// "-Xannotation-default-target=param-property" argument to prevent warnings.
 
 allprojects {
     repositories {
@@ -72,18 +67,22 @@ subprojects {
         }
 
         compileOptions {
-            sourceCompatibility = JavaVersion.VERSION_1_8
-            targetCompatibility = JavaVersion.VERSION_1_8
+            // Updated source and target compatibility to Java 11 
+            // This fixes the inline bytecode mismatch error.
+            sourceCompatibility = JavaVersion.VERSION_11
+            targetCompatibility = JavaVersion.VERSION_11
         }
 
         tasks.withType<KotlinJvmCompile> {
             compilerOptions {
-                jvmTarget.set(JvmTarget.JVM_1_8)
+                // Updated JVM Target to 11 to match compileOptions
+                jvmTarget.set(JvmTarget.JVM_11)
+                
+                // Removed the redundant "-Xannotation-default-target=param-property" argument
                 freeCompilerArgs.addAll(
                     "-Xno-call-assertions",
                     "-Xno-param-assertions",
-                    "-Xno-receiver-assertions",
-                    "-Xannotation-default-target=param-property"
+                    "-Xno-receiver-assertions"
                 )
             }
         }
