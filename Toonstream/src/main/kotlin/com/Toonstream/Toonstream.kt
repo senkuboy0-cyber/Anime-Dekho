@@ -35,6 +35,11 @@ import org.jsoup.Jsoup
 import java.net.URLEncoder
 import java.util.ArrayList
 
+// ==========================================
+// TMDB API Data Classes
+// These classes model the JSON responses returned by the TMDB API.
+// ==========================================
+
 data class TmdbImages(
     @JsonProperty("logos") val logos: ArrayList<TmdbImage>? = null,
     @JsonProperty("backdrops") val backdrops: ArrayList<TmdbImage>? = null
@@ -65,48 +70,73 @@ data class TmdbSearch(
     @JsonProperty("results") val results: ArrayList<TmdbResult>? = null
 )
 
+// Data class to store finalized TMDB assets required for LoadResponse
 data class TmdbDetails(
     val logoUrl: String? = null,
     val backdropUrl: String? = null,
     val overview: String? = null
 )
 
+// Represents extracted server links with their priority index
 data class ServerInfo(val truelink: String, val referer: String, val priority: Int)
 
+// Core media data passed across screens (e.g., Search to Load page)
 data class ToonMedia(val url: String, val poster: String?)
 
+// ==========================================
+// Main Provider Class: Toonstream
+// ==========================================
 class Toonstream : MainAPI() {
     override var mainUrl              = "https://toonstream.vip"
     override var name                 = "Toonstream"
     override val hasMainPage          = true
     override var lang                 = "hi"
     override val hasDownloadSupport   = true
+    
+    // Supported content types for this provider
     override val supportedTypes       = setOf(TvType.Movie, TvType.Anime, TvType.Cartoon)
 
+    // Constants for TMDB fetching
     private val TMDB_API = "https://api.themoviedb.org/3"
     private val TMDB_KEY = "1865f43a0549ca50d341dd9ab8b29f49"
     private val TMDB_IMG = "https://image.tmdb.org/t/p/original"
 
+    /**
+     * Cleans up messy titles scraped from the source website.
+     * Removes unwanted characters, hidden unicode tags, and keywords like "Hindi Dub".
+     * This dramatically improves TMDB search accuracy.
+     */
     private fun cleanTitleText(title: String): String {
         var clean = title.replace(Regex("[\u200B-\u200D\uFEFF\\p{Cf}]"), "")
         clean = clean.replace("\u00A0", " ")
         clean = clean.replace(Regex("(?i)Watch Online"), "")
+        
+        // Remove episode and season markers
         clean = clean.replace("(?i)\\s+\\d+[x×]\\d+.*".toRegex(), "")
         clean = clean.replace("×", "x")
         clean = clean.replace("(?i)\\s+Episode\\s+\\d+.*".toRegex(), "")
         clean = clean.replace("(?i)\\s+Season\\s+\\d+.*".toRegex(), "")
+        
+        // Remove audio and dubbing descriptors
         clean = clean.replace("(?i)\\s*hindi\\s*dub.*".toRegex(), "")
         clean = clean.replace("(?i)\\s*english\\s*dub.*".toRegex(), "")
         clean = clean.replace("(?i)\\s*dual\\s*audio.*".toRegex(), "")
         clean = clean.replace("(?i)\\s*multi\\s*audio.*".toRegex(), "")
         clean = clean.replace("(?i)\\s*fan\\s*dub.*".toRegex(), "")
         clean = clean.replace("(?i)\\s*fandub.*".toRegex(), "")
+        
+        // Remove content enclosed in brackets
         clean = clean.substringBefore("(")
         clean = clean.substringBefore("[")
+        
+        // Remove extra spaces
         clean = clean.replace("\\s+".toRegex(), " ")
         return clean.trim()
     }
 
+    /**
+     * Safely URL-encodes a string for API calls.
+     */
     private fun encodeUri(text: String): String {
         return try {
             URLEncoder.encode(text, "UTF-8")
@@ -115,11 +145,18 @@ class Toonstream : MainAPI() {
         }
     }
 
+    /**
+     * Removes non-alphanumeric characters and converts to lowercase.
+     * Useful for string comparison to find exact or fuzzy matches.
+     */
     private fun normalizeTitle(s: String?): String {
         if (s == null) return ""
         return s.replace(Regex("[^a-zA-Z0-9]"), "").lowercase()
     }
 
+    /**
+     * Extracts the release year from a TMDB date string (e.g., "2023-05-12" -> 2023)
+     */
     private fun getResultYear(result: TmdbResult): Int? {
         var dateString = result.releaseDate
         if (dateString == null) {
@@ -133,12 +170,19 @@ class Toonstream : MainAPI() {
         return null
     }
 
+    /**
+     * Compares TMDB year with scraped year, allowing a 1-year variance.
+     */
     private fun yearMatches(tmdbYear: Int?, siteYear: Int?): Boolean {
         if (siteYear == null || tmdbYear == null) return true
         val diff = tmdbYear - siteYear
         return (diff == 0 || diff == 1 || diff == -1)
     }
 
+    /**
+     * Identifies the best matching TMDB result from a candidate list based on year and genre.
+     * Prioritizes Animation genre (ID: 16) since the source is primarily cartoon/anime.
+     */
     private fun pickBestResult(candidates: ArrayList<TmdbResult>, siteYear: Int?): TmdbResult? {
         if (candidates.isEmpty()) return null
 
@@ -156,6 +200,7 @@ class Toonstream : MainAPI() {
                     return yearMatched.get(0)
                 }
                 
+                // If multiple results match the year, try to find an animation (genre ID 16)
                 for (i in 0 until yearMatched.size) {
                     val match = yearMatched.get(i)
                     val genres = match.genreIds
@@ -168,13 +213,18 @@ class Toonstream : MainAPI() {
                     }
                 }
                 
+                // If no animation genre is found, return the first one
                 return yearMatched.get(0)
             }
         }
 
+        // Fallback: return the very first result
         return candidates.get(0)
     }
 
+    /**
+     * Fetches advanced metadata (Logos, Random Backdrops, Descriptions) directly from TMDB API.
+     */
     private suspend fun fetchTmdbAssets(document: Document?, title: String, isSeries: Boolean, year: Int?): TmdbDetails {
         return try {
             var tmdbId: Int? = null
@@ -184,10 +234,12 @@ class Toonstream : MainAPI() {
             }
             var tmdbOverview: String? = null
 
+            // Perform multi-search query on TMDB
             val safeTitle = encodeUri(title)
             val searchRes = app.get("$TMDB_API/search/multi?api_key=$TMDB_KEY&query=$safeTitle")
                 .parsedSafe<TmdbSearch>()
 
+            // Filter out non-movie and non-tv results (like actors/people)
             val validResults = ArrayList<TmdbResult>()
             if (searchRes != null && searchRes.results != null) {
                 for (i in 0 until searchRes.results.size) {
@@ -200,6 +252,7 @@ class Toonstream : MainAPI() {
             
             val normTitle = normalizeTitle(title)
 
+            // Step 1: Attempt to find an exact title match
             val exactCandidates = ArrayList<TmdbResult>()
             for (i in 0 until validResults.size) {
                 val res = validResults.get(i)
@@ -221,6 +274,7 @@ class Toonstream : MainAPI() {
                 }
                 tmdbOverview = exactMatch.overview
             } else {
+                // Step 2: Attempt a fuzzy "startsWith" match if exact match fails
                 val startsWithCandidates = ArrayList<TmdbResult>()
                 if (normTitle.length >= 6) {
                     for (i in 0 until validResults.size) {
@@ -247,6 +301,7 @@ class Toonstream : MainAPI() {
                     }
                     tmdbOverview = startsWithMatch.overview
                 } else {
+                    // Step 3: Fallback by extracting IMDB link from the website DOM
                     var imdbId: String? = null
                     if (document != null) {
                         val imdbLinks = document.select("a[href*='imdb.com/title']")
@@ -264,6 +319,7 @@ class Toonstream : MainAPI() {
                         }
                     }
 
+                    // Query TMDB using the scraped IMDB ID
                     if (imdbId != null) {
                         val findRes = app.get("$TMDB_API/find/$imdbId?api_key=$TMDB_KEY&external_source=imdb_id")
                             .parsedSafe<TmdbFind>()
@@ -305,8 +361,10 @@ class Toonstream : MainAPI() {
                 }
             }
 
+            // Return empty if TMDB fails to find any matching item
             if (tmdbId == null) return TmdbDetails(null, null, null)
 
+            // Step 4: Fetch images endpoint to grab Logo and Backdrop
             val images = app.get(
                 "$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY"
             ).parsedSafe<TmdbImages>()
@@ -315,6 +373,7 @@ class Toonstream : MainAPI() {
             var backdropUrl: String? = null
 
             if (images != null) {
+                // Determine the best Logo (No SVGs allowed due to Glide rendering issues)
                 if (images.logos != null) {
                     val validLogos = ArrayList<TmdbImage>()
                     for (i in 0 until images.logos.size) {
@@ -327,6 +386,7 @@ class Toonstream : MainAPI() {
                         }
                     }
                     
+                    // Prioritize English -> No Language -> Japanese
                     var bestLogo: TmdbImage? = null
                     for (i in 0 until validLogos.size) {
                         val logo = validLogos.get(i)
@@ -362,41 +422,26 @@ class Toonstream : MainAPI() {
                     }
                 }
                 
-                if (images.backdrops != null) {
-                    var bestBackdrop: TmdbImage? = null
-                    for (i in 0 until images.backdrops.size) {
-                        val backdrop = images.backdrops.get(i)
-                        if (backdrop.lang == null) {
-                            bestBackdrop = backdrop
-                            break
-                        }
-                    }
-                    if (bestBackdrop == null) {
-                        for (i in 0 until images.backdrops.size) {
-                            val backdrop = images.backdrops.get(i)
-                            if (backdrop.lang == "en") {
-                                bestBackdrop = backdrop
-                                break
-                            }
-                        }
-                    }
-                    if (bestBackdrop == null && images.backdrops.size > 0) {
-                        bestBackdrop = images.backdrops.get(0)
-                    }
-                    
-                    if (bestBackdrop != null && bestBackdrop.filePath != null) {
-                        backdropUrl = "$TMDB_IMG${bestBackdrop.filePath}"
-                    }
+                // Determine Backdrop dynamically by selecting a random item per load
+                images.backdrops?.let { backs ->
+                    // Priority: Random no-language backdrop -> Random English backdrop -> Any random backdrop
+                    val bestBackdrop = backs.filter { it.lang == null }.randomOrNull()
+                        ?: backs.filter { it.lang == "en" }.randomOrNull()
+                        ?: backs.randomOrNull()
+                        
+                    bestBackdrop?.filePath?.let { backdropUrl = "$TMDB_IMG$it" }
                 }
             }
 
             TmdbDetails(logoUrl, backdropUrl, tmdbOverview)
 
         } catch (e: Exception) {
+            // Failsafe in case API crashes
             TmdbDetails(null, null, null)
         }
     }
 
+    // Define the structure of the Home Page Tabs
     override val mainPage = mainPageOf(
         "fresh-drop"                              to "Fresh Drop",
         "category/anime-series"                   to "Anime Series",
@@ -407,6 +452,7 @@ class Toonstream : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        // Handle "Fresh Drop" section separately as it has a unique HTML structure
         if (request.data == "fresh-drop") {
             val items = fetchFreshDrop()
             return newHomePageResponse(
@@ -415,6 +461,7 @@ class Toonstream : MainAPI() {
             )
         }
 
+        // Construct standard category URL with pagination
         val path = request.data
         var url = ""
         
@@ -438,6 +485,7 @@ class Toonstream : MainAPI() {
             }
         }
 
+        // Parse standard pages
         val document = app.get(url).document
         
         val home = mutableListOf<SearchResponse>()
@@ -456,9 +504,13 @@ class Toonstream : MainAPI() {
         )
     }
 
+    /**
+     * Special parser function to extract items directly from the "Fresh Drop" section on the Homepage.
+     */
     private suspend fun fetchFreshDrop(): List<SearchResponse> {
         val document = app.get("$mainUrl/home/").document
 
+        // Locate the Fresh Drop header and target its parent container
         val header = document.select("h3.section-title").firstOrNull { it.text().contains("Fresh Drop", ignoreCase = true) }
         if (header == null) return emptyList()
 
@@ -484,6 +536,7 @@ class Toonstream : MainAPI() {
             
             val rating = el.selectFirst("span.vote")?.text()?.replace("TMDB", "")?.trim()?.toDoubleOrNull()
             
+            // TMDB fetch call to get a backdrop image
             val tmdbAssets = fetchTmdbAssets(null, cleanedTitle, true, null)
             val backdrop = tmdbAssets.backdropUrl ?: fallbackPoster
             
@@ -499,6 +552,9 @@ class Toonstream : MainAPI() {
         return results
     }
 
+    /**
+     * Extension function that converts a JSoup Element (like a card/tile) into a SearchResponse object.
+     */
     private fun Element.toSearchResult(): SearchResponse? {
         val rawTitle = this.selectFirst("article > header > h2, article h2.entry-title, h2")
             ?.text()?.replace(Regex("(?i)Watch Online"), "")?.trim() ?: return null
@@ -510,6 +566,7 @@ class Toonstream : MainAPI() {
             this.selectFirst("article > a.lnk-blk, article a.lnk-blk, a")
                 ?.attr("href") ?: return null
         )
+        
         val posterRaw = this.selectFirst("article img, img")?.attr("src") ?: ""
         val poster = when {
             posterRaw.startsWith("http") -> posterRaw
@@ -517,6 +574,7 @@ class Toonstream : MainAPI() {
             posterRaw.isNotEmpty()       -> posterRaw
             else                         -> null
         }
+        
         val tvType = when {
             href.contains("/series/") -> TvType.TvSeries
             href.contains("/movies/") -> TvType.Movie
@@ -539,6 +597,7 @@ class Toonstream : MainAPI() {
 
         var htmlText = app.get(searchUrl).text
         
+        // Remove random suggested movies from the search results DOM
         val regex = Regex("(?i)<[^>]+>\\s*(Random Series|Random Movies|Random)\\s*</[^>]+>")
         val match = regex.find(htmlText)
         
@@ -551,10 +610,10 @@ class Toonstream : MainAPI() {
         val pageResults = mutableListOf<SearchResponse>()
         var elements = doc.select("#movies-a ul > li")
         
+        // Fallback selectors if default selector is empty
         if (elements.isEmpty()) {
             elements = doc.select("article, .result-item, .item")
         }
-        
         if (elements.isEmpty()) {
             elements = doc.select("div:has(h2):has(a):has(img)")
         }
@@ -572,6 +631,9 @@ class Toonstream : MainAPI() {
         )
     }
 
+    /**
+     * Extracts "Related Series" / "Related Movies" block for the recommendations list.
+     */
     private fun parseRecommendations(document: Document): List<SearchResponse> {
         val results = mutableListOf<SearchResponse>()
         try {
@@ -622,11 +684,12 @@ class Toonstream : MainAPI() {
                 results.add(res)
             }
         } catch (e: Exception) {
-            // Ignored
+            // Suppress crash if parsing fails
         }
         return results
     }
 
+    // Handles the detail view page logic (Trailer, Plot, Seasons, etc.)
     override suspend fun load(url: String): LoadResponse {
         val media = try {
             Gson().fromJson(url, ToonMedia::class.java)
@@ -637,6 +700,7 @@ class Toonstream : MainAPI() {
         val actualUrl = media.url
         val document   = app.get(actualUrl).document
 
+        // Scrape basic info directly from HTML
         val rawTitle   = document.selectFirst("header.entry-header > h1")
             ?.text()?.replace(Regex("(?i)Watch Online"), "")?.trim() ?: ""
         val cleanTitle = cleanTitleText(rawTitle)
@@ -648,13 +712,14 @@ class Toonstream : MainAPI() {
         
         val description = document.selectFirst("div.description > p")?.text()?.trim()
         val isSeries   = actualUrl.contains("/series/")
-
         val year = document.selectFirst("span.year")?.text()?.trim()?.toIntOrNull()
 
+        // Fetch high-quality data from TMDB
         val tmdbAssets  = fetchTmdbAssets(document, cleanTitle, isSeries, year)
         val logoUrl     = tmdbAssets.logoUrl
         val backdropUrl = tmdbAssets.backdropUrl
 
+        // Swap to TMDB description if available since it is generally cleaner
         val finalDescription = if (!tmdbAssets.overview.isNullOrBlank()) {
             tmdbAssets.overview
         } else {
@@ -662,7 +727,6 @@ class Toonstream : MainAPI() {
         }
 
         val displayTitle = rawTitle
-
         val recommendations = parseRecommendations(document)
 
         return if (isSeries) {
@@ -682,6 +746,10 @@ class Toonstream : MainAPI() {
         }
     }
 
+    /**
+     * Handles processing episodes logic for TV Series.
+     * Uses AJAX calls in some cases to load individual seasons dynamically.
+     */
     private suspend fun loadSeries(
         url: String,
         document: Document,
@@ -695,6 +763,7 @@ class Toonstream : MainAPI() {
     ): LoadResponse {
         val episodes = mutableListOf<Episode>()
 
+        // Discover available seasons from season buttons
         val seasonElements = document.select("a.season-btn")
         val seasonNumbers = mutableListOf<Int>()
         for (el in seasonElements) {
@@ -703,7 +772,7 @@ class Toonstream : MainAPI() {
                 seasonNumbers.add(s)
             }
         }
-        seasonNumbers.sort()
+        seasonNumbers.sort() // Ensure correct order
         
         val media = try {
             Gson().fromJson(url, ToonMedia::class.java)
@@ -713,6 +782,7 @@ class Toonstream : MainAPI() {
         val actualUrl = media.url
 
         for (season in seasonNumbers) {
+            // Call API backend to retrieve specific season list
             val seasonDoc = try {
                 app.post(
                     "$mainUrl/wp-admin/admin-ajax.php",
@@ -728,6 +798,7 @@ class Toonstream : MainAPI() {
                 Jsoup.parse("")
             }
 
+            // Fallback: If Ajax fails, attempt traditional URL routing
             val finalDoc = if (seasonDoc.select("article").isEmpty()) {
                 try { app.get("$actualUrl/season/$season").document }
                 catch (e: Exception) { seasonDoc }
@@ -759,6 +830,7 @@ class Toonstream : MainAPI() {
             }
         }
 
+        // Failsafe parser: if everything fails, scrape the main DOM directly.
         if (episodes.isEmpty()) {
             val seasonCounters = mutableMapOf<Int, Int>()
             val backupElements = document.select("#episode_by_temp article.post")
@@ -776,6 +848,7 @@ class Toonstream : MainAPI() {
                 val numEpi = ep.selectFirst("span.num-epi")?.text()?.trim()
                 val epSeason = numEpi?.substringBefore("x")?.toIntOrNull() ?: 1
 
+                // Automatically increment episode counter for that specific season
                 val currentCount = seasonCounters[epSeason] ?: 0
                 val newCount = currentCount + 1
                 seasonCounters[epSeason] = newCount
@@ -799,6 +872,10 @@ class Toonstream : MainAPI() {
         }
     }
 
+    /**
+     * Extracts video source links (iframes) from the episode/movie page.
+     * Orders them by priority index (fastest servers load first).
+     */
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -807,12 +884,14 @@ class Toonstream : MainAPI() {
     ): Boolean {
         val document = app.get(data).document
 
+        // Scan the player div for embedded iframe sources
         val servers = document.select("#aa-options > div > iframe").mapNotNull { iframe ->
             val rawSrc = iframe.attr("data-src").ifEmpty { iframe.attr("src") }
             if (rawSrc.isEmpty()) return@mapNotNull null
 
             val serverlink = if (rawSrc.startsWith("http")) rawSrc else "$mainUrl$rawSrc"
 
+            // Traverse redirect chain to get the final embedded player link
             val truelink = try {
                 app.get(serverlink, referer = mainUrl)
                     .document
@@ -822,6 +901,7 @@ class Toonstream : MainAPI() {
 
             if (truelink.isEmpty()) return@mapNotNull null
 
+            // Assign numerical priority logic (lower is better/faster)
             val priority = when {
                 truelink.contains("as-cdn") || truelink.contains("zephyrflick") || truelink.contains("awstream") -> 0
                 truelink.contains("emturbovid.com")  -> 1
@@ -835,6 +915,7 @@ class Toonstream : MainAPI() {
             ServerInfo(truelink, serverlink, priority)
         }
 
+        // Intercepts the generated links to correctly parse `.txt` as M3U8 if necessary.
         val fixedCallback: (ExtractorLink) -> Unit = { link ->
             if (link.url.substringBefore("?").endsWith(".txt")) {
                 callback(
@@ -844,7 +925,7 @@ class Toonstream : MainAPI() {
                         url           = link.url,
                         referer       = link.referer,
                         quality       = link.quality,
-                        type          = ExtractorLinkType.M3U8,
+                        type          = ExtractorLinkType.M3U8, // Force M3U8 for text disguised streams
                         headers       = link.headers,
                         extractorData = link.extractorData
                     )
@@ -854,6 +935,7 @@ class Toonstream : MainAPI() {
             }
         }
 
+        // Send extracted URLs to built-in or custom extractors
         servers.sortedBy { it.priority }.forEach { server ->
             loadExtractor(server.truelink, server.referer, subtitleCallback, fixedCallback)
         }
@@ -861,12 +943,18 @@ class Toonstream : MainAPI() {
     }
 }
 
+// ==========================================
+// Custom Extractor Plugins
+// ==========================================
+
+// Interceptor for Zephyrflick
 class Zephyrflick : AWSStream() {
     override val name    = "Zephyrflick"
     override val mainUrl = "https://play.zephyrflick.top"
     override val requiresReferer = true
 }
 
+// Interceptor for AWSStream (handles JS Unpacking for Subtitles and HLS stream scraping)
 open class AWSStream : ExtractorApi() {
     override val name    = "AWSStream"
     override val mainUrl = "https://z.awstream.net"
@@ -884,6 +972,7 @@ open class AWSStream : ExtractorApi() {
         val header = mapOf("x-requested-with" to "XMLHttpRequest")
         val formdata = mapOf("hash" to extractedHash, "r" to mainUrl)
         
+        // Fetch JSON response containing HLS file source
         val response = app.post(m3u8Url, headers = header, data = formdata).parsedSafe<Response>()
         response?.videoSource?.let { m3u8 ->
             callback.invoke(
@@ -898,6 +987,7 @@ open class AWSStream : ExtractorApi() {
                 }
             )
             
+            // Subtitle Extractor Logic: Unpack JS script code containing the subtitle path
             val extractedPack = doc.selectFirst("script:containsData(function(p,a,c,k,e,d))")?.data().orEmpty()
 
             JsUnpacker(extractedPack).unpack()?.let { unpacked ->
@@ -908,7 +998,7 @@ open class AWSStream : ExtractorApi() {
                     ?.let { subtitleUrl ->
                         subtitleCallback.invoke(
                             SubtitleFile(
-                                "English",
+                                "English", // Defaulting to English since it's the most common
                                 subtitleUrl
                             )
                         )
@@ -917,6 +1007,7 @@ open class AWSStream : ExtractorApi() {
         }
     }
 
+    // Maps the API JSON Response body structure
     data class Response(
         val hls: Boolean,
         val videoImage: String,
