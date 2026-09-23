@@ -34,11 +34,13 @@ jobs:
           ./gradlew AnimeDekhoProvider:make
           ./gradlew Toonstream:make
           ./gradlew TooniboyProvider:make
+          ./gradlew MyAnimesProvider:make
           ./gradlew makePluginsJson
           mkdir -p build_output
           cp AnimeDekhoProvider/build/*.cs3 build_output/ || true
           cp Toonstream/build/*.cs3 build_output/ || true
           cp TooniboyProvider/build/*.cs3 build_output/ || true
+          cp MyAnimesProvider/build/*.cs3 build_output/ || true
           cp build/plugins.json build_output/plugins.json
           echo '{
             "name": "Anime Provider",
