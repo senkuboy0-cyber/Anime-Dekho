@@ -52,7 +52,6 @@ class MyAnimesProvider : MainAPI() {
         val isHome = request.data == "$mainUrl/" || request.data == mainUrl
 
         if (isHome) {
-            // Fresh Drop only exists on homepage (no pagination)
             if (page > 1) {
                 return newHomePageResponse(request.name, emptyList(), false)
             }
@@ -117,8 +116,6 @@ class MyAnimesProvider : MainAPI() {
                 document.selectFirst(".entry-meta")?.text().orEmpty()
             )?.value?.toIntOrNull()
 
-        val rating = document.selectFirst("span.rating span")?.text()?.trim()?.toFloatOrNull()
-
         val tags = document.select("li.rw span a[href*=/category/], .categories a, a[href*=/category/]")
             .map { it.text().trim() }
             .filter { it.isNotBlank() && !it.equals("Watch Now", true) }
@@ -143,33 +140,78 @@ class MyAnimesProvider : MainAPI() {
             }
         }
 
-        // Series – parse seasons / episodes
+        // Series episodes:
+        // <ul class="seasons-lst">
+        //   <li>
+        //     <figure><img src="...w185/..." alt="Title" /></figure>
+        //     <h3 class="title"><span>S1-E1</span> Episode Title</h3>
+        //     <a href="/episode/...-1x1/">Go to Episode</a>
+        //   </li>
+        // </ul>
         val episodes = ArrayList<Episode>()
-        val seasonBlocks = document.select("div.season, section.season, .seasons > div, [class*=season]")
 
-        if (seasonBlocks.isNotEmpty()) {
-            seasonBlocks.forEach { block ->
-                val seasonText = block.selectFirst("h2, h3, .season-title, header")?.text().orEmpty()
-                val seasonNum = Regex("""Season\s*(\d+)""", RegexOption.IGNORE_CASE)
-                    .find(seasonText)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 1
+        document.select("ul.seasons-lst > li").forEach { li ->
+            val a = li.selectFirst("a[href*=/episode/]") ?: return@forEach
+            val href = fixUrl(a.attr("href"))
 
-                block.select("a[href*=/episode/]").forEach { a ->
-                    episodes.add(parseEpisodeAnchor(a, seasonNum))
-                }
+            val titleEl = li.selectFirst("h3.title")
+            val seText = titleEl?.selectFirst("span")?.text()?.trim().orEmpty()
+            val seMatch = Regex("""S(\d+)\s*-?\s*E(\d+)""", RegexOption.IGNORE_CASE).find(seText)
+                ?: Regex("""(\d+)x(\d+)""").find(href)
+
+            val seasonNum = seMatch?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 1
+            val epNum = seMatch?.groupValues?.getOrNull(2)?.toIntOrNull() ?: 0
+
+            var epName = titleEl?.ownText()?.trim().orEmpty()
+            if (epName.isBlank()) {
+                epName = titleEl?.text()
+                    ?.replace(Regex("""S\d+\s*-?\s*E\d+""", RegexOption.IGNORE_CASE), "")
+                    ?.trim()
+                    .orEmpty()
             }
+            if (epName.isBlank()) {
+                epName = li.selectFirst("img[alt]")?.attr("alt")?.trim().orEmpty()
+            }
+            if (epName.isBlank()) epName = "Episode $epNum"
+
+            val epPoster = li.selectFirst("figure img, img.brd1, img")?.let {
+                it.attr("src").ifBlank { it.attr("data-src") }
+            }
+
+            episodes.add(
+                newEpisode(href) {
+                    this.name = epName
+                    this.season = seasonNum
+                    this.episode = epNum
+                    this.posterUrl = epPoster
+                }
+            )
         }
 
-        // Fallback: all episode links on page
         if (episodes.isEmpty()) {
             document.select("a[href*=/episode/]").forEach { a ->
-                val href = a.attr("href")
+                val href = fixUrl(a.attr("href"))
                 val se = Regex("""(\d+)x(\d+)""").find(href)
                 val seasonNum = se?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 1
-                episodes.add(parseEpisodeAnchor(a, seasonNum))
+                val epNum = se?.groupValues?.getOrNull(2)?.toIntOrNull() ?: 0
+                val parent = a.parents().firstOrNull { it.tagName() == "li" } ?: a.parent()
+                val epPoster = parent?.selectFirst("img")?.attr("src")
+                val epName = parent?.selectFirst("h3.title, .title")?.text()
+                    ?.replace(Regex("""S\d+\s*-?\s*E\d+""", RegexOption.IGNORE_CASE), "")
+                    ?.trim()
+                    ?.ifBlank { null }
+                    ?: "Episode $epNum"
+                episodes.add(
+                    newEpisode(href) {
+                        this.name = epName
+                        this.season = seasonNum
+                        this.episode = epNum
+                        this.posterUrl = epPoster
+                    }
+                )
             }
         }
 
-        // Deduplicate by URL
         val unique = episodes.distinctBy { it.data }
 
         return newTvSeriesLoadResponse(title, url, TvType.TvSeries, unique) {
@@ -179,37 +221,6 @@ class MyAnimesProvider : MainAPI() {
             this.tags = tags
             this.recommendations = recommendations
             addActors(actors)
-        }
-    }
-
-    private fun parseEpisodeAnchor(a: Element, defaultSeason: Int): Episode {
-        val href = fixUrl(a.attr("href"))
-        val parent = a.closest("div, li, article") ?: a.parent()
-
-        val rawText = (parent?.text() ?: a.text()).replace(Regex("\\s+"), " ").trim()
-        val epMatch = Regex("""S(\d+)-E(\d+)""", RegexOption.IGNORE_CASE).find(rawText)
-            ?: Regex("""(\d+)x(\d+)""").find(href)
-
-        val season = epMatch?.groupValues?.getOrNull(1)?.toIntOrNull() ?: defaultSeason
-        val epNum = epMatch?.groupValues?.getOrNull(2)?.toIntOrNull()
-            ?: Regex("""E(\d+)""", RegexOption.IGNORE_CASE).find(rawText)?.groupValues?.getOrNull(1)?.toIntOrNull()
-            ?: 0
-
-        val name = rawText
-            .replace(Regex("""S\d+-E\d+\s*""", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("""\d{2}\.\d{2}\.\d{4}"""), "")
-            .replace("Go to Episode", "", ignoreCase = true)
-            .trim()
-            .ifBlank { "Episode $epNum" }
-
-        val poster = parent?.selectFirst("img")?.attr("src")
-            ?: parent?.selectFirst("img")?.attr("data-src")
-
-        return newEpisode(href) {
-            this.name = name
-            this.season = season
-            this.episode = epNum
-            this.posterUrl = poster
         }
     }
 
@@ -224,7 +235,6 @@ class MyAnimesProvider : MainAPI() {
         val document = app.get(data).document
         var found = false
 
-        // Server tabs: base64 data-src or direct iframe src with trembed
         val embedUrls = LinkedHashSet<String>()
 
         document.select("[data-src]").forEach { el ->
@@ -240,7 +250,6 @@ class MyAnimesProvider : MainAPI() {
                 }
             }
 
-        // Build from trid/trtype if present in page
         val trid = Regex("""trid=(\d+)""").find(document.html())?.groupValues?.getOrNull(1)
         val trtype = Regex("""trtype=(\d+)""").find(document.html())?.groupValues?.getOrNull(1)
             ?: if (data.contains("/movies/")) "1" else "2"
@@ -260,7 +269,7 @@ class MyAnimesProvider : MainAPI() {
                         found = true
                     }
                     playerSrc.contains("p2pplay", true) ||
-                        playerSrc.contains("#") && playerSrc.contains("play", true) -> {
+                        (playerSrc.contains("#") && playerSrc.contains("play", true)) -> {
                         StreamP2P().getUrl(playerSrc, mainUrl, subtitleCallback, callback)
                         found = true
                     }
@@ -282,9 +291,6 @@ class MyAnimesProvider : MainAPI() {
         return found
     }
 
-    /**
-     * Fetch intermediate embed (?trembed=&trid=&trtype=) and extract iframe player URL.
-     */
     private suspend fun resolvePlayerSrc(embedUrl: String): String? {
         val normalized = when {
             embedUrl.contains("trembed") -> embedUrl
@@ -294,12 +300,10 @@ class MyAnimesProvider : MainAPI() {
         val doc = app.get(normalized, referer = mainUrl).document
         val iframe = doc.selectFirst("iframe[src]")?.attr("src")?.trim().orEmpty()
         if (iframe.isNotBlank()) {
-            // hydrax.php / streamp2p.php may wrap another iframe
             if (iframe.contains("hydrax.php") || iframe.contains("streamp2p.php")) {
                 val inner = app.get(fixUrl(iframe), referer = mainUrl).document
                 val innerSrc = inner.selectFirst("iframe[src]")?.attr("src")?.trim()
                 if (!innerSrc.isNullOrBlank()) return fixUrl(innerSrc)
-                // streamp2p sometimes only has the hash iframe
                 return fixUrl(iframe)
             }
             return fixUrl(iframe)
