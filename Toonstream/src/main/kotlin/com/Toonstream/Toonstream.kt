@@ -937,7 +937,11 @@ class Toonstream : MainAPI() {
 
         // Send extracted URLs to built-in or custom extractors
         servers.sortedBy { it.priority }.forEach { server ->
-            loadExtractor(server.truelink, server.referer, subtitleCallback, fixedCallback)
+            try {
+                loadExtractor(server.truelink, server.referer, subtitleCallback, fixedCallback)
+            } catch (e: Exception) {
+                // Safely ignore if a specific extractor crashes and continue loop
+            }
         }
         return true
     }
@@ -966,44 +970,52 @@ open class AWSStream : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        val extractedHash = url.substringAfterLast("/")
-        val doc = app.get(url).document
-        val m3u8Url = "$mainUrl/player/index.php?data=$extractedHash&do=getVideo"
-        val header = mapOf("x-requested-with" to "XMLHttpRequest")
-        val formdata = mapOf("hash" to extractedHash, "r" to mainUrl)
-        
-        // Fetch JSON response containing HLS file source
-        val response = app.post(m3u8Url, headers = header, data = formdata).parsedSafe<Response>()
-        response?.videoSource?.let { m3u8 ->
-            callback.invoke(
-                newExtractorLink(
-                    name,
-                    name,
-                    url = m3u8,
-                    type = ExtractorLinkType.M3U8
-                ) {
-                    this.referer = ""
-                    this.quality = Qualities.P1080.value
-                }
-            )
+        try {
+            val extractedHash = url.substringAfterLast("/")
+            val doc = app.get(url).document
+            val m3u8Url = "$mainUrl/player/index.php?data=$extractedHash&do=getVideo"
+            val header = mapOf("x-requested-with" to "XMLHttpRequest")
+            val formdata = mapOf("hash" to extractedHash, "r" to mainUrl)
             
-            // Subtitle Extractor Logic: Unpack JS script code containing the subtitle path
-            val extractedPack = doc.selectFirst("script:containsData(function(p,a,c,k,e,d))")?.data().orEmpty()
-
-            JsUnpacker(extractedPack).unpack()?.let { unpacked ->
-                Regex("\"kind\":\\s*\"captions\"\\s*,\\s*\"file\":\\s*\"(https.*?\\.srt)\"")
-                    .find(unpacked)
-                    ?.groupValues
-                    ?.get(1)
-                    ?.let { subtitleUrl ->
-                        subtitleCallback.invoke(
-                            SubtitleFile(
-                                "English", // Defaulting to English since it's the most common
-                                subtitleUrl
-                            )
-                        )
+            // Fetch JSON response containing HLS file source
+            val response = app.post(m3u8Url, headers = header, data = formdata).parsedSafe<Response>()
+            response?.videoSource?.let { m3u8 ->
+                callback.invoke(
+                    newExtractorLink(
+                        name,
+                        name,
+                        url = m3u8,
+                        type = ExtractorLinkType.M3U8
+                    ) {
+                        this.referer = ""
+                        this.quality = Qualities.P1080.value
                     }
+                )
+                
+                // Subtitle Extractor Logic: Unpack JS script code containing the subtitle path
+                try {
+                    val extractedPack = doc.selectFirst("script:containsData(function(p,a,c,k,e,d))")?.data().orEmpty()
+
+                    JsUnpacker(extractedPack).unpack()?.let { unpacked ->
+                        Regex("\"kind\":\\s*\"captions\"\\s*,\\s*\"file\":\\s*\"(https.*?\\.srt)\"")
+                            .find(unpacked)
+                            ?.groupValues
+                            ?.get(1)
+                            ?.let { subtitleUrl ->
+                                subtitleCallback.invoke(
+                                    SubtitleFile(
+                                        "English", // Defaulting to English since it's the most common
+                                        subtitleUrl
+                                    )
+                                )
+                            }
+                    }
+                } catch (e: Exception) {
+                    // Ignore subtitle extraction errors so video still plays
+                }
             }
+        } catch (e: Exception) {
+            // Safely handle API failures for this specific server
         }
     }
 
