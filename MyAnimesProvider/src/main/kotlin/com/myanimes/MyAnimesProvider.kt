@@ -26,7 +26,7 @@ import org.jsoup.nodes.Element
 
 class MyAnimesProvider : MainAPI() {
     override var mainUrl = "https://myanimes.in"
-    override var name = "MyAnimes"
+    override var name = "My Animes"
     override val hasMainPage = true
     override var lang = "hi"
     override val hasDownloadSupport = true
@@ -85,10 +85,11 @@ class MyAnimesProvider : MainAPI() {
     }
 
     private suspend fun searchPage(query: String, page: Int): List<SearchResponse> {
+        val q = query.replace(" ", "+")
         val url = if (page <= 1) {
-            "\( mainUrl/?s= \){query.replace(" ", "+")}"
+            "$mainUrl/?s=$q"
         } else {
-            "$mainUrl/page/\( page/?s= \){query.replace(" ", "+")}"
+            "$mainUrl/page/$page/?s=$q"
         }
         val document = app.get(url).document
         return document.select("article.post")
