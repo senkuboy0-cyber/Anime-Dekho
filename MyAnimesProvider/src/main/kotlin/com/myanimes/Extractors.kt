@@ -18,10 +18,6 @@ import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
-/**
- * Abyss / Hydrax player used by myanimes.in (hydrax.php -> player.abyssplayer.com)
- * Decrypts via enc-dec.app API.
- */
 class Abyss : ExtractorApi() {
     override var name = "Abyss"
     override var mainUrl = "https://player.abyssplayer.com"
@@ -42,15 +38,14 @@ class Abyss : ExtractorApi() {
         val document = app.get(url, headers = headers).document
         val scripts = document.select("script").joinToString("\n") { it.data() }
 
-        val encrypted = Regex("""const\s+datas\s*=\s*"([^"]*)"""")
+        val encrypted = Regex("const\\s+datas\\s*=\\s*\"([^\"]+)\"")
             .find(scripts)?.groupValues?.getOrNull(1) ?: return
 
+        val body = """{"text":"$encrypted"}"""
         val decrypted = app.post(
             url = "https://enc-dec.app/api/dec-abyss",
             headers = headers,
-            requestBody = """{"text":"$encrypted"}"""
-                .trimIndent()
-                .toRequestBody("application/json".toMediaType())
+            requestBody = body.toRequestBody("application/json".toMediaType())
         ).parsedSafe<AbyssResponse>()?.result ?: return
 
         decrypted.sources
@@ -86,17 +81,11 @@ class Abyss : ExtractorApi() {
     )
 }
 
-/**
- * StreamP2P wrapper used by myanimes.in (streamp2p.php -> *.p2pplay.online/#hash)
- */
 class StreamP2P : UpnsPlayer() {
     override var name = "StreamP2P"
     override var mainUrl = "https://hindianimezone.p2pplay.online"
 }
 
-/**
- * Upns / Cloudy family – AES-CBC encrypted API response.
- */
 class Cloudy : UpnsPlayer() {
     override var name = "Cloudy"
     override var mainUrl = "https://cloudy.upns.one"
@@ -208,7 +197,10 @@ open class UpnsPlayer : ExtractorApi() {
             for (c in candidates) {
                 if (c.optBoolean("disabled", false)) continue
                 val rawDomain = c.optString("domain").takeIf { it.isNotBlank() } ?: continue
-                val cleanDomain = rawDomain.removePrefix("https://").removePrefix("http://").trimEnd('/')
+                val cleanDomain = rawDomain
+                    .removePrefix("https://")
+                    .removePrefix("http://")
+                    .trimEnd('/')
                 val cleanPath = if (videoPath.startsWith("/")) videoPath else "/$videoPath"
                 val sb = StringBuilder("https://").append(cleanDomain).append(cleanPath)
                 val params = c.optJSONObject("params")
@@ -242,7 +234,7 @@ open class UpnsPlayer : ExtractorApi() {
 
     private fun decryptHex(hex: String): String? {
         return try {
-            val clean = hex.trim().removeSurrounding("\"")
+            val clean = hex.trim().trim('"')
             val data = clean.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
             val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
             cipher.init(
@@ -256,10 +248,12 @@ open class UpnsPlayer : ExtractorApi() {
         }
     }
 
-    protected fun getBaseUrl(url: String): String =
-        try {
-            URI(url).let { "\( {it.scheme}:// \){it.host}" }
+    protected fun getBaseUrl(url: String): String {
+        return try {
+            val uri = URI(url)
+            uri.scheme + "://" + uri.host
         } catch (_: Exception) {
             mainUrl
         }
+    }
 }
