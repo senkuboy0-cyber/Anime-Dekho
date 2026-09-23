@@ -6,7 +6,6 @@ import com.lagradost.cloudstream3.USER_AGENT
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.INFER_TYPE
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.getQualityFromName
@@ -60,14 +59,16 @@ class Abyss : ExtractorApi() {
                 callback.invoke(
                     newExtractorLink(
                         source = name,
-                        name = "$name [${source.codec.uppercase()}]",
+                        name = "$name ${source.type}",
                         url = source.url,
-                        type = INFER_TYPE
+                        type = ExtractorLinkType.VIDEO
                     ) {
                         this.quality = getQualityFromName(source.type)
+                        this.referer = "https://playhydrax.com/"
                         this.headers = mapOf(
-                            "Referer" to "https://player.abyssplayer.com/",
-                            "Origin" to "https://player.abyssplayer.com"
+                            "Referer" to "https://playhydrax.com/",
+                            "Origin" to "https://playhydrax.com",
+                            "User-Agent" to USER_AGENT
                         )
                     }
                 )
@@ -163,6 +164,10 @@ open class UpnsPlayer : ExtractorApi() {
             newExtractorLink(name, name, url = finalUrl, type = ExtractorLinkType.M3U8) {
                 this.referer = "$baseurl/"
                 this.quality = Qualities.Unknown.value
+                this.headers = mapOf(
+                    "Referer" to "$baseurl/",
+                    "User-Agent" to USER_AGENT
+                )
             }
         )
 
@@ -178,7 +183,7 @@ open class UpnsPlayer : ExtractorApi() {
 
     private fun buildFromStreamingConfig(obj: JSONObject): String? {
         return try {
-            var videoPath = obj.optString("source").takeIf { it.isNotEmpty() && !it.startsWith("http") }
+            val videoPath = obj.optString("source").takeIf { it.isNotEmpty() && !it.startsWith("http") }
                 ?: obj.optString("hls").takeIf { it.isNotEmpty() && !it.startsWith("http") }
                 ?: obj.optString("hlsVideoTiktok").takeIf { it.isNotEmpty() && !it.startsWith("http") }
                 ?: return null
@@ -253,7 +258,7 @@ open class UpnsPlayer : ExtractorApi() {
 
     protected fun getBaseUrl(url: String): String =
         try {
-            URI(url).let { "${it.scheme}://${it.host}" }
+            URI(url).let { "\( {it.scheme}:// \){it.host}" }
         } catch (_: Exception) {
             mainUrl
         }
