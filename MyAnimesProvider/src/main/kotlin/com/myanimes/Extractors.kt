@@ -51,11 +51,13 @@ class Abyss : ExtractorApi() {
         decrypted.sources
             .filter { it.status }
             .forEach { source ->
+                val finalUrl = resolveRedirect(source.url, headers) ?: source.url
+
                 callback.invoke(
                     newExtractorLink(
                         source = name,
                         name = "$name ${source.type}",
-                        url = source.url,
+                        url = finalUrl,
                         type = ExtractorLinkType.VIDEO
                     ) {
                         this.quality = getQualityFromName(source.type)
@@ -68,6 +70,25 @@ class Abyss : ExtractorApi() {
                     }
                 )
             }
+    }
+
+    private suspend fun resolveRedirect(url: String, headers: Map<String, String>): String? {
+        return try {
+            val response = app.get(url, headers = headers, allowRedirects = false)
+            val code = response.code
+            if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
+                val location = response.headers["Location"] ?: response.headers["location"]
+                if (!location.isNullOrBlank()) {
+                    Log.d("Abyss", "Resolved $code -> $location")
+                    return location
+                }
+            }
+            val followed = app.get(url, headers = headers, allowRedirects = true)
+            followed.url.takeIf { it.isNotBlank() } ?: url
+        } catch (e: Exception) {
+            Log.e("Abyss", "resolveRedirect failed: ${e.message}")
+            null
+        }
     }
 
     data class AbyssResponse(val status: Long, val result: Result)
