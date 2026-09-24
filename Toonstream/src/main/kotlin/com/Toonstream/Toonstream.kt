@@ -2,6 +2,7 @@ package com.Toonstream
 
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.google.gson.Gson
+import com.lagradost.api.Log
 import com.lagradost.cloudstream3.MainAPI
 import com.lagradost.cloudstream3.HomePageResponse
 import com.lagradost.cloudstream3.HomePageList
@@ -100,6 +101,15 @@ class Toonstream : MainAPI() {
     private val TMDB_API = "https://api.themoviedb.org/3"
     private val TMDB_KEY = "1865f43a0549ca50d341dd9ab8b29f49"
     private val TMDB_IMG = "https://image.tmdb.org/t/p/original"
+
+    // Custom Extractor Instances mapped for routing
+    private val extZephyr     = Zephyrflick()
+    private val extAbyss      = Abyss()
+    private val extStreamRuby = Streamruby()
+    private val extCloudy     = Cloudy()
+    private val extGDMirror   = GDMirrorbot()
+    private val extTurbo      = EmTurboVid()
+    private val extVidMoly    = VidMolyNet()
 
     /**
      * Cleans up messy titles scraped from the source website.
@@ -935,11 +945,52 @@ class Toonstream : MainAPI() {
             }
         }
 
-        // Send extracted URLs to built-in or custom extractors
+        // Send extracted URLs to custom intelligent routing logic
         servers.sortedBy { it.priority }.forEach { server ->
-            loadExtractor(server.truelink, server.referer, subtitleCallback, fixedCallback)
+            routeExtractor(server.truelink, server.referer, subtitleCallback, fixedCallback)
         }
         return true
+    }
+
+    /**
+     * Intelligent Routing Function:
+     * This routes the iframe URL to known custom extractors instantiated above.
+     * If no matches are found, it falls back to the built-in CloudStream `loadExtractor`.
+     */
+    private suspend fun routeExtractor(
+        url: String,
+        referer: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        when {
+            url.contains("zephyrflick", ignoreCase = true) || url.contains("as-cdn", ignoreCase = true) || url.contains("awstream", ignoreCase = true) -> {
+                extZephyr.getUrl(url, referer, subtitleCallback, callback)
+            }
+            url.contains("abyssplayer", ignoreCase = true) || url.contains("playhydrax", ignoreCase = true) -> {
+                extAbyss.getUrl(url, referer, subtitleCallback, callback)
+            }
+            url.contains("rubystm", ignoreCase = true) || url.contains("streamruby", ignoreCase = true) -> {
+                extStreamRuby.getUrl(url, referer, subtitleCallback, callback)
+            }
+            url.contains("cloudy", ignoreCase = true) || url.contains("upns", ignoreCase = true) -> {
+                extCloudy.getUrl(url, referer, subtitleCallback, callback)
+            }
+            url.contains("gdmirrorbot", ignoreCase = true) || url.contains("fgdmirrorbot", ignoreCase = true) -> {
+                extGDMirror.getUrl(url, referer, subtitleCallback, callback)
+            }
+            url.contains("emturbovid", ignoreCase = true) || url.contains("turboviplay", ignoreCase = true) -> {
+                extTurbo.getUrl(url, referer, subtitleCallback, callback)
+            }
+            url.contains("vidmoly", ignoreCase = true) -> {
+                extVidMoly.getUrl(url, referer, subtitleCallback, callback)
+            }
+            else -> {
+                // Unknown domain found! Fallback to standard CloudStream built-in extractor
+                Log.i("Toonstream", "No custom extractor matched. Falling back to CloudStream built-in for: $url")
+                loadExtractor(url, referer, subtitleCallback, callback)
+            }
+        }
     }
 }
 
