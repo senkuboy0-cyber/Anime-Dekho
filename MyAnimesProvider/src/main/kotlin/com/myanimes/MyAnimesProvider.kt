@@ -1,5 +1,6 @@
 package com.myanimes
 
+import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.Episode
 import com.lagradost.cloudstream3.HomePageResponse
@@ -11,6 +12,7 @@ import com.lagradost.cloudstream3.SearchResponse
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.TvType
 import com.lagradost.cloudstream3.app
+import com.lagradost.cloudstream3.base64Decode
 import com.lagradost.cloudstream3.fixUrl
 import com.lagradost.cloudstream3.mainPageOf
 import com.lagradost.cloudstream3.newEpisode
@@ -19,10 +21,47 @@ import com.lagradost.cloudstream3.newMovieLoadResponse
 import com.lagradost.cloudstream3.newMovieSearchResponse
 import com.lagradost.cloudstream3.newTvSeriesLoadResponse
 import com.lagradost.cloudstream3.newTvSeriesSearchResponse
-import com.lagradost.cloudstream3.base64Decode
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
+import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+
+// ─── TMDB Data Classes ───
+data class TmdbImages(
+    @JsonProperty("logos") val logos: ArrayList<TmdbImage>? = null,
+    @JsonProperty("backdrops") val backdrops: ArrayList<TmdbImage>? = null
+)
+
+data class TmdbImage(
+    @JsonProperty("file_path") val filePath: String? = null,
+    @JsonProperty("iso_639_1") val lang: String? = null
+)
+
+data class TmdbFind(
+    @JsonProperty("movie_results") val movies: ArrayList<TmdbResult>? = null,
+    @JsonProperty("tv_results") val tvShows: ArrayList<TmdbResult>? = null
+)
+
+data class TmdbResult(
+    @JsonProperty("id") val id: Int? = null,
+    @JsonProperty("media_type") val mediaType: String? = null,
+    @JsonProperty("title") val title: String? = null,
+    @JsonProperty("name") val name: String? = null,
+    @JsonProperty("release_date") val releaseDate: String? = null,
+    @JsonProperty("first_air_date") val firstAirDate: String? = null,
+    @JsonProperty("genre_ids") val genreIds: ArrayList<Int>? = null
+)
+
+data class TmdbSearch(
+    @JsonProperty("results") val results: ArrayList<TmdbResult>? = null
+)
+
+data class TmdbDetails(
+    val id: Int?,
+    val type: String?,
+    val logo: String?,
+    val backdrop: String?
+)
 
 class MyAnimesProvider : MainAPI() {
     override var mainUrl = "https://myanimes.in"
@@ -45,6 +84,240 @@ class MyAnimesProvider : MainAPI() {
         "$mainUrl/movies/" to "Movies",
         "$mainUrl/category/crunchyroll/" to "Crunchyroll",
     )
+
+    // ─── TMDB ────────────────────────────────────────────────────
+    private val TMDB_API = "https://api.themoviedb.org/3"
+    private val TMDB_KEY = "1865f43a0549ca50d341dd9ab8b29f49"
+    private val TMDB_IMG = "https://image.tmdb.org/t/p/original"
+    private val normalizeRegex = Regex("[^a-zA-Z0-9]")
+
+    private fun getResultYear(result: TmdbResult): Int? {
+        val dateString = result.releaseDate ?: result.firstAirDate ?: return null
+        if (dateString.contains("-")) {
+            return dateString.substringBefore("-").toIntOrNull()
+        }
+        return null
+    }
+
+    private fun yearMatches(tmdbYear: Int?, siteYear: Int?): Boolean {
+        if (siteYear == null || tmdbYear == null) return true
+        val diff = tmdbYear - siteYear
+        return diff == 0 || diff == 1 || diff == -1
+    }
+
+    private fun pickBestResult(candidates: List<TmdbResult>, siteYear: Int?): TmdbResult? {
+        if (candidates.isEmpty()) return null
+        if (siteYear != null) {
+            val yearMatched = candidates.filter { yearMatches(getResultYear(it), siteYear) }
+            if (yearMatched.isNotEmpty()) {
+                if (yearMatched.size == 1) return yearMatched[0]
+                for (match in yearMatched) {
+                    val genres = match.genreIds
+                    if (genres != null && genres.contains(16)) return match
+                }
+                return yearMatched[0]
+            }
+        }
+        return candidates[0]
+    }
+
+    private fun encodeUri(text: String): String {
+        return text.replace("%", "%25")
+            .replace(" ", "%20")
+            .replace("#", "%23")
+            .replace("&", "%26")
+            .replace("?", "%3F")
+            .replace("=", "%3D")
+            .replace(":", "%3A")
+            .replace("/", "%2F")
+            .replace("'", "%27")
+            .replace("\"", "%22")
+            .replace(",", "%2C")
+    }
+
+    private fun normalizeTitle(s: String?): String {
+        if (s == null) return ""
+        return s.replace(normalizeRegex, "").lowercase()
+    }
+
+    private fun cleanTitleForTmdb(title: String): String {
+        return title
+            .replace(Regex("(?i)\\s+Season\\s+\\d+.*"), "")
+            .replace(Regex("(?i)\\s+Episode\\s+\\d+.*"), "")
+            .substringBefore("(")
+            .substringBefore("[")
+            .trim()
+    }
+
+    private suspend fun fetchTmdbDetails(
+        document: Document,
+        title: String,
+        isSeries: Boolean,
+        year: Int?
+    ): TmdbDetails {
+        return try {
+            var tmdbId: Int? = null
+            var actualMediaType = if (isSeries) "tv" else "movie"
+            val safeTitle = encodeUri(title)
+
+            val searchRes = app.get("$TMDB_API/search/multi?api_key=$TMDB_KEY&query=$safeTitle")
+                .parsedSafe<TmdbSearch>()
+
+            val validResults = ArrayList<TmdbResult>()
+            if (searchRes?.results != null) {
+                for (res in searchRes.results) {
+                    if (res.mediaType == "movie" || res.mediaType == "tv") {
+                        validResults.add(res)
+                    }
+                }
+            }
+
+            val normTitle = normalizeTitle(title)
+
+            val exactCandidates = ArrayList<TmdbResult>()
+            for (res in validResults) {
+                if (normalizeTitle(res.title) == normTitle || normalizeTitle(res.name) == normTitle) {
+                    exactCandidates.add(res)
+                }
+            }
+
+            val exactMatch = pickBestResult(exactCandidates, year)
+            if (exactMatch != null) {
+                tmdbId = exactMatch.id
+                if (exactMatch.mediaType != null) actualMediaType = exactMatch.mediaType
+            } else {
+                val startsWithCandidates = ArrayList<TmdbResult>()
+                if (normTitle.length >= 6) {
+                    for (res in validResults) {
+                        val tmdbNorm = when {
+                            res.title != null -> normalizeTitle(res.title)
+                            res.name != null -> normalizeTitle(res.name)
+                            else -> ""
+                        }
+                        if (tmdbNorm.isNotEmpty() && tmdbNorm.startsWith(normTitle)) {
+                            startsWithCandidates.add(res)
+                        }
+                    }
+                }
+                val startsWithMatch = pickBestResult(startsWithCandidates, year)
+                if (startsWithMatch != null) {
+                    tmdbId = startsWithMatch.id
+                    if (startsWithMatch.mediaType != null) actualMediaType = startsWithMatch.mediaType
+                } else {
+                    var imdbId: String? = null
+                    val imdbLinks = document.select("a[href*=imdb.com/title]")
+                    for (link in imdbLinks) {
+                        val href = link.attr("href")
+                        if (href.contains("title/")) {
+                            val possibleId = href.substringAfter("title/").substringBefore("/")
+                            if (possibleId.startsWith("tt")) {
+                                imdbId = possibleId
+                                break
+                            }
+                        }
+                    }
+                    if (imdbId != null) {
+                        val findRes = app.get(
+                            "$TMDB_API/find/$imdbId?api_key=$TMDB_KEY&external_source=imdb_id"
+                        ).parsedSafe<TmdbFind>()
+                        if (findRes != null) {
+                            if (findRes.tvShows != null && findRes.tvShows.isNotEmpty()) {
+                                tmdbId = findRes.tvShows[0].id
+                                actualMediaType = "tv"
+                            } else if (findRes.movies != null && findRes.movies.isNotEmpty()) {
+                                tmdbId = findRes.movies[0].id
+                                actualMediaType = "movie"
+                            }
+                        }
+                    }
+                    if (tmdbId == null && validResults.isNotEmpty()) {
+                        val fallback = pickBestResult(validResults, year)
+                        tmdbId = fallback?.id
+                        if (fallback?.mediaType != null) actualMediaType = fallback.mediaType
+                    }
+                }
+            }
+
+            if (tmdbId == null) return TmdbDetails(null, null, null, null)
+
+            val images = app.get(
+                "$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY"
+            ).parsedSafe<TmdbImages>()
+
+            var logoUrl: String? = null
+            var backdropUrl: String? = null
+
+            if (images != null) {
+                if (images.logos != null) {
+                    val validLogos = ArrayList<TmdbImage>()
+                    for (logo in images.logos) {
+                        val path = logo.filePath ?: ""
+                        if (!path.endsWith(".svg") && !path.endsWith(".SVG")) {
+                            validLogos.add(logo)
+                        }
+                    }
+                    var bestLogo: TmdbImage? = null
+                    for (logo in validLogos) {
+                        if (logo.lang == "en") {
+                            bestLogo = logo
+                            break
+                        }
+                    }
+                    if (bestLogo == null) {
+                        for (logo in validLogos) {
+                            if (logo.lang == null) {
+                                bestLogo = logo
+                                break
+                            }
+                        }
+                    }
+                    if (bestLogo == null) {
+                        for (logo in validLogos) {
+                            if (logo.lang == "ja") {
+                                bestLogo = logo
+                                break
+                            }
+                        }
+                    }
+                    if (bestLogo == null && validLogos.isNotEmpty()) {
+                        bestLogo = validLogos[0]
+                    }
+                    if (bestLogo?.filePath != null) {
+                        logoUrl = TMDB_IMG + bestLogo.filePath
+                    }
+                }
+
+                if (images.backdrops != null) {
+                    var bestBackdrop: TmdbImage? = null
+                    for (backdrop in images.backdrops) {
+                        if (backdrop.lang == null) {
+                            bestBackdrop = backdrop
+                            break
+                        }
+                    }
+                    if (bestBackdrop == null) {
+                        for (backdrop in images.backdrops) {
+                            if (backdrop.lang == "en") {
+                                bestBackdrop = backdrop
+                                break
+                            }
+                        }
+                    }
+                    if (bestBackdrop == null && images.backdrops.isNotEmpty()) {
+                        bestBackdrop = images.backdrops[0]
+                    }
+                    if (bestBackdrop?.filePath != null) {
+                        backdropUrl = TMDB_IMG + bestBackdrop.filePath
+                    }
+                }
+            }
+
+            TmdbDetails(tmdbId, actualMediaType, logoUrl, backdropUrl)
+        } catch (e: Exception) {
+            Log.e("MyAnimes", "TMDB failed: ${e.message}")
+            TmdbDetails(null, null, null, null)
+        }
+    }
 
     // ─── Main page ───────────────────────────────────────────────
 
@@ -129,9 +402,14 @@ class MyAnimesProvider : MainAPI() {
             "section.nt-related article.post, aside.right article.post"
         ).mapNotNull { it.toSearchResult() }
 
+        val tmdbTitle = cleanTitleForTmdb(title)
+        val tmdbDetails = fetchTmdbDetails(document, tmdbTitle, !isMovie, year)
+
         if (isMovie) {
             return newMovieLoadResponse(title, url, TvType.AnimeMovie, url) {
                 this.posterUrl = poster
+                this.backgroundPosterUrl = tmdbDetails.backdrop ?: poster
+                this.logoUrl = tmdbDetails.logo
                 this.year = year
                 this.plot = plot
                 this.tags = tags
@@ -140,14 +418,6 @@ class MyAnimesProvider : MainAPI() {
             }
         }
 
-        // Series episodes:
-        // <ul class="seasons-lst">
-        //   <li>
-        //     <figure><img src="...w185/..." alt="Title" /></figure>
-        //     <h3 class="title"><span>S1-E1</span> Episode Title</h3>
-        //     <a href="/episode/...-1x1/">Go to Episode</a>
-        //   </li>
-        // </ul>
         val episodes = ArrayList<Episode>()
 
         document.select("ul.seasons-lst > li").forEach { li ->
@@ -216,6 +486,8 @@ class MyAnimesProvider : MainAPI() {
 
         return newTvSeriesLoadResponse(title, url, TvType.TvSeries, unique) {
             this.posterUrl = poster
+            this.backgroundPosterUrl = tmdbDetails.backdrop ?: poster
+            this.logoUrl = tmdbDetails.logo
             this.year = year
             this.plot = plot
             this.tags = tags
