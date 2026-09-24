@@ -58,7 +58,7 @@ open class AWSStream : ExtractorApi() {
 
             val extractedPack = doc.selectFirst("script:containsData(function(p,a,c,k,e,d))")?.data().orEmpty()
             JsUnpacker(extractedPack).unpack()?.let { unpacked ->
-                Regex("\"kind\"\\s*:\\s*\"captions\"\\s*,\\s*\"file\"\\s*:\\s*\"(https.*?\\.srt)\"")
+                Regex("""\u0022kind\u0022\s*:\s*\u0022captions\u0022\s*,\s*\u0022file\u0022\s*:\s*\u0022(https.*?\.srt)\u0022""")
                     .find(unpacked)?.groupValues?.get(1)?.let { subtitleUrl ->
                         subtitleCallback.invoke(SubtitleFile("English", subtitleUrl))
                     }
@@ -97,7 +97,7 @@ class Abyss : ExtractorApi() {
         val document = app.get(url, headers = headers).document
         val scripts = document.select("script").joinToString("\n") { it.data() }
 
-        val encrypted = Regex("const\\s+datas\\s*=\\s*\"([^\"]*)\"")
+        val encrypted = Regex("""const\s+datas\s*=\s*\u0022([^\u0022]*)\u0022""")
             .find(scripts)?.groupValues?.getOrNull(1) ?: return
 
         val decrypted = app.post(
@@ -165,10 +165,10 @@ class StreamRuby : ExtractorApi() {
             .find(html)?.value ?: return
         val unpacked = JsUnpacker(packed).unpack() ?: return
 
-        val m3u8 = Regex("file\\s*:\\s*\"(https?://[^\"]+\\.m3u8[^\"]*)\"")
+        val m3u8 = Regex("""file\s*:\s*\u0022(https?://[^\u0022]+\.m3u8[^\u0022]*)\u0022""")
             .find(unpacked)?.groupValues?.get(1) ?: return
 
-        Regex("file\\s*:\\s*\"(https?://[^\"]+_([a-z]{2,3})\\.vtt[^\"]*)\"[\\s\\S]+?kind\\s*:\\s*\"captions\"")
+        Regex("""file\s*:\s*\u0022(https?://[^\u0022]+_([a-z]{2,3})\.vtt[^\u0022]*)\u0022[\s\S]+?kind\s*:\s*\u0022captions\u0022""")
             .findAll(unpacked).forEach { match ->
                 subtitleCallback(SubtitleFile(match.groupValues[2], match.groupValues[1]))
             }
@@ -348,7 +348,7 @@ open class GDMirrorbot : ExtractorApi() {
         private val PACKED_REGEX =
             Regex("""eval\(function\(p,a,c,k,e,d\)[\s\S]+?'\|'\)\)""")
         private val HLS_LINKS_REGEX =
-            Regex("\"(hls\\d)\"\\s*:\\s*\"(https?://[^\"]+)\"")
+            Regex("""\u0022(hls\d)\u0022\s*:\s*\u0022(https?://[^\u0022]+)\u0022""")
     }
 
     override suspend fun getUrl(
@@ -599,12 +599,12 @@ class VidMolyNet : ExtractorApi() {
     ) {
         val txt = app.get(url, referer = referer ?: mainUrl).text
 
-        val m3u8 = Regex("file\\s*:\\s*[\"']([^\"']+\\.m3u8[^\"']*)[\"']")
+        val m3u8 = Regex("""file\s*:\s*[\u0022']([^\u0022']+\.m3u8[^\u0022']*)[\u0022']""")
             .find(txt)?.groupValues?.get(1)
-            ?: Regex("https?://[^\\s\"'<>]+\\.m3u8[^\\s\"'<>]*").find(txt)?.value
+            ?: Regex("""https?://[^\s\u0022'<>]+\.m3u8[^\s\u0022'<>]*""").find(txt)?.value
             ?: return
 
-        Regex("file\\s*:\\s*[\"'](https[^\"']+\\.vtt[^\"']*)[\"'][\\s\\S]{0,200}?label\\s*:\\s*[\"']([^\"']*)[\"']")
+        Regex("""file\s*:\s*[\u0022'](https[^\u0022']+\.vtt[^\u0022']*)[\u0022'][\s\S]{0,200}?label\s*:\s*[\u0022']([^\u0022']*)[\u0022']""")
             .find(txt)?.let { match ->
                 subtitleCallback(SubtitleFile(match.groupValues[2].ifBlank { "English" }, match.groupValues[1]))
             }
