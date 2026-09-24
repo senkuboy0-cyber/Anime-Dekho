@@ -112,7 +112,7 @@ class Abyss : ExtractorApi() {
                 callback.invoke(
                     newExtractorLink(
                         source = name,
-                        name = "\( name [ \){source.codec.uppercase()}]",
+                        name = "$name [${source.codec.uppercase()}]",
                         url = source.url,
                         type = INFER_TYPE
                     ) {
@@ -332,7 +332,7 @@ open class UpnsPlayer : ExtractorApi() {
 
     protected fun getBaseUrl(url: String): String =
         try {
-            URI(url).let { "\( {it.scheme}:// \){it.host}" }
+            URI(url).let { "${it.scheme}://${it.host}" }
         } catch (e: Exception) {
             mainUrl
         }
@@ -369,7 +369,7 @@ open class GDMirrorbot : ExtractorApi() {
 
         val playerOrigin = try {
             val u = URI(resolved.url)
-            "\( {u.scheme}:// \){u.host}"
+            "${u.scheme}://${u.host}"
         } catch (e: Exception) {
             Log.e(name, "bad redirect url: ${resolved.url}")
             return
@@ -517,7 +517,7 @@ open class GDMirrorbot : ExtractorApi() {
 
     protected fun getHost(url: String): String =
         try {
-            URI(url).let { "\( {it.scheme}:// \){it.host}" }
+            URI(url).let { "${it.scheme}://${it.host}" }
         } catch (e: Exception) {
             mainUrl
         }
