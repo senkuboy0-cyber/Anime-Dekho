@@ -39,26 +39,30 @@ class Abyss : ExtractorApi() {
         val document = app.get(url, headers = headers).document
         val scripts = document.select("script").joinToString("\n") { it.data() }
 
-        val encrypted = Regex("const\\s+datas\\s*=\\s*\"([^\"]*)\"")
-            .find(scripts)?.groupValues?.getOrNull(1) ?: return
+        val marker = "const datas = \""
+        val start = scripts.indexOf(marker)
+        if (start < 0) return
+        val from = start + marker.length
+        val end = scripts.indexOf('"', from)
+        if (end < 0) return
+        val encrypted = scripts.substring(from, end)
+        if (encrypted.isBlank()) return
 
+        val jsonBody = "{\"text\": \"$encrypted\"}"
         val decrypted = app.post(
             url = "https://enc-dec.app/api/dec-abyss",
             headers = headers,
-            requestBody = """
-        {
-            "text": "$encrypted"
-        }
-    """.trimIndent().toRequestBody("application/json".toMediaType())
+            requestBody = jsonBody.toRequestBody("application/json".toMediaType())
         ).parsedSafe<AbyssResponse>()?.result ?: return
 
         decrypted.sources
             .filter { it.status }
             .forEach { source ->
+                val linkName = name + " [" + source.codec.uppercase() + "]"
                 callback.invoke(
                     newExtractorLink(
                         source = name,
-                        name = "\( name [ \){source.codec.uppercase()}]",
+                        name = linkName,
                         url = source.url,
                         type = INFER_TYPE
                     ) {
