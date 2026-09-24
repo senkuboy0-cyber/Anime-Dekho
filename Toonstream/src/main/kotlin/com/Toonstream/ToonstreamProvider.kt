@@ -23,6 +23,7 @@ import com.lagradost.cloudstream3.newTvSeriesLoadResponse
 import com.lagradost.cloudstream3.newTvSeriesSearchResponse
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
+import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
@@ -144,16 +145,26 @@ class ToonstreamProvider : MainAPI() {
             val homeItems = ArrayList<SearchResponse>()
             val seen = HashSet<String>()
 
-            document.select(".post").forEach { el ->
-                val href = el.selectFirst("a[href]")?.attr("href") ?: return@forEach
-                if (!href.contains("/episode/") &&
-                    !href.contains("/series/") &&
-                    !href.contains("/movies/")
-                ) {
-                    return@forEach
+            val header = document.select("h3.section-title").firstOrNull { it.text().contains("Fresh Drop", true) }
+            val section = header?.parents()?.firstOrNull { it.select("article.post.dfx").isNotEmpty() }
+            
+            if (section != null) {
+                section.select("article.post.dfx").forEach { el ->
+                    val item = el.toSearchResult() ?: return@forEach
+                    if (seen.add(item.url)) homeItems.add(item)
                 }
-                val item = el.toSearchResult() ?: return@forEach
-                if (seen.add(item.url)) homeItems.add(item)
+            } else {
+                document.select(".post").forEach { el ->
+                    val href = el.selectFirst("a[href]")?.attr("href") ?: return@forEach
+                    if (!href.contains("/episode/") &&
+                        !href.contains("/series/") &&
+                        !href.contains("/movies/")
+                    ) {
+                        return@forEach
+                    }
+                    val item = el.toSearchResult() ?: return@forEach
+                    if (seen.add(item.url)) homeItems.add(item)
+                }
             }
 
             return newHomePageResponse(
@@ -279,38 +290,95 @@ class ToonstreamProvider : MainAPI() {
         val episodes = ArrayList<Episode>()
         val epSeen = HashSet<String>()
 
-        document.select("a[href*=/episode/]").forEach { a ->
-            var href = a.attr("href")
-            if (href.isBlank()) return@forEach
-            if (!href.startsWith("http")) href = fixUrl(href)
-            if (!epSeen.add(href)) return@forEach
+        val seasonElements = document.select("a.season-btn")
+        val seasonNumbers = seasonElements.mapNotNull { it.attr("data-season").toIntOrNull() }.distinct().sorted()
 
-            val parent = a.closest(".post, li, article, div") ?: a.parent()
-            val epPoster = parent?.selectFirst("img")?.let { img ->
-                val src = img.attr("data-src").ifBlank { img.attr("src") }
-                if (src.isNotBlank()) fixUrl(src) else null
+        for (season in seasonNumbers) {
+            val postData = document.selectFirst("a.season-btn[data-season='$season']")?.attr("data-post") ?: ""
+            
+            val seasonDoc = try {
+                app.post(
+                    "$mainUrl/wp-admin/admin-ajax.php",
+                    data = mapOf(
+                        "action" to "action_select_season",
+                        "season" to season.toString(),
+                        "post" to postData
+                    ),
+                    headers = mapOf("X-Requested-With" to "XMLHttpRequest")
+                ).document
+            } catch (e: Exception) {
+                try {
+                    app.get("$url/season/$season").document
+                } catch (e: Exception) { Jsoup.parse("") }
             }
 
-            val label = a.text().trim().ifBlank {
-                parent?.selectFirst(".entry-title1, .entry-title, h5, span")?.text()?.trim()
-            } ?: href.substringAfterLast("/").trim('/')
+            var epNum = 1
+            for (ep in seasonDoc.select("article.post.episodes, article.post")) {
+                val epHref = ep.selectFirst("a.lnk-blk, a")?.attr("href")
+                if (epHref.isNullOrBlank()) continue
+                
+                if (!epSeen.add(epHref)) continue
+                
+                val epPoster = ep.selectFirst("img")?.let { img ->
+                    val src = img.attr("data-src").ifBlank { img.attr("src") }
+                    if (src.isNotBlank()) fixUrl(src) else null
+                }
+                
+                val epName = ep.selectFirst("h5.entry-title1, h2.entry-title, h3.entry-title")?.text()?.trim() ?: "Episode $epNum"
 
-            val seasonEp = Regex("(\\d+)[x×](\\d+)", RegexOption.IGNORE_CASE).find(href)
-                ?: Regex("(\\d+)[x×](\\d+)", RegexOption.IGNORE_CASE).find(label)
-            val season = seasonEp?.groupValues?.get(1)?.toIntOrNull() ?: 1
-            val epNum = seasonEp?.groupValues?.get(2)?.toIntOrNull()
-                ?: Regex("E\\s*(\\d+)", RegexOption.IGNORE_CASE).find(label)
-                    ?.groupValues?.get(1)?.toIntOrNull()
-                ?: (episodes.size + 1)
-
-            episodes.add(
-                newEpisode(href) {
-                    this.name = label.ifBlank { "S$season E$epNum" }
+                episodes.add(newEpisode(fixUrl(epHref)) {
+                    this.name = epName
+                    this.posterUrl = epPoster
                     this.season = season
                     this.episode = epNum
-                    this.posterUrl = epPoster
+                })
+                epNum++
+            }
+        }
+
+        if (episodes.isEmpty()) {
+            val seasonCounters = mutableMapOf<Int, Int>()
+            val backupElements = document.select("#episode_by_temp article.post, .episodes article.post, a[href*=/episode/]")
+            
+            for (ep in backupElements) {
+                val aTag = ep.selectFirst("a[href*=/episode/]") ?: ep.takeIf { it.tagName() == "a" } ?: continue
+                var epHref = aTag.attr("href")
+                if (epHref.isBlank()) continue
+                if (!epHref.startsWith("http")) epHref = fixUrl(epHref)
+                if (!epSeen.add(epHref)) continue
+                
+                val parent = aTag.closest(".post, li, article, div") ?: aTag.parent()
+                val epPoster = parent?.selectFirst("img")?.let { img ->
+                    val src = img.attr("data-src").ifBlank { img.attr("src") }
+                    if (src.isNotBlank()) fixUrl(src) else null
                 }
-            )
+                
+                val label = aTag.text().trim().ifBlank {
+                    parent?.selectFirst(".entry-title1, .entry-title, h5, span")?.text()?.trim()
+                } ?: epHref.substringAfterLast("/").trim('/')
+
+                val numEpi = parent?.selectFirst("span.num-epi")?.text()?.trim()
+                
+                val seasonEp = Regex("(\\d+)[x×](\\d+)", RegexOption.IGNORE_CASE).find(epHref)
+                    ?: Regex("(\\d+)[x×](\\d+)", RegexOption.IGNORE_CASE).find(label)
+                
+                val epSeason = numEpi?.substringBefore("x")?.toIntOrNull() 
+                    ?: seasonEp?.groupValues?.get(1)?.toIntOrNull() 
+                    ?: 1
+
+                val currentCount = seasonCounters[epSeason] ?: 0
+                val newCount = currentCount + 1
+                seasonCounters[epSeason] = newCount
+
+                val nameLabel = if (label.isNotBlank() && !label.contains("Episode", true)) label else "Episode $newCount"
+
+                episodes.add(newEpisode(epHref) {
+                    this.name = nameLabel
+                    this.posterUrl = epPoster
+                    this.season = epSeason
+                    this.episode = newCount
+                })
+            }
         }
 
         episodes.sortWith(compareBy({ it.season ?: 1 }, { it.episode ?: 0 }))
