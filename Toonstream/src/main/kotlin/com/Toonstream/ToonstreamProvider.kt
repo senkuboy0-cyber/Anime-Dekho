@@ -79,7 +79,7 @@ class ToonstreamProvider : MainAPI() {
     private fun episodeToSeriesUrl(url: String): String? {
         if (!isEpisodeUrl(url)) return null
         val path = url.substringAfter("/episode/").trim('/')
-        val seriesSlug = path.replace(Regex("""-\d+x\d+/?$"""), "")
+        val seriesSlug = path.replace(Regex("-\\d+x\\d+/?$"), "")
         if (seriesSlug.isBlank()) return null
         return "$mainUrl/series/$seriesSlug"
     }
@@ -129,12 +129,10 @@ class ToonstreamProvider : MainAPI() {
     }
 
     private fun parseYear(text: String?): Int? =
-        Regex("""\b((?:19|20)\d{2})\b""").find(text ?: "")?.groupValues?.get(1)?.toIntOrNull()
+        Regex("\\b((?:19|20)\\d{2})\\b").find(text ?: "")?.groupValues?.get(1)?.toIntOrNull()
 
     private fun encodeQuery(query: String): String =
         URLEncoder.encode(query, StandardCharsets.UTF_8.toString())
-
-    // ─── Main page ───────────────────────────────────────────────
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val isHome = request.data.contains("/home")
@@ -167,7 +165,7 @@ class ToonstreamProvider : MainAPI() {
         val url = when {
             request.data.endsWith("page=") -> "${request.data}$page"
             request.data.contains("page=") ->
-                request.data.replace(Regex("""page=\d+"""), "page=$page")
+                request.data.replace(Regex("page=\\d+"), "page=$page")
             else -> "${request.data.trimEnd('/')}?type=all&page=$page"
         }
 
@@ -180,8 +178,6 @@ class ToonstreamProvider : MainAPI() {
 
         return newHomePageResponse(request.name, items, hasNext)
     }
-
-    // ─── Search ──────────────────────────────────────────────────
 
     override suspend fun search(query: String): List<SearchResponse> {
         val results = ArrayList<SearchResponse>()
@@ -221,8 +217,6 @@ class ToonstreamProvider : MainAPI() {
         return results
     }
 
-    // ─── Load ────────────────────────────────────────────────────
-
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url).document
         val isMovie = isMovieUrl(url)
@@ -243,9 +237,6 @@ class ToonstreamProvider : MainAPI() {
 
         val bodyText = document.body().text()
         val year = parseYear(bodyText)
-        val score = Regex("""([\d.]+)\s*TMDB""", RegexOption.IGNORE_CASE)
-            .find(bodyText)?.groupValues?.get(1)?.toDoubleOrNull()
-            ?.times(1000)?.toInt()
 
         val actors = document.select("a[href*=cast], .cast a, [class*=cast] a")
             .map { it.text().trim() }
@@ -280,7 +271,6 @@ class ToonstreamProvider : MainAPI() {
                 this.backgroundPosterUrl = poster
                 this.plot = plot
                 this.year = year
-                this.score = score
                 this.recommendations = recommendations
                 if (actors.isNotEmpty()) addActors(actors)
             }
@@ -305,11 +295,11 @@ class ToonstreamProvider : MainAPI() {
                 parent?.selectFirst(".entry-title1, .entry-title, h5, span")?.text()?.trim()
             } ?: href.substringAfterLast("/").trim('/')
 
-            val seasonEp = Regex("""(\d+)[x×](\d+)""", RegexOption.IGNORE_CASE).find(href)
-                ?: Regex("""(\d+)[x×](\d+)""", RegexOption.IGNORE_CASE).find(label)
+            val seasonEp = Regex("(\\d+)[x×](\\d+)", RegexOption.IGNORE_CASE).find(href)
+                ?: Regex("(\\d+)[x×](\\d+)", RegexOption.IGNORE_CASE).find(label)
             val season = seasonEp?.groupValues?.get(1)?.toIntOrNull() ?: 1
             val epNum = seasonEp?.groupValues?.get(2)?.toIntOrNull()
-                ?: Regex("""E\s*(\d+)""", RegexOption.IGNORE_CASE).find(label)
+                ?: Regex("E\\s*(\\d+)", RegexOption.IGNORE_CASE).find(label)
                     ?.groupValues?.get(1)?.toIntOrNull()
                 ?: (episodes.size + 1)
 
@@ -330,13 +320,10 @@ class ToonstreamProvider : MainAPI() {
             this.backgroundPosterUrl = poster
             this.plot = plot
             this.year = year
-            this.score = score
             this.recommendations = recommendations
             if (actors.isNotEmpty()) addActors(actors)
         }
     }
-
-    // ─── Links ───────────────────────────────────────────────────
 
     override suspend fun loadLinks(
         data: String,
