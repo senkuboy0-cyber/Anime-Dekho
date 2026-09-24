@@ -7,6 +7,7 @@ import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
+import com.lagradost.cloudstream3.utils.INFER_TYPE
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.getQualityFromName
 import com.lagradost.cloudstream3.utils.newExtractorLink
@@ -20,7 +21,7 @@ import javax.crypto.spec.SecretKeySpec
 
 class Abyss : ExtractorApi() {
     override var name = "Abyss"
-    override var mainUrl = "https://player.abyssplayer.com"
+    override var mainUrl = "https://abyssplayer.com"
     override val requiresReferer = true
 
     override suspend fun getUrl(
@@ -38,57 +39,34 @@ class Abyss : ExtractorApi() {
         val document = app.get(url, headers = headers).document
         val scripts = document.select("script").joinToString("\n") { it.data() }
 
-        val encrypted = Regex("const\\s+datas\\s*=\\s*\"([^\"]+)\"")
+        val encrypted = Regex("const\\s+datas\\s*=\\s*\"([^\"]*)\"")
             .find(scripts)?.groupValues?.getOrNull(1) ?: return
 
-        val body = """{"text":"$encrypted"}"""
         val decrypted = app.post(
             url = "https://enc-dec.app/api/dec-abyss",
             headers = headers,
-            requestBody = body.toRequestBody("application/json".toMediaType())
+            requestBody = """
+        {
+            "text": "$encrypted"
+        }
+    """.trimIndent().toRequestBody("application/json".toMediaType())
         ).parsedSafe<AbyssResponse>()?.result ?: return
 
         decrypted.sources
             .filter { it.status }
             .forEach { source ->
-                val finalUrl = resolveRedirect(source.url, headers) ?: source.url
-
                 callback.invoke(
                     newExtractorLink(
                         source = name,
-                        name = "$name ${source.type}",
-                        url = finalUrl,
-                        type = ExtractorLinkType.VIDEO
+                        name = "\( name [ \){source.codec.uppercase()}]",
+                        url = source.url,
+                        type = INFER_TYPE
                     ) {
                         this.quality = getQualityFromName(source.type)
-                        this.referer = "https://playhydrax.com/"
-                        this.headers = mapOf(
-                            "Referer" to "https://playhydrax.com/",
-                            "Origin" to "https://playhydrax.com",
-                            "User-Agent" to USER_AGENT
-                        )
+                        this.headers = mapOf("Referer" to "https://playhydrax.com/")
                     }
                 )
             }
-    }
-
-    private suspend fun resolveRedirect(url: String, headers: Map<String, String>): String? {
-        return try {
-            val response = app.get(url, headers = headers, allowRedirects = false)
-            val code = response.code
-            if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
-                val location = response.headers["Location"] ?: response.headers["location"]
-                if (!location.isNullOrBlank()) {
-                    Log.d("Abyss", "Resolved $code -> $location")
-                    return location
-                }
-            }
-            val followed = app.get(url, headers = headers, allowRedirects = true)
-            followed.url.takeIf { it.isNotBlank() } ?: url
-        } catch (e: Exception) {
-            Log.e("Abyss", "resolveRedirect failed: ${e.message}")
-            null
-        }
     }
 
     data class AbyssResponse(val status: Long, val result: Result)
