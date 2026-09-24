@@ -30,6 +30,10 @@ import com.lagradost.cloudstream3.utils.JsUnpacker
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.app
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.Document
 import org.jsoup.Jsoup
@@ -78,8 +82,8 @@ data class TmdbDetails(
     val overview: String? = null
 )
 
-// Represents extracted server links with their priority index
-data class ServerInfo(val truelink: String, val referer: String, val priority: Int)
+// Represents extracted server links
+data class ServerInfo(val truelink: String, val referer: String)
 
 // Core media data passed across screens (e.g., Search to Load page)
 data class ToonMedia(val url: String, val poster: String?)
@@ -884,7 +888,7 @@ class Toonstream : MainAPI() {
 
     /**
      * Extracts video source links (iframes) from the episode/movie page.
-     * Orders them by priority index (fastest servers load first).
+     * Fires requests to all available embedded players concurrently.
      */
     override suspend fun loadLinks(
         data: String,
@@ -895,34 +899,27 @@ class Toonstream : MainAPI() {
         val document = app.get(data).document
 
         // Scan the player div for embedded iframe sources
-        val servers = document.select("#aa-options > div > iframe").mapNotNull { iframe ->
-            val rawSrc = iframe.attr("data-src").ifEmpty { iframe.attr("src") }
-            if (rawSrc.isEmpty()) return@mapNotNull null
+        val iframes = document.select("#aa-options > div > iframe")
 
-            val serverlink = if (rawSrc.startsWith("http")) rawSrc else "$mainUrl$rawSrc"
+        // Fetch redirects concurrently for all iframes to speed up loading
+        val servers = coroutineScope {
+            iframes.map { iframe ->
+                async {
+                    val rawSrc = iframe.attr("data-src").ifEmpty { iframe.attr("src") }
+                    if (rawSrc.isEmpty()) return@async null
 
-            // Traverse redirect chain to get the final embedded player link
-            val truelink = try {
-                app.get(serverlink, referer = mainUrl)
-                    .document
-                    .selectFirst(".Video iframe, div.Video iframe, iframe[src]")
-                    ?.attr("src") ?: ""
-            } catch (e: Exception) { "" }
+                    val serverlink = if (rawSrc.startsWith("http")) rawSrc else "$mainUrl$rawSrc"
 
-            if (truelink.isEmpty()) return@mapNotNull null
+                    val truelink = try {
+                        app.get(serverlink, referer = mainUrl)
+                            .document
+                            .selectFirst(".Video iframe, div.Video iframe, iframe[src]")
+                            ?.attr("src") ?: ""
+                    } catch (e: Exception) { "" }
 
-            // Assign numerical priority logic (lower is better/faster)
-            val priority = when {
-                truelink.contains("as-cdn") || truelink.contains("zephyrflick") || truelink.contains("awstream") -> 0
-                truelink.contains("emturbovid.com")  -> 1
-                truelink.contains("gdmirrorbot.nl")  -> 2
-                truelink.contains("rubystm.com")     -> 3
-                truelink.contains("vidmoly.net")     -> 4
-                truelink.contains("abyssplayer.com") -> 5
-                truelink.contains("cloudy.upns.one") -> 6
-                else                                 -> 7
-            }
-            ServerInfo(truelink, serverlink, priority)
+                    if (truelink.isEmpty()) null else ServerInfo(truelink, serverlink)
+                }
+            }.awaitAll().filterNotNull()
         }
 
         // Intercepts the generated links to correctly parse `.txt` as M3U8 if necessary.
@@ -945,10 +942,15 @@ class Toonstream : MainAPI() {
             }
         }
 
-        // Send extracted URLs to custom intelligent routing logic
-        servers.sortedBy { it.priority }.forEach { server ->
-            routeExtractor(server.truelink, server.referer, subtitleCallback, fixedCallback)
+        // Send extracted URLs to custom intelligent routing logic simultaneously
+        coroutineScope {
+            servers.forEach { server ->
+                launch {
+                    routeExtractor(server.truelink, server.referer, subtitleCallback, fixedCallback)
+                }
+            }
         }
+        
         return true
     }
 
