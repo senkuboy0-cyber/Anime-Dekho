@@ -24,9 +24,6 @@ import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
-// ─────────────────────────────────────────────────────────────
-// PLAY → as-cdn26.top  (AWSStream)
-// ─────────────────────────────────────────────────────────────
 class Zephyrflick : AWSStream() {
     override val name = "Zephyrflick"
     override val mainUrl = "https://as-cdn26.top"
@@ -61,7 +58,7 @@ open class AWSStream : ExtractorApi() {
 
             val extractedPack = doc.selectFirst("script:containsData(function(p,a,c,k,e,d))")?.data().orEmpty()
             JsUnpacker(extractedPack).unpack()?.let { unpacked ->
-                Regex("\"kind\"\\s*:\\s*\"captions\"\\s*,\\s*\"file\"\\s*:\\s*\"(https.*?\\.srt)\"")
+                Regex(""""kind"\s*:\s*"captions"\s*,\s*"file"\s*:\s*"(https.*?\.srt)"""")
                     .find(unpacked)?.groupValues?.get(1)?.let { subtitleUrl ->
                         subtitleCallback.invoke(SubtitleFile("English", subtitleUrl))
                     }
@@ -80,9 +77,6 @@ open class AWSStream : ExtractorApi() {
     )
 }
 
-// ─────────────────────────────────────────────────────────────
-// SHORT → abyssplayer.com
-// ─────────────────────────────────────────────────────────────
 class Abyss : ExtractorApi() {
     override var name = "Abyss"
     override var mainUrl = "https://abyssplayer.com"
@@ -103,7 +97,7 @@ class Abyss : ExtractorApi() {
         val document = app.get(url, headers = headers).document
         val scripts = document.select("script").joinToString("\n") { it.data() }
 
-        val encrypted = Regex("const\\s+datas\\s*=\\s*\"([^\"]*)\"")
+        val encrypted = Regex("""const\s+datas\s*=\s*"([^"]*)"""")
             .find(scripts)?.groupValues?.getOrNull(1) ?: return
 
         val decrypted = app.post(
@@ -140,9 +134,6 @@ class Abyss : ExtractorApi() {
     )
 }
 
-// ─────────────────────────────────────────────────────────────
-// RUBY → rubystm.com
-// ─────────────────────────────────────────────────────────────
 class StreamRuby : ExtractorApi() {
     override var name = "StreamRuby"
     override var mainUrl = "https://rubystm.com"
@@ -177,7 +168,7 @@ class StreamRuby : ExtractorApi() {
         val m3u8 = Regex("""file\s*:\s*"(https?://[^"]+\.m3u8[^"]*)"""")
             .find(unpacked)?.groupValues?.get(1) ?: return
 
-        Regex("""file\s*:\s*"(https?://[^"]+_([a-z]{2,3})\.vtt[^"]*)""[\s\S]+?kind\s*:\s*"captions"""")
+        Regex("""file\s*:\s*"(https?://[^"]+_([a-z]{2,3})\.vtt[^"]*)"[\s\S]+?kind\s*:\s*"captions"""")
             .findAll(unpacked).forEach { match ->
                 subtitleCallback(SubtitleFile(match.groupValues[2], match.groupValues[1]))
             }
@@ -191,9 +182,6 @@ class StreamRuby : ExtractorApi() {
     }
 }
 
-// ─────────────────────────────────────────────────────────────
-// CLOUDY → cloudy.upns.one  (AES-CBC hex JSON)
-// ─────────────────────────────────────────────────────────────
 class Cloudy : UpnsPlayer() {
     override var name = "Cloudy"
     override var mainUrl = "https://cloudy.upns.one"
@@ -350,10 +338,6 @@ open class UpnsPlayer : ExtractorApi() {
         }
 }
 
-// ─────────────────────────────────────────────────────────────
-// GDMirrorbot / filesforever → StreamHG pipeline
-// GET embed/{sid} → POST embedhelper2.php → smwh (hanerix) HLS
-// ─────────────────────────────────────────────────────────────
 open class GDMirrorbot : ExtractorApi() {
     override var name = "StreamHG"
     override var mainUrl = "https://gdmirrorbot.nl"
@@ -559,15 +543,11 @@ class GDMirrorbotFHD : GDMirrorbot() {
     override var mainUrl = "https://gdmirrorbot.nl"
 }
 
-/** filesforever.link Watch/DL (SD / HD / FHD) — display name StreamHG */
 class FilesForever : GDMirrorbot() {
     override var name = "StreamHG"
     override var mainUrl = "https://filesforever.link"
 }
 
-// ─────────────────────────────────────────────────────────────
-// TURBO → emturbovid.com
-// ─────────────────────────────────────────────────────────────
 class EmTurboVid : ExtractorApi() {
     override var name = "EmTurboVid"
     override var mainUrl = "https://emturbovid.com"
@@ -606,9 +586,6 @@ class EmTurboVid : ExtractorApi() {
     }
 }
 
-// ─────────────────────────────────────────────────────────────
-// MOLY → vidmoly.net  (display name: VidMoly)
-// ─────────────────────────────────────────────────────────────
 class VidMolyNet : ExtractorApi() {
     override var name = "VidMoly"
     override var mainUrl = "https://vidmoly.net"
@@ -622,12 +599,12 @@ class VidMolyNet : ExtractorApi() {
     ) {
         val txt = app.get(url, referer = referer ?: mainUrl).text
 
-        val m3u8 = Regex("""file\s*:\s*['"]([^'"]+\.m3u8[^'"]*)['"]""")
+        val m3u8 = Regex("""file\s*:\s*["']([^"']+\.m3u8[^"']*)["']""")
             .find(txt)?.groupValues?.get(1)
             ?: Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""").find(txt)?.value
             ?: return
 
-        Regex("""file\s*:\s*['"](https[^'"]+\.vtt[^'"]*)['"][\s\S]{0,200}?label\s*:\s*['"]([^'"]*)['"]""")
+        Regex("""file\s*:\s*["'](https[^"']+\.vtt[^"']*)["'][\s\S]{0,200}?label\s*:\s*["']([^"']*)["']""")
             .find(txt)?.let { match ->
                 subtitleCallback(SubtitleFile(match.groupValues[2].ifBlank { "English" }, match.groupValues[1]))
             }
@@ -641,9 +618,6 @@ class VidMolyNet : ExtractorApi() {
     }
 }
 
-// ─────────────────────────────────────────────────────────────
-// MULTIQ → blakiteapi.xyz
-// ─────────────────────────────────────────────────────────────
 class Blakite : ExtractorApi() {
     override var name = "Blakite"
     override var mainUrl = "https://blakiteapi.xyz"
