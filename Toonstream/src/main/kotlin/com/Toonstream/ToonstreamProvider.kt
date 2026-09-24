@@ -90,6 +90,20 @@ class ToonstreamProvider : MainAPI() {
     private val TMDB_KEY = "1865f43a0549ca50d341dd9ab8b29f49"
     private val TMDB_IMG = "https://image.tmdb.org/t/p/original"
 
+    // Custom extractors initialization
+    private val zephyrflick = Zephyrflick()
+    private val awsStream = AWSStream()
+    private val abyss = Abyss()
+    private val streamRuby = StreamRuby()
+    private val cloudy = Cloudy()
+    private val upnsPlayer = UpnsPlayer()
+    private val gdMirrorbot = GDMirrorbot()
+    private val gdMirrorbotFhd = GDMirrorbotFHD()
+    private val filesForever = FilesForever()
+    private val emTurboVid = EmTurboVid()
+    private val vidMolyNet = VidMolyNet()
+    private val blakite = Blakite()
+
     private fun cleanTitleText(title: String): String {
         var clean = title.replace(Regex("[\u200B-\u200D\uFEFF\\p{Cf}]"), "")
         clean = clean.replace("\u00A0", " ")
@@ -785,6 +799,52 @@ class ToonstreamProvider : MainAPI() {
         }
     }
 
+    private suspend fun invokeExtractor(
+        url: String,
+        referer: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        when {
+            url.contains("zephyrflick", true) || url.contains("as-cdn", true) -> {
+                zephyrflick.getUrl(url, referer, subtitleCallback, callback)
+            }
+            url.contains("awstream", true) -> {
+                awsStream.getUrl(url, referer, subtitleCallback, callback)
+            }
+            url.contains("abyssplayer", true) || url.contains("playhydrax", true) -> {
+                abyss.getUrl(url, referer, subtitleCallback, callback)
+            }
+            url.contains("rubystm", true) || url.contains("streamruby", true) -> {
+                streamRuby.getUrl(url, referer, subtitleCallback, callback)
+            }
+            url.contains("cloudy.upns", true) -> {
+                cloudy.getUrl(url, referer, subtitleCallback, callback)
+            }
+            url.contains("upns", true) || url.contains("p2pplay", true) -> {
+                upnsPlayer.getUrl(url, referer, subtitleCallback, callback)
+            }
+            url.contains("gdmirrorbot.nl", true) -> {
+                gdMirrorbot.getUrl(url, referer, subtitleCallback, callback)
+            }
+            url.contains("filesforever", true) -> {
+                filesForever.getUrl(url, referer, subtitleCallback, callback)
+            }
+            url.contains("emturbovid", true) || url.contains("turboviplay", true) -> {
+                emTurboVid.getUrl(url, referer, subtitleCallback, callback)
+            }
+            url.contains("vidmoly", true) -> {
+                vidMolyNet.getUrl(url, referer, subtitleCallback, callback)
+            }
+            url.contains("blakite", true) -> {
+                blakite.getUrl(url, referer, subtitleCallback, callback)
+            }
+            else -> {
+                loadExtractor(url, referer, subtitleCallback, callback)
+            }
+        }
+    }
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -801,7 +861,7 @@ class ToonstreamProvider : MainAPI() {
 
             val link = if (src.startsWith("http")) src else fixUrl(src)
             try {
-                loadExtractor(link, data, subtitleCallback, callback)
+                invokeExtractor(link, data, subtitleCallback, callback)
                 found = true
             } catch (e: Exception) {
                 Log.e("ToonStream", "extractor failed for $link: ${e.message}")
@@ -817,7 +877,7 @@ class ToonstreamProvider : MainAPI() {
                 val link = a.attr("href")
                 if (link.isBlank()) return@forEach
                 try {
-                    loadExtractor(link, data, subtitleCallback, callback)
+                    invokeExtractor(link, data, subtitleCallback, callback)
                     found = true
                 } catch (_: Exception) {
                 }
