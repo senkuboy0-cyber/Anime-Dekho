@@ -13,6 +13,7 @@ class ToonstreamProvider : BasePlugin() {
         registerMainAPI(Toonstream())
 
         // ─── Video extractors ─────────────────────────────────────
+        registerExtractorAPI(Abyss())              // abyssplayer.com (New Abyss Extractor)
         registerExtractorAPI(StreamSB8())
         registerExtractorAPI(Vidmolyme())          // vidmoly.me
         registerExtractorAPI(VidMolyNet())         // vidmoly.net (Server 6)
