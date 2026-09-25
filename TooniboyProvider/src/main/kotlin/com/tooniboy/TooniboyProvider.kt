@@ -66,7 +66,7 @@ data class TmdbDetails(
 )
 
 open class Tooniboy : MainAPI() {
-    override var mainUrl = "https://tooniboy.co"
+    override var mainUrl = "https://tooniboy.xyz"
     override var name = "Tooniboy"
     override val hasMainPage = true
     override var lang = "hi"
