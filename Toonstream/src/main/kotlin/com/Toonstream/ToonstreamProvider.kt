@@ -73,7 +73,7 @@ data class ToonMedia(val url: String, val poster: String?)
 
 class ToonstreamProvider : MainAPI() {
     override var mainUrl              = "https://toonstream.us"
-    override var name                 = "ToonStream"
+    override var name                 = "Toonstream"
     override val hasMainPage          = true
     override var lang                 = "hi"
     override val hasDownloadSupport   = true
