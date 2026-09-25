@@ -24,12 +24,15 @@ import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
+// Handles the Zephyrflick server, utilizing the base AWSStream extraction logic.
 class Zephyrflick : AWSStream() {
     override val name = "Zephyrflick"
     override val mainUrl = "https://as-cdn26.top"
     override val requiresReferer = true
 }
 
+// Base extractor for AWSStream backend.
+// Fetches the HLS video source via a POST request and unpacks JavaScript to extract subtitle captions.
 open class AWSStream : ExtractorApi() {
     override val name = "AWSStream"
     override val mainUrl = "https://z.awstream.net"
@@ -77,6 +80,8 @@ open class AWSStream : ExtractorApi() {
     )
 }
 
+// Extractor for AbyssPlayer. 
+// Uses an external API to decrypt the AES encrypted payload containing video sources.
 class Abyss : ExtractorApi() {
     override var name = "Abyss"
     override var mainUrl = "https://abyssplayer.com"
@@ -134,6 +139,8 @@ class Abyss : ExtractorApi() {
     )
 }
 
+// Extractor for StreamRuby.
+// Unpacks obfuscated JavaScript to extract M3U8 URLs and VTT subtitle links.
 class StreamRuby : ExtractorApi() {
     override var name = "StreamRuby"
     override var mainUrl = "https://rubystm.com"
@@ -182,11 +189,14 @@ class StreamRuby : ExtractorApi() {
     }
 }
 
+// Handles the Cloudy domain by leveraging the UpnsPlayer extraction logic.
 class Cloudy : UpnsPlayer() {
     override var name = "Cloudy"
     override var mainUrl = "https://cloudy.upns.one"
 }
 
+// Extractor for UpnsPlayer server.
+// Fetches AES-encoded JSON from a backend API, decrypts it, and builds the HLS URL from the streaming config.
 open class UpnsPlayer : ExtractorApi() {
     override var name = "Upns"
     override var mainUrl = "https://upns.one"
@@ -338,6 +348,8 @@ open class UpnsPlayer : ExtractorApi() {
         }
 }
 
+// Main Extractor for GDMirrorbot ecosystem.
+// Acts as a router by parsing embedhelper2 responses (Base64/JSON) to delegate to StreamHG, UpnsPlayer, or direct URLs.
 open class GDMirrorbot : ExtractorApi() {
     override var name = "StreamHG"
     override var mainUrl = "https://gdmirrorbot.nl"
@@ -538,16 +550,20 @@ open class GDMirrorbot : ExtractorApi() {
     )
 }
 
+// GDMirrorbot FHD Domain configuration subclass.
 class GDMirrorbotFHD : GDMirrorbot() {
     override var name = "StreamHG"
     override var mainUrl = "https://gdmirrorbot.nl"
 }
 
+// FilesForever Domain configuration utilizing GDMirrorbot logic.
 class FilesForever : GDMirrorbot() {
     override var name = "StreamHG"
     override var mainUrl = "https://filesforever.link"
 }
 
+// Extractor for EmTurboVid.
+// Simply scrapes the HTML content or embedded script tags for a direct M3U8 string.
 class EmTurboVid : ExtractorApi() {
     override var name = "EmTurboVid"
     override var mainUrl = "https://emturbovid.com"
@@ -586,6 +602,8 @@ class EmTurboVid : ExtractorApi() {
     }
 }
 
+// Extractor for VidMoly.
+// Parses raw HTML text using Regular Expressions to identify standard HLS file extensions.
 class VidMolyNet : ExtractorApi() {
     override var name = "VidMoly"
     override var mainUrl = "https://vidmoly.net"
@@ -618,6 +636,8 @@ class VidMolyNet : ExtractorApi() {
     }
 }
 
+// Extractor for Blakite API framework.
+// Intercepts the API request mapped with TMDB data, building stream CDN links mapped to chunk ranges.
 class Blakite : ExtractorApi() {
     override var name = "Blakite"
     override var mainUrl = "https://blakiteapi.xyz"
@@ -676,9 +696,11 @@ class Blakite : ExtractorApi() {
 
         if (data.format.equals("M3U8", ignoreCase = true)) {
             val rangeMap = mutableMapOf<String, String>()
-            data.ranges?.split(",")?.forEach { part ->
-                val bits = part.split(":")
-                if (bits.size >= 2) rangeMap[bits[0].trim()] = bits[1].trim()
+            data.ranges?.split("\n")?.forEach { line ->
+                val m = Regex("""(\d+-\d+)\s*\(([^)]+)\)""").find(line.trim())
+                if (m != null) {
+                    rangeMap[m.groupValues[2].trim()] = m.groupValues[1]
+                }
             }
 
             var emitted = false
@@ -704,8 +726,7 @@ class Blakite : ExtractorApi() {
                 for (i in 0 until qid) {
                     val label = QUALITY_LABELS[i]
                     val code = QUALITY_CODES[i]
-                    val streamUrl = CDN_BASE +
-                        "$dataId.$code.tar?r_file=chunklist.m3u8&r_type=application%2Fvnd.apple.mpegurl"
+                    val streamUrl = CDN_BASE + "$dataId.$code.tar?r_file=chunklist.m3u8&r_type=application%2Fvnd.apple.mpegurl"
                     callback(
                         newExtractorLink(name, "$name [$label]", streamUrl, ExtractorLinkType.M3U8) {
                             this.referer = ""
