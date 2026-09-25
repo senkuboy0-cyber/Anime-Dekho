@@ -25,15 +25,13 @@ import com.lagradost.cloudstream3.Score
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.app
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.Document
 import org.jsoup.Jsoup
 import java.net.URLEncoder
 import java.util.ArrayList
-
-// ==========================================
-// TMDB API Data Classes
-// ==========================================
 
 data class TmdbImages(
     @JsonProperty("logos") val logos: ArrayList<TmdbImage>? = null,
@@ -71,15 +69,11 @@ data class TmdbDetails(
     val overview: String? = null
 )
 
-// Core media data passed across screens
 data class ToonMedia(val url: String, val poster: String?)
 
-// ==========================================
-// Main Provider Class: Toonstream
-// ==========================================
 class ToonstreamProvider : MainAPI() {
     override var mainUrl              = "https://toonstream.us"
-    override var name                 = "Toonstream"
+    override var name                 = "ToonStream"
     override val hasMainPage          = true
     override var lang                 = "hi"
     override val hasDownloadSupport   = true
@@ -90,7 +84,6 @@ class ToonstreamProvider : MainAPI() {
     private val TMDB_KEY = "1865f43a0549ca50d341dd9ab8b29f49"
     private val TMDB_IMG = "https://image.tmdb.org/t/p/original"
 
-    // Custom extractors initialization
     private val zephyrflick = Zephyrflick()
     private val awsStream = AWSStream()
     private val abyss = Abyss()
@@ -854,32 +847,46 @@ class ToonstreamProvider : MainAPI() {
         val document = app.get(data).document
         var found = false
 
-        document.select("iframe[data-src], iframe[src]").forEach { iframe ->
+        val iframeLinks = document.select("iframe[data-src], iframe[src]").mapNotNull { iframe ->
             val src = iframe.attr("data-src").ifBlank { iframe.attr("src") }.trim()
-            if (src.isBlank() || src == "about:blank") return@forEach
-            if (src.contains("youtube.com", true) || src.contains("youtu.be", true)) return@forEach
+            if (src.isBlank() || src == "about:blank") return@mapNotNull null
+            if (src.contains("youtube.com", true) || src.contains("youtu.be", true)) return@mapNotNull null
+            if (src.startsWith("http")) src else fixUrl(src)
+        }
 
-            val link = if (src.startsWith("http")) src else fixUrl(src)
-            try {
-                invokeExtractor(link, data, subtitleCallback, callback)
-                found = true
-            } catch (e: Exception) {
-                Log.e("ToonStream", "extractor failed for $link: ${e.message}")
+        coroutineScope {
+            iframeLinks.forEach { link ->
+                launch {
+                    try {
+                        invokeExtractor(link, data, subtitleCallback, callback)
+                        found = true
+                    } catch (e: Exception) {
+                        Log.e("ToonStream", "extractor failed for $link: ${e.message}")
+                    }
+                }
             }
         }
 
         if (!found) {
-            document.select(
+            val aLinks = document.select(
                 "a[href*=embed], a[href*=rubystm], a[href*=vidmoly], " +
                     "a[href*=filesforever], a[href*=abyssplayer], " +
                     "a[href*=emturbovid], a[href*=as-cdn]"
-            ).forEach { a ->
+            ).mapNotNull { a ->
                 val link = a.attr("href")
-                if (link.isBlank()) return@forEach
-                try {
-                    invokeExtractor(link, data, subtitleCallback, callback)
-                    found = true
-                } catch (_: Exception) {
+                if (link.isBlank()) null else link
+            }
+            
+            coroutineScope {
+                aLinks.forEach { link ->
+                    launch {
+                        try {
+                            invokeExtractor(link, data, subtitleCallback, callback)
+                            found = true
+                        } catch (e: Exception) {
+                            Log.e("ToonStream", "extractor failed for $link: ${e.message}")
+                        }
+                    }
                 }
             }
         }
