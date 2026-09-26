@@ -143,6 +143,10 @@ open class AnimeDekhoProvider : MainAPI() {
 
     private fun extractRawTitle(title: String): String? {
         if (title.isBlank()) return null
+        
+        // Prevent layout titles from being captured
+        if (title.contains("SCHEDULE", ignoreCase = true) || title.contains("TIMING", ignoreCase = true)) return null
+
         var processed = title
         processed = processed.replace(Regex("(?i)Watch Online"), "")
         processed = processed.replace(Regex("(?i)\\|\\s*AnimeDekho"), "")
@@ -421,7 +425,6 @@ open class AnimeDekhoProvider : MainAPI() {
             "h1.entry-title",
             "h2.entry-title",
             "div.entry-title",
-            "h1",
             "meta[property=og:title]",
             "meta[name=twitter:title]"
         )
@@ -429,38 +432,63 @@ open class AnimeDekhoProvider : MainAPI() {
         for (selector in titleSelectors) {
             if (rawTitle.isNullOrBlank()) {
                 val el = document.selectFirst(selector)
-                rawTitle = if (el?.hasAttr("content") == true) el.attr("content") else el?.text()
+                val text = if (el?.hasAttr("content") == true) el.attr("content") else el?.text()
+                
+                if (text != null && !text.contains("SCHEDULE", ignoreCase = true) && !text.contains("TIMING", ignoreCase = true)) {
+                    rawTitle = text
+                }
             }
         }
 
         if (rawTitle.isNullOrBlank()) {
-            rawTitle = ajaxMetadata.title
+            val ajaxTitle = ajaxMetadata.title
+            if (ajaxTitle != null && !ajaxTitle.contains("SCHEDULE", ignoreCase = true)) {
+                rawTitle = ajaxTitle
+            }
         }
 
         if (rawTitle.isNullOrBlank()) {
             val scriptData = document.select("script[type=application/ld+json]").html()
-            rawTitle = Regex("\"headline\"\\s*:\\s*\"([^\"]+)\"").find(scriptData)?.groupValues?.get(1)
+            val jsonTitle = Regex("\"headline\"\\s*:\\s*\"([^\"]+)\"").find(scriptData)?.groupValues?.get(1)
+            if (jsonTitle != null && !jsonTitle.contains("SCHEDULE", ignoreCase = true)) {
+                rawTitle = jsonTitle
+            }
         }
 
         if (rawTitle.isNullOrBlank()) {
             val img = document.selectFirst("div.post-thumbnail figure img, article img, img")
-            rawTitle = img?.attr("alt")?.takeIf { it.isNotBlank() } ?: img?.attr("title")
+            val imgTitle = img?.attr("alt")?.takeIf { it.isNotBlank() } ?: img?.attr("title")
+            if (imgTitle != null && !imgTitle.contains("SCHEDULE", ignoreCase = true)) {
+                rawTitle = imgTitle
+            }
         }
 
         if (rawTitle.isNullOrBlank()) {
-            rawTitle = Regex("title\\s*:\\s*[\"']([^\"']+)[\"']").find(htmlContent)?.groupValues?.get(1)
+            val htmlRegexTitle = Regex("title\\s*:\\s*[\"']([^\"']+)[\"']").find(htmlContent)?.groupValues?.get(1)
+            if (htmlRegexTitle != null && !htmlRegexTitle.contains("SCHEDULE", ignoreCase = true)) {
+                rawTitle = htmlRegexTitle
+            }
         }
 
         if (rawTitle.isNullOrBlank()) {
-            rawTitle = document.select("nav.breadcrumb span, .breadcrumb span").lastOrNull()?.text()
+            val breadcrumbTitle = document.select("nav.breadcrumb span, .breadcrumb span").lastOrNull()?.text()
+            if (breadcrumbTitle != null && !breadcrumbTitle.contains("SCHEDULE", ignoreCase = true)) {
+                rawTitle = breadcrumbTitle
+            }
         }
 
         if (rawTitle.isNullOrBlank()) {
-            rawTitle = document.selectFirst("a[rel=tag]")?.text()
+            val tagTitle = document.selectFirst("a[rel=tag]")?.text()
+            if (tagTitle != null && !tagTitle.contains("SCHEDULE", ignoreCase = true)) {
+                rawTitle = tagTitle
+            }
         }
 
         if (rawTitle.isNullOrBlank()) {
-            rawTitle = document.selectFirst("title")?.text()
+            val titleTag = document.selectFirst("title")?.text()
+            if (titleTag != null && !titleTag.contains("SCHEDULE", ignoreCase = true)) {
+                rawTitle = titleTag
+            }
         }
 
         val cleanedRawTitle = extractRawTitle(rawTitle ?: "") ?: rawTitle ?: media.url.trimEnd('/').substringAfterLast("/").replace("-", " ").replaceFirstChar { it.uppercase() }
@@ -571,7 +599,7 @@ open class AnimeDekhoProvider : MainAPI() {
                     loadExtractor(innerIframeUrl, subtitleCallback, callback)
                 }
             } catch (e: Exception) {
-                // Ignore failure for individual server
+                // Ignore
             }
         }
 
