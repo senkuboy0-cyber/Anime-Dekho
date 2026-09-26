@@ -3,49 +3,31 @@ package com.Toonstream
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.google.gson.Gson
 import com.lagradost.api.Log
-import com.lagradost.cloudstream3.MainAPI
-import com.lagradost.cloudstream3.HomePageResponse
-import com.lagradost.cloudstream3.HomePageList
-import com.lagradost.cloudstream3.MainPageRequest
-import com.lagradost.cloudstream3.SearchResponse
-import com.lagradost.cloudstream3.SearchResponseList
-import com.lagradost.cloudstream3.LoadResponse
-import com.lagradost.cloudstream3.SubtitleFile
-import com.lagradost.cloudstream3.TvType
-import com.lagradost.cloudstream3.Episode
-import com.lagradost.cloudstream3.mainPageOf
-import com.lagradost.cloudstream3.newHomePageResponse
-import com.lagradost.cloudstream3.newMovieSearchResponse
-import com.lagradost.cloudstream3.newMovieLoadResponse
-import com.lagradost.cloudstream3.newTvSeriesLoadResponse
-import com.lagradost.cloudstream3.newEpisode
-import com.lagradost.cloudstream3.newSearchResponseList
-import com.lagradost.cloudstream3.fixUrl
-import com.lagradost.cloudstream3.Score
+import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
-import com.lagradost.cloudstream3.app
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
-import org.jsoup.nodes.Element
-import org.jsoup.nodes.Document
 import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
+import org.jsoup.nodes.Element
 import java.net.URLEncoder
-import java.util.ArrayList
+import kotlin.math.abs
 
+// Data classes for TMDB API response mapping
 data class TmdbImages(
-    @JsonProperty("logos") val logos: ArrayList<TmdbImage>? = null,
-    @JsonProperty("backdrops") val backdrops: ArrayList<TmdbImage>? = null
+    @JsonProperty("logos") val logos: List<TmdbImage>? = null,
+    @JsonProperty("backdrops") val backdrops: List<TmdbImage>? = null
 )
 
 data class TmdbImage(
     @JsonProperty("file_path") val filePath: String? = null,
-    @JsonProperty("iso_639_1") val lang: String?     = null
+    @JsonProperty("iso_639_1") val lang: String? = null
 )
 
 data class TmdbFind(
-    @JsonProperty("movie_results") val movies: ArrayList<TmdbResult>? = null,
-    @JsonProperty("tv_results")    val tvShows: ArrayList<TmdbResult>? = null
+    @JsonProperty("movie_results") val movies: List<TmdbResult>? = null,
+    @JsonProperty("tv_results") val tvShows: List<TmdbResult>? = null
 )
 
 data class TmdbResult(
@@ -56,11 +38,11 @@ data class TmdbResult(
     @JsonProperty("release_date") val releaseDate: String? = null,
     @JsonProperty("first_air_date") val firstAirDate: String? = null,
     @JsonProperty("overview") val overview: String? = null,
-    @JsonProperty("genre_ids") val genreIds: ArrayList<Int>? = null
+    @JsonProperty("genre_ids") val genreIds: List<Int>? = null
 )
 
 data class TmdbSearch(
-    @JsonProperty("results") val results: ArrayList<TmdbResult>? = null
+    @JsonProperty("results") val results: List<TmdbResult>? = null
 )
 
 data class TmdbDetails(
@@ -69,58 +51,65 @@ data class TmdbDetails(
     val overview: String? = null
 )
 
-data class ToonMedia(val url: String, val poster: String?)
+// Data class to store media information for serialization
+data class ToonMedia(
+    val url: String,
+    val poster: String?
+)
 
 class ToonstreamProvider : MainAPI() {
-    override var mainUrl              = "https://toonstream.us"
-    override var name                 = "Toonstream"
-    override val hasMainPage          = true
-    override var lang                 = "hi"
-    override val hasDownloadSupport   = true
-    
-    override val supportedTypes       = setOf(TvType.Movie, TvType.Anime, TvType.Cartoon)
+    // Provider basic configuration
+    override var mainUrl            = "https://toonstream.us"
+    override var name               = "Toonstream"
+    override val hasMainPage        = true
+    override var lang               = "hi"
+    override val hasDownloadSupport = true
+    override val supportedTypes     = setOf(TvType.Movie, TvType.Anime, TvType.Cartoon)
 
+    // TMDB API constants for fetching metadata (images, overview, etc.)
     private val TMDB_API = "https://api.themoviedb.org/3"
     private val TMDB_KEY = "1865f43a0549ca50d341dd9ab8b29f49"
     private val TMDB_IMG = "https://image.tmdb.org/t/p/original"
 
-    private val zephyrflick = Zephyrflick()
-    private val awsStream = AWSStream()
-    private val abyss = Abyss()
-    private val streamRuby = StreamRuby()
-    private val cloudy = Cloudy()
-    private val upnsPlayer = UpnsPlayer()
-    private val gdMirrorbot = GDMirrorbot()
-    private val gdMirrorbotFhd = GDMirrorbotFHD()
+    // Initializing supported extractors
+    private val zephyrflick  = Zephyrflick()
+    private val awsStream    = AWSStream()
+    private val abyss        = Abyss()
+    private val streamRuby   = StreamRuby()
+    private val cloudy       = Cloudy()
+    private val upnsPlayer   = UpnsPlayer()
+    private val gdMirrorbot  = GDMirrorbot()
     private val filesForever = FilesForever()
-    private val emTurboVid = EmTurboVid()
-    private val vidMolyNet = VidMolyNet()
-    private val blakite = Blakite()
+    private val emTurboVid   = EmTurboVid()
+    private val vidMolyNet   = VidMolyNet()
+    private val blakite      = Blakite()
+    // Assuming this exists in your project based on original code
+    private val gdMirrorbotFhd = GDMirrorbotFHD() 
 
+    /**
+     * Cleans up the title by removing unnecessary keywords, resolution, audio types, etc.
+     */
     private fun cleanTitleText(title: String): String {
-        var clean = title.replace(Regex("[\u200B-\u200D\uFEFF\\p{Cf}]"), "")
-        clean = clean.replace("\u00A0", " ")
-        clean = clean.replace(Regex("(?i)Watch Online"), "")
-        
-        clean = clean.replace("(?i)\\s+\\d+[x×]\\d+.*".toRegex(), "")
-        clean = clean.replace("×", "x")
-        clean = clean.replace("(?i)\\s+Episode\\s+\\d+.*".toRegex(), "")
-        clean = clean.replace("(?i)\\s+Season\\s+\\d+.*".toRegex(), "")
-        
-        clean = clean.replace("(?i)\\s*hindi\\s*dub.*".toRegex(), "")
-        clean = clean.replace("(?i)\\s*english\\s*dub.*".toRegex(), "")
-        clean = clean.replace("(?i)\\s*dual\\s*audio.*".toRegex(), "")
-        clean = clean.replace("(?i)\\s*multi\\s*audio.*".toRegex(), "")
-        clean = clean.replace("(?i)\\s*fan\\s*dub.*".toRegex(), "")
-        clean = clean.replace("(?i)\\s*fandub.*".toRegex(), "")
-        
-        clean = clean.substringBefore("(")
-        clean = clean.substringBefore("[")
-        
-        clean = clean.replace("\\s+".toRegex(), " ")
-        return clean.trim()
+        return title.replace(Regex("[\u200B-\u200D\uFEFF\\p{Cf}]"), "")
+            .replace("\u00A0", " ")
+            .replace(Regex("(?i)Watch Online"), "")
+            .replace("(?i)\\s+\\d+[x×]\\d+.*".toRegex(), "")
+            .replace("×", "x")
+            .replace("(?i)\\s+Episode\\s+\\d+.*".toRegex(), "")
+            .replace("(?i)\\s+Season\\s+\\d+.*".toRegex(), "")
+            .replace("(?i)\\s*(hindi|english)\\s*dub.*".toRegex(), "")
+            .replace("(?i)\\s*(dual|multi)\\s*audio.*".toRegex(), "")
+            .replace("(?i)\\s*fan\\s*dub.*".toRegex(), "")
+            .replace("(?i)\\s*fandub.*".toRegex(), "")
+            .substringBefore("(")
+            .substringBefore("[")
+            .replace("\\s+".toRegex(), " ")
+            .trim()
     }
 
+    /**
+     * Safely encodes the URI string for network requests.
+     */
     private fun encodeUri(text: String): String {
         return try {
             URLEncoder.encode(text, "UTF-8")
@@ -129,279 +118,142 @@ class ToonstreamProvider : MainAPI() {
         }
     }
 
+    /**
+     * Normalizes the title string to alphanumeric lowercase for accurate comparison.
+     */
     private fun normalizeTitle(s: String?): String {
-        if (s == null) return ""
-        return s.replace(Regex("[^a-zA-Z0-9]"), "").lowercase()
+        return s?.replace(Regex("[^a-zA-Z0-9]"), "")?.lowercase() ?: ""
     }
 
+    /**
+     * Extracts the release year from TMDB result object.
+     */
     private fun getResultYear(result: TmdbResult): Int? {
-        var dateString = result.releaseDate
-        if (dateString == null) {
-            dateString = result.firstAirDate
-        }
-        
-        if (dateString != null && dateString.contains("-")) {
-            val yearString = dateString.substringBefore("-")
-            return yearString.toIntOrNull()
-        }
-        return null
+        val dateString = result.releaseDate ?: result.firstAirDate
+        return dateString?.substringBefore("-")?.toIntOrNull()
     }
 
+    /**
+     * Checks if TMDB year matches site year (with an allowed deviation of +/- 1 year).
+     */
     private fun yearMatches(tmdbYear: Int?, siteYear: Int?): Boolean {
         if (siteYear == null || tmdbYear == null) return true
-        val diff = tmdbYear - siteYear
-        return (diff == 0 || diff == 1 || diff == -1)
+        return abs(tmdbYear - siteYear) <= 1
     }
 
-    private fun pickBestResult(candidates: ArrayList<TmdbResult>, siteYear: Int?): TmdbResult? {
+    /**
+     * Selects the best TMDB result from a list of candidates based on year and genre.
+     */
+    private fun pickBestResult(candidates: List<TmdbResult>, siteYear: Int?): TmdbResult? {
         if (candidates.isEmpty()) return null
 
         if (siteYear != null) {
-            val yearMatched = ArrayList<TmdbResult>()
-            for (i in 0 until candidates.size) {
-                val candidate = candidates.get(i)
-                if (yearMatches(getResultYear(candidate), siteYear)) {
-                    yearMatched.add(candidate)
-                }
-            }
-
-            if (yearMatched.size > 0) {
-                if (yearMatched.size == 1) {
-                    return yearMatched.get(0)
-                }
-                
-                for (i in 0 until yearMatched.size) {
-                    val match = yearMatched.get(i)
-                    val genres = match.genreIds
-                    if (genres != null) {
-                        for (j in 0 until genres.size) {
-                            if (genres.get(j) == 16) {
-                                return match
-                            }
-                        }
-                    }
-                }
-                
-                return yearMatched.get(0)
+            val yearMatched = candidates.filter { yearMatches(getResultYear(it), siteYear) }
+            if (yearMatched.isNotEmpty()) {
+                // If multiple results match the year, prefer the animation genre (ID 16)
+                if (yearMatched.size == 1) return yearMatched.first()
+                return yearMatched.firstOrNull { it.genreIds?.contains(16) == true } ?: yearMatched.first()
             }
         }
-
-        return candidates.get(0)
+        // Fallback to the first candidate if no specific match is found
+        return candidates.first()
     }
 
+    /**
+     * Fetches metadata (Logo, Backdrop, Overview) from TMDB API.
+     */
     private suspend fun fetchTmdbAssets(document: Document?, title: String, isSeries: Boolean, year: Int?): TmdbDetails {
         return try {
-            var tmdbId: Int? = null
-            var actualMediaType = "movie"
-            if (isSeries) {
-                actualMediaType = "tv"
-            }
-            var tmdbOverview: String? = null
-
             val safeTitle = encodeUri(title)
-            val searchRes = app.get("$TMDB_API/search/multi?api_key=$TMDB_KEY&query=$safeTitle")
-                .parsedSafe<TmdbSearch>()
+            val searchRes = app.get("$TMDB_API/search/multi?api_key=$TMDB_KEY&query=$safeTitle").parsedSafe<TmdbSearch>()
 
-            val validResults = ArrayList<TmdbResult>()
-            if (searchRes != null && searchRes.results != null) {
-                for (i in 0 until searchRes.results.size) {
-                    val res = searchRes.results.get(i)
-                    if (res.mediaType == "movie" || res.mediaType == "tv") {
-                        validResults.add(res)
-                    }
-                }
-            }
-            
+            // Filter results to include only movies or tv shows
+            val validResults = searchRes?.results?.filter { it.mediaType == "movie" || it.mediaType == "tv" } ?: emptyList()
             val normTitle = normalizeTitle(title)
 
-            val exactCandidates = ArrayList<TmdbResult>()
-            for (i in 0 until validResults.size) {
-                val res = validResults.get(i)
-                var resNorm = ""
-                if (res.title != null) resNorm = normalizeTitle(res.title)
-                else if (res.name != null) resNorm = normalizeTitle(res.name)
-                
-                if (resNorm == normTitle) {
-                    exactCandidates.add(res)
+            // Try Exact Match
+            val exactCandidates = validResults.filter {
+                normalizeTitle(it.title ?: it.name) == normTitle
+            }
+            var bestMatch = pickBestResult(exactCandidates, year)
+
+            // Try StartsWith Match if exact match fails and title is reasonably long
+            if (bestMatch == null && normTitle.length >= 6) {
+                val startsWithCandidates = validResults.filter {
+                    val tmdbNorm = normalizeTitle(it.title ?: it.name)
+                    tmdbNorm.isNotEmpty() && tmdbNorm.startsWith(normTitle)
                 }
+                bestMatch = pickBestResult(startsWithCandidates, year)
             }
 
-            val exactMatch = pickBestResult(exactCandidates, year)
+            // Try extracting IMDB ID from HTML document if standard search fails
+            if (bestMatch == null && document != null) {
+                val imdbId = document.select("a[href*='imdb.com/title']").mapNotNull {
+                    val href = it.attr("href")
+                    val possibleId = href.substringAfter("title/").substringBefore("/")
+                    if (possibleId.startsWith("tt")) possibleId else null
+                }.firstOrNull()
 
-            if (exactMatch != null) {
-                tmdbId = exactMatch.id
-                if (exactMatch.mediaType != null) {
-                    actualMediaType = exactMatch.mediaType
-                }
-                tmdbOverview = exactMatch.overview
-            } else {
-                val startsWithCandidates = ArrayList<TmdbResult>()
-                if (normTitle.length >= 6) {
-                    for (i in 0 until validResults.size) {
-                        val res = validResults.get(i)
-                        var tmdbNorm = ""
-                        if (res.title != null) {
-                            tmdbNorm = normalizeTitle(res.title)
-                        } else if (res.name != null) {
-                            tmdbNorm = normalizeTitle(res.name)
-                        }
-                        
-                        if (tmdbNorm.isNotEmpty() && tmdbNorm.startsWith(normTitle)) {
-                            startsWithCandidates.add(res)
-                        }
-                    }
-                }
+                if (imdbId != null) {
+                    val findRes = app.get("$TMDB_API/find/$imdbId?api_key=$TMDB_KEY&external_source=imdb_id").parsedSafe<TmdbFind>()
+                    val tvMatch = findRes?.tvShows?.firstOrNull()
+                    val movieMatch = findRes?.movies?.firstOrNull()
 
-                val startsWithMatch = pickBestResult(startsWithCandidates, year)
-
-                if (startsWithMatch != null) {
-                    tmdbId = startsWithMatch.id
-                    if (startsWithMatch.mediaType != null) {
-                        actualMediaType = startsWithMatch.mediaType
-                    }
-                    tmdbOverview = startsWithMatch.overview
-                } else {
-                    var imdbId: String? = null
-                    if (document != null) {
-                        val imdbLinks = document.select("a[href*='imdb.com/title']")
-                        for (i in 0 until imdbLinks.size) {
-                            val link = imdbLinks.get(i)
-                            val href = link.attr("href")
-                            if (href.contains("title/")) {
-                                val afterTitle = href.substringAfter("title/")
-                                val possibleId = afterTitle.substringBefore("/")
-                                if (possibleId.startsWith("tt")) {
-                                    imdbId = possibleId
-                                    break
-                                }
-                            }
-                        }
-                    }
-
-                    if (imdbId != null) {
-                        val findRes = app.get("$TMDB_API/find/$imdbId?api_key=$TMDB_KEY&external_source=imdb_id")
-                            .parsedSafe<TmdbFind>()
-                            
-                        if (findRes != null) {
-                            var tvMatch: TmdbResult? = null
-                            if (findRes.tvShows != null && findRes.tvShows.size > 0) {
-                                tvMatch = findRes.tvShows.get(0)
-                            }
-                            
-                            var movieMatch: TmdbResult? = null
-                            if (findRes.movies != null && findRes.movies.size > 0) {
-                                movieMatch = findRes.movies.get(0)
-                            }
-
-                            if (isSeries) {
-                                if (tvMatch != null) { 
-                                    tmdbId = tvMatch.id
-                                    actualMediaType = "tv"    
-                                    tmdbOverview = tvMatch.overview
-                                } else if (movieMatch != null) { 
-                                    tmdbId = movieMatch.id
-                                    actualMediaType = "movie" 
-                                    tmdbOverview = movieMatch.overview
-                                }
-                            } else {
-                                if (movieMatch != null) { 
-                                    tmdbId = movieMatch.id
-                                    actualMediaType = "movie" 
-                                    tmdbOverview = movieMatch.overview
-                                } else if (tvMatch != null) { 
-                                    tmdbId = tvMatch.id
-                                    actualMediaType = "tv"    
-                                    tmdbOverview = tvMatch.overview
-                                }
-                            }
-                        }
+                    bestMatch = if (isSeries) {
+                        tvMatch ?: movieMatch
+                    } else {
+                        movieMatch ?: tvMatch
                     }
                 }
             }
 
-            if (tmdbId == null) return TmdbDetails(null, null, null)
+            if (bestMatch?.id == null) return TmdbDetails(null, null, null)
 
-            val images = app.get(
-                "$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY"
-            ).parsedSafe<TmdbImages>()
+            val actualMediaType = bestMatch.mediaType ?: if (isSeries) "tv" else "movie"
+            val images = app.get("$TMDB_API/$actualMediaType/${bestMatch.id}/images?api_key=$TMDB_KEY").parsedSafe<TmdbImages>()
 
+            // Extract the most suitable Logo image
             var logoUrl: String? = null
-            var backdropUrl: String? = null
+            if (!images?.logos.isNullOrEmpty()) {
+                val validLogos = images?.logos?.filter { it.filePath?.endsWith(".svg", ignoreCase = true) != true } ?: emptyList()
+                val bestLogo = validLogos.firstOrNull { it.lang == "en" }
+                    ?: validLogos.firstOrNull { it.lang == null }
+                    ?: validLogos.firstOrNull { it.lang == "ja" }
+                    ?: validLogos.firstOrNull()
 
-            if (images != null) {
-                if (images.logos != null) {
-                    val validLogos = ArrayList<TmdbImage>()
-                    for (i in 0 until images.logos.size) {
-                        val logo = images.logos.get(i)
-                        var path = logo.filePath
-                        if (path == null) path = ""
-                        
-                        if (!path.endsWith(".svg") && !path.endsWith(".SVG")) {
-                            validLogos.add(logo)
-                        }
-                    }
-                    
-                    var bestLogo: TmdbImage? = null
-                    for (i in 0 until validLogos.size) {
-                        val logo = validLogos.get(i)
-                        if (logo.lang == "en") {
-                            bestLogo = logo
-                            break
-                        }
-                    }
-                    if (bestLogo == null) {
-                        for (i in 0 until validLogos.size) {
-                            val logo = validLogos.get(i)
-                            if (logo.lang == null) {
-                                bestLogo = logo
-                                break
-                            }
-                        }
-                    }
-                    if (bestLogo == null) {
-                        for (i in 0 until validLogos.size) {
-                            val logo = validLogos.get(i)
-                            if (logo.lang == "ja") {
-                                bestLogo = logo
-                                break
-                            }
-                        }
-                    }
-                    if (bestLogo == null && validLogos.size > 0) {
-                        bestLogo = validLogos.get(0)
-                    }
-                    
-                    if (bestLogo != null && bestLogo.filePath != null) {
-                        logoUrl = "$TMDB_IMG${bestLogo.filePath}"
-                    }
-                }
-                
-                images.backdrops?.let { backs ->
-                    val bestBackdrop = backs.filter { it.lang == null }.randomOrNull()
-                        ?: backs.filter { it.lang == "en" }.randomOrNull()
-                        ?: backs.randomOrNull()
-                        
-                    bestBackdrop?.filePath?.let { backdropUrl = "$TMDB_IMG$it" }
-                }
+                bestLogo?.filePath?.let { logoUrl = "$TMDB_IMG$it" }
             }
 
-            TmdbDetails(logoUrl, backdropUrl, tmdbOverview)
+            // Extract the most suitable Backdrop image
+            var backdropUrl: String? = null
+            if (!images?.backdrops.isNullOrEmpty()) {
+                val backs = images?.backdrops ?: emptyList()
+                val bestBackdrop = backs.filter { it.lang == null }.randomOrNull()
+                    ?: backs.filter { it.lang == "en" }.randomOrNull()
+                    ?: backs.randomOrNull()
+
+                bestBackdrop?.filePath?.let { backdropUrl = "$TMDB_IMG$it" }
+            }
+
+            TmdbDetails(logoUrl, backdropUrl, bestMatch.overview)
 
         } catch (e: Exception) {
-            TmdbDetails(null, null, null)
+            TmdbDetails(null, null, null) // Return empty details on failure
         }
     }
 
+    // Homepage categories definition
     override val mainPage = mainPageOf(
-        "fresh-drop"                              to "Fresh Drop",
-        "category/anime-series"                   to "Anime Series",
-        "category/anime-movies"                   to "Anime Movies",
-        "category/language/hindi-language"        to "Hindi",
-        "category/animation-&-cartoon-series"     to "Animation & Cartoon Series",
-        "category/animation-&-cartoon-movie"      to "Animation & Cartoon Movie"
+        "fresh-drop"                          to "Fresh Drop",
+        "category/anime-series"               to "Anime Series",
+        "category/anime-movies"               to "Anime Movies",
+        "category/language/hindi-language"    to "Hindi",
+        "category/animation-&-cartoon-series" to "Animation & Cartoon Series",
+        "category/animation-&-cartoon-movie"  to "Animation & Cartoon Movie"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        // Handle "Fresh Drop" category uniquely
         if (request.data == "fresh-drop") {
             val items = fetchFreshDrop()
             return newHomePageResponse(
@@ -410,40 +262,19 @@ class ToonstreamProvider : MainAPI() {
             )
         }
 
+        // Handle other standard categories with pagination support
         val path = request.data
-        var url = ""
-        
-        if (path == "category/anime-series") {
-            if (page == 1) {
-                url = "$mainUrl/category/anime%20series?type=series"
-            } else {
-                url = "$mainUrl/category/anime-series?type=series&page=$page"
-            }
-        } else if (path == "category/anime-movies") {
-            if (page == 1) {
-                url = "$mainUrl/category/anime%20movies?type=movies"
-            } else {
-                url = "$mainUrl/category/anime-movies?type=movies&page=$page"
-            }
-        } else {
-            if (page == 1) {
-                url = "$mainUrl/$path/"
-            } else {
-                url = "$mainUrl/$path/?page=$page"
-            }
+        val url = when {
+            path == "category/anime-series" && page == 1 -> "$mainUrl/category/anime%20series?type=series"
+            path == "category/anime-series" -> "$mainUrl/category/anime-series?type=series&page=$page"
+            path == "category/anime-movies" && page == 1 -> "$mainUrl/category/anime%20movies?type=movies"
+            path == "category/anime-movies" -> "$mainUrl/category/anime-movies?type=movies&page=$page"
+            page == 1 -> "$mainUrl/$path/"
+            else -> "$mainUrl/$path/?page=$page"
         }
 
         val document = app.get(url).document
-        
-        val home = mutableListOf<SearchResponse>()
-        val elements = document.select("#movies-a ul > li")
-        
-        for (el in elements) {
-            val res = el.toSearchResult()
-            if (res != null) {
-                home.add(res)
-            }
-        }
+        val home = document.select("#movies-a ul > li").mapNotNull { it.toSearchResult() }
 
         return newHomePageResponse(
             list = HomePageList(name = request.name, list = home, isHorizontalImages = false),
@@ -451,49 +282,48 @@ class ToonstreamProvider : MainAPI() {
         )
     }
 
+    /**
+     * Parses the "Fresh Drop" section from the homepage.
+     */
     private suspend fun fetchFreshDrop(): List<SearchResponse> {
         val document = app.get("$mainUrl/home/").document
 
         val header = document.select("h3.section-title").firstOrNull { it.text().contains("Fresh Drop", ignoreCase = true) }
-        if (header == null) return emptyList()
+            ?: return emptyList()
 
         val section = header.parents().firstOrNull { it.select("article.post.dfx").isNotEmpty() }
-        if (section == null) return emptyList()
+            ?: return emptyList()
 
-        val results = mutableListOf<SearchResponse>()
-        val articles = section.select("article.post.dfx")
-        
-        for (el in articles) {
+        return section.select("article.post.dfx").mapNotNull { el ->
             val rawTitle = el.selectFirst("h2.entry-title")?.text()?.replace(Regex("(?i)Watch Online"), "")?.trim()
-            if (rawTitle.isNullOrBlank()) continue
+            if (rawTitle.isNullOrBlank()) return@mapNotNull null
 
             val cleanedTitle = cleanTitleText(rawTitle)
-            if (cleanedTitle.isBlank()) continue
+            if (cleanedTitle.isBlank()) return@mapNotNull null
 
-            val hrefRaw = el.selectFirst("a.lnk-blk")?.attr("href")
-            if (hrefRaw.isNullOrBlank()) continue
+            val hrefRaw = el.selectFirst("a.lnk-blk")?.attr("href") ?: return@mapNotNull null
             val href = fixUrl(hrefRaw)
-            
+
             val posterRaw = el.selectFirst("img")?.attr("src")
             val fallbackPoster = if (posterRaw.isNullOrEmpty()) null else if (posterRaw.startsWith("http")) posterRaw else "https:$posterRaw"
-            
+
             val rating = el.selectFirst("span.vote")?.text()?.replace("TMDB", "")?.trim()?.toDoubleOrNull()
             
+            // Try fetching TMDB backdrop for horizontal image display
             val tmdbAssets = fetchTmdbAssets(null, cleanedTitle, true, null)
             val backdrop = tmdbAssets.backdropUrl ?: fallbackPoster
-            
             val mediaJson = Gson().toJson(ToonMedia(href, fallbackPoster))
 
-            val res = newMovieSearchResponse(rawTitle, mediaJson, TvType.TvSeries) {
+            newMovieSearchResponse(rawTitle, mediaJson, TvType.TvSeries) {
                 this.posterUrl = backdrop
                 this.score = Score.from10(rating)
             }
-            results.add(res)
         }
-        
-        return results
     }
 
+    /**
+     * Extension function to convert a JSoup Element into a SearchResponse object.
+     */
     private fun Element.toSearchResult(): SearchResponse? {
         val rawTitle = this.selectFirst("article > header > h2, article h2.entry-title, h2")
             ?.text()?.replace(Regex("(?i)Watch Online"), "")?.trim() ?: return null
@@ -501,25 +331,17 @@ class ToonstreamProvider : MainAPI() {
         val cleanedTitle = cleanTitleText(rawTitle)
         if (cleanedTitle.isBlank()) return null
 
-        val href  = fixUrl(
-            this.selectFirst("article > a.lnk-blk, article a.lnk-blk, a")
-                ?.attr("href") ?: return null
-        )
+        val href = fixUrl(this.selectFirst("article > a.lnk-blk, article a.lnk-blk, a")?.attr("href") ?: return null)
         
         val posterRaw = this.selectFirst("article img, img")?.attr("src") ?: ""
         val poster = when {
             posterRaw.startsWith("http") -> posterRaw
-            posterRaw.startsWith("//")   -> "https:$posterRaw"
-            posterRaw.isNotEmpty()       -> posterRaw
-            else                         -> null
+            posterRaw.startsWith("//") -> "https:$posterRaw"
+            posterRaw.isNotEmpty() -> posterRaw
+            else -> null
         }
-        
-        val tvType = when {
-            href.contains("/series/") -> TvType.TvSeries
-            href.contains("/movies/") -> TvType.Movie
-            else                      -> TvType.Movie
-        }
-        
+
+        val tvType = if (href.contains("/series/")) TvType.TvSeries else TvType.Movie
         val mediaJson = Gson().toJson(ToonMedia(href, poster))
 
         return newMovieSearchResponse(rawTitle, mediaJson, tvType) {
@@ -528,39 +350,24 @@ class ToonstreamProvider : MainAPI() {
     }
 
     override suspend fun search(query: String, page: Int): SearchResponseList {
-        val searchUrl = if (page == 1) {
-            "$mainUrl/s?q=$query&type=all"
-        } else {
-            "$mainUrl/s?q=$query&type=all&page=$page"
-        }
-
+        val searchUrl = if (page == 1) "$mainUrl/s?q=$query&type=all" else "$mainUrl/s?q=$query&type=all&page=$page"
         var htmlText = app.get(searchUrl).text
         
+        // Remove extraneous "Random" sections from search HTML to prevent parsing irrelevant items
         val regex = Regex("(?i)<[^>]+>\\s*(Random Series|Random Movies|Random)\\s*</[^>]+>")
         val match = regex.find(htmlText)
-        
         if (match != null) {
             htmlText = htmlText.substring(0, match.range.first)
         }
 
         val doc = Jsoup.parse(htmlText)
         
-        val pageResults = mutableListOf<SearchResponse>()
+        // Fallback selectors if the primary one fails
         var elements = doc.select("#movies-a ul > li")
+        if (elements.isEmpty()) elements = doc.select("article, .result-item, .item")
+        if (elements.isEmpty()) elements = doc.select("div:has(h2):has(a):has(img)")
         
-        if (elements.isEmpty()) {
-            elements = doc.select("article, .result-item, .item")
-        }
-        if (elements.isEmpty()) {
-            elements = doc.select("div:has(h2):has(a):has(img)")
-        }
-        
-        for (el in elements) {
-            val res = el.toSearchResult()
-            if (res != null) {
-                pageResults.add(res)
-            }
-        }
+        val pageResults = elements.mapNotNull { it.toSearchResult() }
 
         return newSearchResponseList(
             list = pageResults,
@@ -568,113 +375,91 @@ class ToonstreamProvider : MainAPI() {
         )
     }
 
+    /**
+     * Parses the "Related Series/Movies" section on the detail page.
+     */
     private fun parseRecommendations(document: Document): List<SearchResponse> {
-        val results = mutableListOf<SearchResponse>()
-        try {
+        return try {
             val relatedHeader = document.select("h3").firstOrNull { h ->
                 val t = h.text().trim()
-                t.equals("Related Series", ignoreCase = true) ||
-                t.equals("Related Movies", ignoreCase = true)
-            }
-            if (relatedHeader == null) return emptyList()
+                t.equals("Related Series", ignoreCase = true) || t.equals("Related Movies", ignoreCase = true)
+            } ?: return emptyList()
 
             val relatedSection = relatedHeader.parents().firstOrNull { parent ->
                 parent.select(".owl-carousel article.post.dfx").isNotEmpty()
-            }
-            if (relatedSection == null) return emptyList()
+            } ?: return emptyList()
 
-            val articles = relatedSection.select(".owl-carousel article.post.dfx")
-            
-            for (el in articles) {
-                val title = el.selectFirst("h2.entry-title")?.text()?.trim()
-                if (title.isNullOrBlank()) continue
-
-                val hrefRaw = el.selectFirst("a.lnk-blk")?.attr("href")
-                if (hrefRaw.isNullOrBlank()) continue
+            relatedSection.select(".owl-carousel article.post.dfx").mapNotNull { el ->
+                val title = el.selectFirst("h2.entry-title")?.text()?.trim() ?: return@mapNotNull null
+                val hrefRaw = el.selectFirst("a.lnk-blk")?.attr("href") ?: return@mapNotNull null
                 val href = fixUrl(hrefRaw)
 
                 val posterRaw = el.selectFirst("img")?.attr("src") ?: ""
                 val poster = when {
-                    posterRaw.isEmpty()         -> null
+                    posterRaw.isEmpty() -> null
                     posterRaw.startsWith("http") -> posterRaw
-                    posterRaw.startsWith("//")   -> "https:$posterRaw"
-                    else                         -> posterRaw
+                    posterRaw.startsWith("//") -> "https:$posterRaw"
+                    else -> posterRaw
                 }
 
                 val rating = el.selectFirst("span.vote")?.text()?.replace("TMDB", "")?.trim()?.toDoubleOrNull()
-
-                val tvType = when {
-                    href.contains("/series/") -> TvType.TvSeries
-                    href.contains("/movies/") -> TvType.Movie
-                    else                      -> TvType.Movie
-                }
-                
+                val tvType = if (href.contains("/series/")) TvType.TvSeries else TvType.Movie
                 val mediaJson = Gson().toJson(ToonMedia(href, poster))
 
-                val res = newMovieSearchResponse(title, mediaJson, tvType) {
+                newMovieSearchResponse(title, mediaJson, tvType) {
                     this.posterUrl = poster
                     this.score = Score.from10(rating)
                 }
-                results.add(res)
             }
         } catch (e: Exception) {
+            emptyList()
         }
-        return results
     }
 
     override suspend fun load(url: String): LoadResponse {
         val media = try {
             Gson().fromJson(url, ToonMedia::class.java)
         } catch (e: Exception) {
-            ToonMedia(url, null)
+            ToonMedia(url, null) // Fallback for raw URLs passed directly
         }
-        
-        val actualUrl = media.url
-        val document   = app.get(actualUrl).document
 
-        val rawTitle   = document.selectFirst("header.entry-header > h1")
-            ?.text()?.replace(Regex("(?i)Watch Online"), "")?.trim() ?: ""
+        val actualUrl = media.url
+        val document = app.get(actualUrl).document
+
+        val rawTitle = document.selectFirst("header.entry-header > h1")?.text()?.replace(Regex("(?i)Watch Online"), "")?.trim() ?: ""
         val cleanTitle = cleanTitleText(rawTitle)
 
-        val posterRaw  = document.select("div.bghd > img").attr("src") ?: ""
+        val posterRaw = document.select("div.bghd > img").attr("src") ?: ""
         val fallbackPoster = if (posterRaw.startsWith("http")) posterRaw else "https:$posterRaw"
-        
         val poster = media.poster ?: fallbackPoster
-        
+
         val description = document.selectFirst("div.description > p")?.text()?.trim()
-        val isSeries   = actualUrl.contains("/series/")
+        val isSeries = actualUrl.contains("/series/")
         val year = document.selectFirst("span.year")?.text()?.trim()?.toIntOrNull()
 
-        val tmdbAssets  = fetchTmdbAssets(document, cleanTitle, isSeries, year)
-        val logoUrl     = tmdbAssets.logoUrl
-        val backdropUrl = tmdbAssets.backdropUrl
-
-        val finalDescription = if (!tmdbAssets.overview.isNullOrBlank()) {
-            tmdbAssets.overview
-        } else {
-            description
-        }
-
-        val displayTitle = rawTitle
+        // Fetch enhanced metadata from TMDB
+        val tmdbAssets = fetchTmdbAssets(document, cleanTitle, isSeries, year)
+        // Prefer TMDB overview over site description if available
+        val finalDescription = tmdbAssets.overview.takeIf { !it.isNullOrBlank() } ?: description
         val recommendations = parseRecommendations(document)
 
         return if (isSeries) {
-            loadSeries(
-                url, document, displayTitle, poster, finalDescription,
-                logoUrl, backdropUrl, year, recommendations
-            )
+            loadSeries(url, document, rawTitle, poster, finalDescription, tmdbAssets.logoUrl, tmdbAssets.backdropUrl, year, recommendations)
         } else {
-            newMovieLoadResponse(displayTitle, url, TvType.Movie, actualUrl) {
-                this.posterUrl           = poster
-                this.backgroundPosterUrl = backdropUrl ?: poster
-                this.plot                = finalDescription
-                this.year                = year
-                this.logoUrl             = logoUrl
-                this.recommendations     = recommendations
+            newMovieLoadResponse(rawTitle, url, TvType.Movie, actualUrl) {
+                this.posterUrl = poster
+                this.backgroundPosterUrl = tmdbAssets.backdropUrl ?: poster
+                this.plot = finalDescription
+                this.year = year
+                this.logoUrl = tmdbAssets.logoUrl
+                this.recommendations = recommendations
             }
         }
     }
 
+    /**
+     * Parses episodes for TV series, including handling dynamic season loading via AJAX.
+     */
     private suspend fun loadSeries(
         url: String,
         document: Document,
@@ -687,33 +472,21 @@ class ToonstreamProvider : MainAPI() {
         recommendations: List<SearchResponse> = emptyList()
     ): LoadResponse {
         val episodes = mutableListOf<Episode>()
+        // Identify available seasons
+        val seasonNumbers = document.select("a.season-btn").mapNotNull { it.attr("data-season").toIntOrNull() }.distinct().sorted()
 
-        val seasonElements = document.select("a.season-btn")
-        val seasonNumbers = mutableListOf<Int>()
-        for (el in seasonElements) {
-            val s = el.attr("data-season").toIntOrNull()
-            if (s != null && !seasonNumbers.contains(s)) {
-                seasonNumbers.add(s)
-            }
-        }
-        seasonNumbers.sort() 
-        
-        val media = try {
-            Gson().fromJson(url, ToonMedia::class.java)
-        } catch (e: Exception) {
-            ToonMedia(url, null)
-        }
+        val media = try { Gson().fromJson(url, ToonMedia::class.java) } catch (e: Exception) { ToonMedia(url, null) }
         val actualUrl = media.url
 
         for (season in seasonNumbers) {
+            // Attempt to load episodes for the season via WP admin-ajax
             val seasonDoc = try {
                 app.post(
                     "$mainUrl/wp-admin/admin-ajax.php",
                     data = mapOf(
                         "action" to "action_select_season",
                         "season" to season.toString(),
-                        "post"   to (document.selectFirst("a.season-btn[data-season='$season']")
-                            ?.attr("data-post") ?: "")
+                        "post" to (document.selectFirst("a.season-btn[data-season='$season']")?.attr("data-post") ?: "")
                     ),
                     headers = mapOf("X-Requested-With" to "XMLHttpRequest")
                 ).document
@@ -721,77 +494,64 @@ class ToonstreamProvider : MainAPI() {
                 Jsoup.parse("")
             }
 
+            // Fallback to direct URL if AJAX fails or returns empty
             val finalDoc = if (seasonDoc.select("article").isEmpty()) {
-                try { app.get("$actualUrl/season/$season").document }
-                catch (e: Exception) { seasonDoc }
+                try { app.get("$actualUrl/season/$season").document } catch (e: Exception) { seasonDoc }
             } else seasonDoc
 
             var epNum = 1
-            val episodeElements = finalDoc.select("article.post.episodes, article.post")
-            
-            for (ep in episodeElements) {
-                val epHref = ep.selectFirst("a.lnk-blk, a")?.attr("href")
-                if (epHref.isNullOrBlank()) continue
-                
+            finalDoc.select("article.post.episodes, article.post").forEach { ep ->
+                val epHref = ep.selectFirst("a.lnk-blk, a")?.attr("href") ?: return@forEach
                 val epPosterRaw = ep.selectFirst("img")?.attr("src")
-                val epPoster = if (epPosterRaw != null) {
-                    if (epPosterRaw.startsWith("http")) epPosterRaw else "https:$epPosterRaw"
-                } else null
-                
+                val epPoster = epPosterRaw?.let { if (it.startsWith("http")) it else "https:$it" }
                 val epName = ep.selectFirst("h5.entry-title1, h2.entry-title, h3.entry-title")?.text()?.trim() ?: "Episode"
 
-                val currentEpisodeNumber = epNum
-                epNum += 1
-
                 episodes.add(newEpisode(fixUrl(epHref)) {
-                    this.name      = epName
+                    this.name = epName
                     this.posterUrl = epPoster
-                    this.season    = season
-                    this.episode   = currentEpisodeNumber
+                    this.season = season
+                    this.episode = epNum++
                 })
             }
         }
 
+        // Secondary fallback if primary parsing yields no episodes
         if (episodes.isEmpty()) {
             val seasonCounters = mutableMapOf<Int, Int>()
-            val backupElements = document.select("#episode_by_temp article.post")
-            
-            for (ep in backupElements) {
-                val epHref = ep.selectFirst("a.lnk-blk, a")?.attr("href")
-                if (epHref.isNullOrBlank()) continue
-                
+            document.select("#episode_by_temp article.post").forEach { ep ->
+                val epHref = ep.selectFirst("a.lnk-blk, a")?.attr("href") ?: return@forEach
                 val epPosterRaw = ep.selectFirst("img")?.attr("src")
-                val epPoster = if (epPosterRaw != null) {
-                    if (epPosterRaw.startsWith("http")) epPosterRaw else "https:$epPosterRaw"
-                } else null
-                
+                val epPoster = epPosterRaw?.let { if (it.startsWith("http")) it else "https:$it" }
                 val epName = ep.selectFirst("h5.entry-title1")?.text()?.trim() ?: "Episode"
+                
                 val numEpi = ep.selectFirst("span.num-epi")?.text()?.trim()
                 val epSeason = numEpi?.substringBefore("x")?.toIntOrNull() ?: 1
 
-                val currentCount = seasonCounters[epSeason] ?: 0
-                val newCount = currentCount + 1
+                val newCount = (seasonCounters[epSeason] ?: 0) + 1
                 seasonCounters[epSeason] = newCount
 
                 episodes.add(newEpisode(fixUrl(epHref)) {
-                    this.name      = epName
+                    this.name = epName
                     this.posterUrl = epPoster
-                    this.season    = epSeason
-                    this.episode   = newCount
+                    this.season = epSeason
+                    this.episode = newCount
                 })
             }
         }
 
         return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
-            this.posterUrl           = poster
+            this.posterUrl = poster
             this.backgroundPosterUrl = backdropUrl ?: poster
-            this.plot                = description
-            this.year                = year
-            this.logoUrl             = logoUrl
-            this.recommendations     = recommendations
+            this.plot = description
+            this.year = year
+            this.logoUrl = logoUrl
+            this.recommendations = recommendations
         }
     }
 
+    /**
+     * Matches the provider URL with the appropriate extractor instance.
+     */
     private suspend fun invokeExtractor(
         url: String,
         referer: String,
@@ -799,42 +559,19 @@ class ToonstreamProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ) {
         when {
-            url.contains("zephyrflick", true) || url.contains("as-cdn", true) -> {
-                zephyrflick.getUrl(url, referer, subtitleCallback, callback)
-            }
-            url.contains("awstream", true) -> {
-                awsStream.getUrl(url, referer, subtitleCallback, callback)
-            }
-            url.contains("abyssplayer", true) || url.contains("playhydrax", true) -> {
-                abyss.getUrl(url, referer, subtitleCallback, callback)
-            }
-            url.contains("rubystm", true) || url.contains("streamruby", true) -> {
-                streamRuby.getUrl(url, referer, subtitleCallback, callback)
-            }
-            url.contains("cloudy.upns", true) -> {
-                cloudy.getUrl(url, referer, subtitleCallback, callback)
-            }
-            url.contains("upns", true) || url.contains("p2pplay", true) -> {
-                upnsPlayer.getUrl(url, referer, subtitleCallback, callback)
-            }
-            url.contains("gdmirrorbot.nl", true) -> {
-                gdMirrorbot.getUrl(url, referer, subtitleCallback, callback)
-            }
-            url.contains("filesforever", true) -> {
-                filesForever.getUrl(url, referer, subtitleCallback, callback)
-            }
-            url.contains("emturbovid", true) || url.contains("turboviplay", true) -> {
-                emTurboVid.getUrl(url, referer, subtitleCallback, callback)
-            }
-            url.contains("vidmoly", true) -> {
-                vidMolyNet.getUrl(url, referer, subtitleCallback, callback)
-            }
-            url.contains("blakite", true) -> {
-                blakite.getUrl(url, referer, subtitleCallback, callback)
-            }
-            else -> {
-                loadExtractor(url, referer, subtitleCallback, callback)
-            }
+            url.contains("zephyrflick", true) || url.contains("as-cdn", true) -> zephyrflick.getUrl(url, referer, subtitleCallback, callback)
+            url.contains("awstream", true) -> awsStream.getUrl(url, referer, subtitleCallback, callback)
+            url.contains("abyssplayer", true) || url.contains("playhydrax", true) -> abyss.getUrl(url, referer, subtitleCallback, callback)
+            url.contains("rubystm", true) || url.contains("streamruby", true) -> streamRuby.getUrl(url, referer, subtitleCallback, callback)
+            url.contains("cloudy.upns", true) -> cloudy.getUrl(url, referer, subtitleCallback, callback)
+            url.contains("upns", true) || url.contains("p2pplay", true) -> upnsPlayer.getUrl(url, referer, subtitleCallback, callback)
+            url.contains("gdmirrorbot.nl", true) -> gdMirrorbot.getUrl(url, referer, subtitleCallback, callback)
+            url.contains("filesforever", true) -> filesForever.getUrl(url, referer, subtitleCallback, callback)
+            url.contains("emturbovid", true) || url.contains("turboviplay", true) -> emTurboVid.getUrl(url, referer, subtitleCallback, callback)
+            url.contains("vidmoly", true) -> vidMolyNet.getUrl(url, referer, subtitleCallback, callback)
+            url.contains("blakite", true) -> blakite.getUrl(url, referer, subtitleCallback, callback)
+            // Fallback for generic extractors registered in Cloudstream
+            else -> loadExtractor(url, referer, subtitleCallback, callback)
         }
     }
 
@@ -847,13 +584,16 @@ class ToonstreamProvider : MainAPI() {
         val document = app.get(data).document
         var found = false
 
+        // 1. Extract streaming links embedded in iframes
         val iframeLinks = document.select("iframe[data-src], iframe[src]").mapNotNull { iframe ->
             val src = iframe.attr("data-src").ifBlank { iframe.attr("src") }.trim()
             if (src.isBlank() || src == "about:blank") return@mapNotNull null
+            // Ignore YouTube links as they are usually trailers
             if (src.contains("youtube.com", true) || src.contains("youtu.be", true)) return@mapNotNull null
             if (src.startsWith("http")) src else fixUrl(src)
         }
 
+        // Run extractors for iframe links concurrently
         coroutineScope {
             iframeLinks.forEach { link ->
                 launch {
@@ -867,16 +607,18 @@ class ToonstreamProvider : MainAPI() {
             }
         }
 
+        // 2. If no iframe links found (or as a fallback), look for standard anchor links to known providers
         if (!found) {
             val aLinks = document.select(
                 "a[href*=embed], a[href*=rubystm], a[href*=vidmoly], " +
-                    "a[href*=filesforever], a[href*=abyssplayer], " +
-                    "a[href*=emturbovid], a[href*=as-cdn]"
+                "a[href*=filesforever], a[href*=abyssplayer], " +
+                "a[href*=emturbovid], a[href*=as-cdn]"
             ).mapNotNull { a ->
                 val link = a.attr("href")
-                if (link.isBlank()) null else link
+                link.ifBlank { null }
             }
-            
+
+            // Run extractors for anchor links concurrently
             coroutineScope {
                 aLinks.forEach { link ->
                     launch {
@@ -890,7 +632,6 @@ class ToonstreamProvider : MainAPI() {
                 }
             }
         }
-
         return found
     }
 }
