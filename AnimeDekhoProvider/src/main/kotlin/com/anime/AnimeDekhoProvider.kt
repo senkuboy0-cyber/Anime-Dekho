@@ -6,8 +6,6 @@ import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.launch
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -559,20 +557,16 @@ open class AnimeDekhoProvider : MainAPI() {
         val headers = mapOf("Cookie" to "toronites_server=vidstream")
         val doc = app.get(media.url, headers = headers).document
         
-        // 1. Direct iframe processing using coroutines for faster extraction
-        coroutineScope {
-            doc.select("iframe.serversel[src]").map { it.attr("src") }.filter { it.isNotEmpty() }.forEach { serverUrl ->
-                launch {
-                    try {
-                        val innerDoc = app.get(serverUrl).document
-                        val innerIframeUrl = innerDoc.selectFirst("iframe[src]")?.attr("src")
-                        if (!innerIframeUrl.isNullOrEmpty()) {
-                            loadExtractor(innerIframeUrl, subtitleCallback, callback)
-                        }
-                    } catch (e: Exception) {
-                        // Ignore failure for individual server
-                    }
+        // 1. Direct iframe processing (Sequential)
+        doc.select("iframe.serversel[src]").map { it.attr("src") }.filter { it.isNotEmpty() }.forEach { serverUrl ->
+            try {
+                val innerDoc = app.get(serverUrl).document
+                val innerIframeUrl = innerDoc.selectFirst("iframe[src]")?.attr("src")
+                if (!innerIframeUrl.isNullOrEmpty()) {
+                    loadExtractor(innerIframeUrl, subtitleCallback, callback)
                 }
+            } catch (e: Exception) {
+                // Ignore failure for individual server
             }
         }
 
@@ -585,23 +579,19 @@ open class AnimeDekhoProvider : MainAPI() {
         if (term.isNullOrEmpty()) return false
 
         var success = false
-        // Extract multiple Trembed instances asynchronously
-        coroutineScope {
-            (0..10).forEach { i ->
-                launch {
-                    try {
-                        val iframeDoc = app.get("$mainUrl/?trdekho=$i&trid=$term&trtype=${media.mediaType}").document
-                        val iframeUrl = iframeDoc.selectFirst("iframe")?.attr("src")
-                        
-                        if (!iframeUrl.isNullOrEmpty()) {
-                            if (loadExtractor(iframeUrl, subtitleCallback, callback)) {
-                                success = true
-                            }
-                        }
-                    } catch (e: Exception) {
-                        // Ignore
+        // Extract multiple Trembed instances (Sequential)
+        (0..10).forEach { i ->
+            try {
+                val iframeDoc = app.get("$mainUrl/?trdekho=$i&trid=$term&trtype=${media.mediaType}").document
+                val iframeUrl = iframeDoc.selectFirst("iframe")?.attr("src")
+                
+                if (!iframeUrl.isNullOrEmpty()) {
+                    if (loadExtractor(iframeUrl, subtitleCallback, callback)) {
+                        success = true
                     }
                 }
+            } catch (e: Exception) {
+                // Ignore
             }
         }
         return success
