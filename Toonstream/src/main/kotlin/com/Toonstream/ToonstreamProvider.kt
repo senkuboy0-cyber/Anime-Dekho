@@ -584,72 +584,54 @@ class ToonstreamProvider : MainAPI() {
         val document = app.get(data).document
         var found = false
 
-        // Collect all potential extractor links from iframes and anchors
-        val allLinks = mutableSetOf<String>()
-
         // 1. Extract streaming links embedded in iframes
-        document.select("iframe[data-src], iframe[src]").forEach { iframe ->
+        val iframeLinks = document.select("iframe[data-src], iframe[src]").mapNotNull { iframe ->
             val src = iframe.attr("data-src").ifBlank { iframe.attr("src") }.trim()
-            if (src.isNotBlank() && src != "about:blank" && !src.contains("youtube.com", true) && !src.contains("youtu.be", true)) {
-                allLinks.add(if (src.startsWith("http")) src else fixUrl(src))
-            }
+            if (src.isBlank() || src == "about:blank") return@mapNotNull null
+            // Ignore YouTube links as they are usually trailers
+            if (src.contains("youtube.com", true) || src.contains("youtu.be", true)) return@mapNotNull null
+            if (src.startsWith("http")) src else fixUrl(src)
         }
 
-        // 2. Extract standard anchor links to known providers
-        document.select(
-            "a[href*=embed], a[href*=rubystm], a[href*=vidmoly], " +
-            "a[href*=filesforever], a[href*=abyssplayer], " +
-            "a[href*=emturbovid], a[href*=as-cdn]"
-        ).forEach { a ->
-            val link = a.attr("href").trim()
-            if (link.isNotBlank()) {
-                allLinks.add(if (link.startsWith("http")) link else fixUrl(link))
-            }
-        }
-
-        // Categorize links based on priority
-        val zephyrLinks = allLinks.filter { it.contains("zephyrflick", true) || it.contains("as-cdn", true) }
-        val vidMolyLinks = allLinks.filter { it.contains("vidmoly", true) }
-        val otherLinks = allLinks.filterNot { link ->
-            link.contains("zephyrflick", true) || link.contains("as-cdn", true) || link.contains("vidmoly", true)
-        }
-
-        // Priority 1: Execute Zephyrflick links sequentially
-        zephyrLinks.forEach { link ->
-            try {
-                invokeExtractor(link, data, subtitleCallback, callback)
-                found = true
-            } catch (e: Exception) {
-                Log.e("ToonStream", "Zephyrflick extractor failed for $link: ${e.message}")
-            }
-        }
-
-        // Priority 2: Execute VidMolyNet links sequentially
-        vidMolyLinks.forEach { link ->
-            try {
-                invokeExtractor(link, data, subtitleCallback, callback)
-                found = true
-            } catch (e: Exception) {
-                Log.e("ToonStream", "VidMolyNet extractor failed for $link: ${e.message}")
-            }
-        }
-
-        // Priority 3: Execute all remaining links concurrently (Parallel Processing)
-        if (otherLinks.isNotEmpty()) {
-            coroutineScope {
-                otherLinks.forEach { link ->
-                    launch {
-                        try {
-                            invokeExtractor(link, data, subtitleCallback, callback)
-                            found = true
-                        } catch (e: Exception) {
-                            Log.e("ToonStream", "Extractor failed for $link: ${e.message}")
-                        }
+        // Run extractors for iframe links concurrently
+        coroutineScope {
+            iframeLinks.forEach { link ->
+                launch {
+                    try {
+                        invokeExtractor(link, data, subtitleCallback, callback)
+                        found = true
+                    } catch (e: Exception) {
+                        Log.e("ToonStream", "extractor failed for $link: ${e.message}")
                     }
                 }
             }
         }
 
+        // 2. If no iframe links found (or as a fallback), look for standard anchor links to known providers
+        if (!found) {
+            val aLinks = document.select(
+                "a[href*=embed], a[href*=rubystm], a[href*=vidmoly], " +
+                "a[href*=filesforever], a[href*=abyssplayer], " +
+                "a[href*=emturbovid], a[href*=as-cdn]"
+            ).mapNotNull { a ->
+                val link = a.attr("href")
+                link.ifBlank { null }
+            }
+
+            // Run extractors for anchor links concurrently
+            coroutineScope {
+                aLinks.forEach { link ->
+                    launch {
+                        try {
+                            invokeExtractor(link, data, subtitleCallback, callback)
+                            found = true
+                        } catch (e: Exception) {
+                            Log.e("ToonStream", "extractor failed for $link: ${e.message}")
+                        }
+                    }
+                }
+            }
+        }
         return found
     }
 }
