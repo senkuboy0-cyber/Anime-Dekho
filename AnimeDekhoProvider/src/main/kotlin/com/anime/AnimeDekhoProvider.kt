@@ -487,6 +487,11 @@ open class AnimeDekhoProvider : MainAPI() {
         
         val tmdbDetails = fetchTmdbDetails(document, finalCleanTitle, isSeries, year)
 
+        // Fetch recommendations for both movies and series
+        val recommendations = document.select("div.swiper-wrapper article, ul.post-lst li article").mapNotNull {
+            it.toSearchResult()
+        }
+
         if (!isSeries) {
             return newMovieLoadResponse(rawTitle, url, TvType.Movie, Gson().toJson(Media(media.url, mediaType = 1))) {
                 this.posterUrl = poster
@@ -494,6 +499,7 @@ open class AnimeDekhoProvider : MainAPI() {
                 this.plot = plot
                 this.year = year
                 this.logoUrl = tmdbDetails.logo
+                this.recommendations = recommendations
             }
         }
 
@@ -544,16 +550,6 @@ open class AnimeDekhoProvider : MainAPI() {
                 this.posterUrl = ep.finalPoster
                 this.season = ep.season
                 this.episode = ep.calculatedEpNum
-            }
-        }
-
-        val recommendations = document.select("div.swiper-wrapper article").mapNotNull { recArticle ->
-            val recName = recArticle.selectFirst("h2")?.text() ?: return@mapNotNull null
-            val recHref = recArticle.selectFirst("a")?.attr("href") ?: return@mapNotNull null
-            val recPoster = recArticle.selectFirst("figure img")?.attr("src")
-            
-            newTvSeriesSearchResponse(recName, Gson().toJson(Media(recHref, recPoster, 0)), TvType.TvSeries) {
-                this.posterUrl = recPoster
             }
         }
 
