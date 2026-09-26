@@ -137,21 +137,20 @@ open class AnimeDekhoProvider : MainAPI() {
     }
 
     private fun extractRawTitle(title: String): String? {
-        val processed = title.replace(Regex("(?i)Watch Online "), "")
-            .replace(Regex("(?i)\\s+Anime\\s*$"), "")
-            .replace(Regex("(?i)\\s*Movie\\s*\\(.*Dubbed.*\\).*$"), "")
-            .substringBefore(" Movie in Hindi")
-            .substringBefore(" Series in Hindi")
-            .substringBefore(" in Hindi")
-            .substringBefore(" in Tamil")
-            .substringBefore(" in Telugu")
-            .substringBefore(" | AnimeDekho")
-            .substringBefore("| AnimeDekho")
-            .substringAfter("AnimeDekho - ")
-            .substringAfter("AnimeDekho – ")
-            .trim()
+        if (title.isBlank()) return null
+        var processed = title
+        processed = processed.replace(Regex("(?i)Watch Online"), "")
+        processed = processed.replace(Regex("(?i)\\|\\s*AnimeDekho"), "")
+        processed = processed.replace(Regex("(?i)AnimeDekho"), "")
+        processed = processed.replace(Regex("(?i)Movie\\s*\\(Hindi Dubbed\\)"), "")
+        processed = processed.replace(Regex("(?i)Movie in Hindi"), "")
+        processed = processed.replace(Regex("(?i)Series in Hindi"), "")
+        processed = processed.replace(Regex("(?i)in Hindi"), "")
+        processed = processed.replace(Regex("(?i)in Tamil"), "")
+        processed = processed.replace(Regex("(?i)in Telugu"), "")
+        processed = processed.trim(' ', '-', '–', '|')
 
-        return processed.takeIf { it.length > 2 && !it.equals("AnimeDekho", ignoreCase = true) && !it.startsWith("|") }
+        return processed.takeIf { it.isNotBlank() }
     }
 
     private suspend fun fetchYearViaAjax(movieUrl: String, pageHtml: String): Int? {
@@ -330,11 +329,11 @@ open class AnimeDekhoProvider : MainAPI() {
         val imgAlt = imgEl?.attr("alt")?.trim()
         val h2Text = this.selectFirst("h2.entry-title, header h2, h2")?.text()?.trim()
         
-        val title = when {
-            !imgAlt.isNullOrEmpty() && !imgAlt.contains("anime", true) && imgAlt.length > 2 -> imgAlt
-            !h2Text.isNullOrEmpty() && !h2Text.contains("AnimeDekho", true) && h2Text.length > 2 -> h2Text
-            else -> href.trimEnd('/').substringAfterLast("/").replace("-", " ").replaceFirstChar { it.uppercase() }
-        }
+        val rawTitle = h2Text.takeIf { !it.isNullOrBlank() }
+            ?: imgAlt.takeIf { !it.isNullOrBlank() }
+            ?: href.trimEnd('/').substringAfterLast("/").replace("-", " ").replaceFirstChar { it.uppercase() }
+            
+        val title = extractRawTitle(rawTitle) ?: rawTitle
         
         return newAnimeSearchResponse(title, Gson().toJson(Media(href, posterUrl)), TvType.Anime, false) {
             this.posterUrl = posterUrl
@@ -398,26 +397,51 @@ open class AnimeDekhoProvider : MainAPI() {
             return newMovieLoadResponse("Error", url, TvType.Movie, url) { this.posterUrl = media.poster }
         }
 
-        // --- Robust Title Extraction Sequence ---
-        val potentialTitles = listOfNotNull(
-            document.selectFirst("header.entry-header h1.entry-title")?.text(),
-            document.selectFirst("h1.entry-title")?.text(),
-            document.selectFirst("h1")?.text(),
-            document.selectFirst("meta[property=og:title]")?.attr("content"),
-            document.selectFirst("meta[name=twitter:title]")?.attr("content"),
-            document.selectFirst("title")?.text(),
-            Regex("\"headline\"\\s*:\\s*\"([^\"]+)\"").find(document.select("script[type=application/ld+json]").html())?.groupValues?.get(1),
-            document.selectFirst("div.post-thumbnail figure img, img")?.let { it.attr("alt").ifBlank { it.attr("title") } },
-            Regex("title\\s*:\\s*[\"']([^\"']+)[\"']").find(document.html())?.groupValues?.get(1),
-            document.select("nav.breadcrumb span, .breadcrumb span").lastOrNull()?.text(),
-            document.selectFirst("a[rel=tag]")?.text()
-        ).map { it.trim() }.filter { it.isNotBlank() }
+        var rawTitle: String? = null
+        val titleSelectors = listOf(
+            "header.entry-header h1.entry-title",
+            "h1.entry-title",
+            "h1",
+            "meta[property=og:title]",
+            "meta[name=twitter:title]"
+        )
 
-        val rawTitle = potentialTitles.firstNotNullOfOrNull { title ->
-            extractRawTitle(title)?.takeIf { it.isNotBlank() } ?: title.takeIf { it.isNotBlank() }
-        } ?: media.url.trimEnd('/').substringAfterLast("/").replace("-", " ").replaceFirstChar { it.uppercase() }
+        for (selector in titleSelectors) {
+            if (rawTitle.isNullOrBlank()) {
+                val el = document.selectFirst(selector)
+                rawTitle = if (el?.hasAttr("content") == true) el.attr("content") else el?.text()
+            }
+        }
 
-        val finalCleanTitle = cleanTitleText(rawTitle)
+        if (rawTitle.isNullOrBlank()) {
+            val scriptData = document.select("script[type=application/ld+json]").html()
+            rawTitle = Regex("\"headline\"\\s*:\\s*\"([^\"]+)\"").find(scriptData)?.groupValues?.get(1)
+        }
+
+        if (rawTitle.isNullOrBlank()) {
+            val img = document.selectFirst("div.post-thumbnail figure img, article img")
+            rawTitle = img?.attr("alt")?.takeIf { it.isNotBlank() } ?: img?.attr("title")
+        }
+
+        if (rawTitle.isNullOrBlank()) {
+            rawTitle = Regex("title\\s*:\\s*[\"']([^\"']+)[\"']").find(document.html())?.groupValues?.get(1)
+        }
+
+        if (rawTitle.isNullOrBlank()) {
+            rawTitle = document.select("nav.breadcrumb span, .breadcrumb span").lastOrNull()?.text()
+        }
+
+        if (rawTitle.isNullOrBlank()) {
+            rawTitle = document.selectFirst("a[rel=tag]")?.text()
+        }
+
+        if (rawTitle.isNullOrBlank()) {
+            rawTitle = document.selectFirst("title")?.text()
+        }
+
+        val cleanedRawTitle = extractRawTitle(rawTitle ?: "") ?: media.url.trimEnd('/').substringAfterLast("/").replace("-", " ").replaceFirstChar { it.uppercase() }
+        val finalCleanTitle = cleanTitleText(cleanedRawTitle)
+        
         val poster = fixUrlNull(document.selectFirst("div.post-thumbnail figure img")?.attr("src")) ?: media.poster
         val plot = document.selectFirst("div.entry-content p")?.text()?.trim() 
             ?: document.selectFirst("meta[name=twitter:description]")?.attr("content")
@@ -429,13 +453,12 @@ open class AnimeDekhoProvider : MainAPI() {
         val isSeries = lst.isNotEmpty()
         val tmdbDetails = fetchTmdbDetails(document, finalCleanTitle, isSeries, year)
 
-        // Parse Recommendations for both Movie & TV Series
-        val recommendations = document.select("div.swiper-wrapper article, section.cl1 ul.post-lst li article, ul.post-lst article").mapNotNull { 
+        val recommendations = document.select("section.cl1 article, ul.post-lst article, div.swiper-wrapper article").mapNotNull { 
             it.toSearchResult() 
         }
 
         if (!isSeries) {
-            return newMovieLoadResponse(rawTitle, url, TvType.Movie, Gson().toJson(Media(media.url, mediaType = 1))) {
+            return newMovieLoadResponse(finalCleanTitle, url, TvType.Movie, Gson().toJson(Media(media.url, mediaType = 1))) {
                 this.posterUrl = poster
                 this.backgroundPosterUrl = tmdbDetails.backdrop ?: poster
                 this.plot = plot
@@ -445,7 +468,6 @@ open class AnimeDekhoProvider : MainAPI() {
             }
         }
 
-        // --- Phase 1: Parse Raw Site Episodes ---
         val rawEpisodes = lst.mapNotNull { li ->
             val aEl = li.selectFirst("a") ?: return@mapNotNull null
             val name = li.selectFirst("h3.title")?.ownText() ?: "null"
@@ -456,7 +478,6 @@ open class AnimeDekhoProvider : MainAPI() {
             SiteEpisode(href, name, epPoster, season)
         }
 
-        // --- Phase 2: Fix Episode Numbering (1-based per season) ---
         val seasonCounters = mutableMapOf<Int?, Int>()
         rawEpisodes.forEach { ep ->
             val count = (seasonCounters[ep.season] ?: 0) + 1
@@ -464,7 +485,6 @@ open class AnimeDekhoProvider : MainAPI() {
             ep.calculatedEpNum = count
         }
 
-        // --- Phase 3: Smart TMDB Episode Fetching ---
         if (tmdbDetails.id != null && tmdbDetails.type == "tv") {
             rawEpisodes.groupBy { it.season }.forEach { (seasonNum, eps) ->
                 if (seasonNum != null && seasonNum != 0 && eps.none { it.rawName.contains("/") }) {
@@ -485,7 +505,6 @@ open class AnimeDekhoProvider : MainAPI() {
             }
         }
 
-        // --- Phase 4: Build Cloudstream Episodes ---
         val episodes = rawEpisodes.map { ep ->
             newEpisode(Gson().toJson(Media(ep.href, mediaType = 2))) {
                 this.name = ep.finalName
@@ -495,7 +514,7 @@ open class AnimeDekhoProvider : MainAPI() {
             }
         }
 
-        return newTvSeriesLoadResponse(rawTitle, url, TvType.TvSeries, episodes) {
+        return newTvSeriesLoadResponse(finalCleanTitle, url, TvType.TvSeries, episodes) {
             this.posterUrl = poster
             this.backgroundPosterUrl = tmdbDetails.backdrop ?: poster
             this.plot = plot
@@ -505,7 +524,6 @@ open class AnimeDekhoProvider : MainAPI() {
         }
     }
 
-    // --- Load Links (Video Extraction) ---
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -521,7 +539,6 @@ open class AnimeDekhoProvider : MainAPI() {
         val headers = mapOf("Cookie" to "toronites_server=vidstream")
         val doc = app.get(media.url, headers = headers).document
         
-        // 1. Direct iframe processing (Sequential)
         doc.select("iframe.serversel[src]").map { it.attr("src") }.filter { it.isNotEmpty() }.forEach { serverUrl ->
             try {
                 val innerDoc = app.get(serverUrl).document
@@ -530,11 +547,10 @@ open class AnimeDekhoProvider : MainAPI() {
                     loadExtractor(innerIframeUrl, subtitleCallback, callback)
                 }
             } catch (e: Exception) {
-                // Ignore failure for individual server
+                // Ignore
             }
         }
 
-        // 2. Fallback processing for dynamic/AJAX server iframes
         val bodyClass = try {
             app.get(media.url).document.selectFirst("body")?.attr("class")
         } catch (e: Exception) { null }
@@ -543,7 +559,6 @@ open class AnimeDekhoProvider : MainAPI() {
         if (term.isNullOrEmpty()) return false
 
         var success = false
-        // Extract multiple Trembed instances (Sequential)
         (0..10).forEach { i ->
             try {
                 val iframeDoc = app.get("$mainUrl/?trdekho=$i&trid=$term&trtype=${media.mediaType}").document
