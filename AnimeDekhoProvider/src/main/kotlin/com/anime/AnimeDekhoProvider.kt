@@ -6,25 +6,31 @@ import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import java.util.HashMap
-import java.util.ArrayList
+import java.net.URLEncoder
+import kotlin.math.abs
 
-// ─── TMDB Data Classes ───
+// --- TMDB Data Classes ---
+// Maps the JSON response from TMDB API to Kotlin data objects
 data class TmdbImages(
-    @JsonProperty("logos") val logos: ArrayList<TmdbImage>? = null,
-    @JsonProperty("backdrops") val backdrops: ArrayList<TmdbImage>? = null
+    @JsonProperty("logos") val logos: List<TmdbImage>? = null,
+    @JsonProperty("backdrops") val backdrops: List<TmdbImage>? = null
 )
+
 data class TmdbImage(
     @JsonProperty("file_path") val filePath: String? = null,
-    @JsonProperty("iso_639_1") val lang: String?     = null
+    @JsonProperty("iso_639_1") val lang: String? = null
 )
+
 data class TmdbFind(
-    @JsonProperty("movie_results") val movies: ArrayList<TmdbResult>? = null,
-    @JsonProperty("tv_results")    val tvShows: ArrayList<TmdbResult>? = null
+    @JsonProperty("movie_results") val movies: List<TmdbResult>? = null,
+    @JsonProperty("tv_results") val tvShows: List<TmdbResult>? = null
 )
+
 data class TmdbResult(
     @JsonProperty("id") val id: Int? = null,
     @JsonProperty("media_type") val mediaType: String? = null,
@@ -32,26 +38,32 @@ data class TmdbResult(
     @JsonProperty("name") val name: String? = null,
     @JsonProperty("release_date") val releaseDate: String? = null,
     @JsonProperty("first_air_date") val firstAirDate: String? = null,
-    @JsonProperty("genre_ids") val genreIds: ArrayList<Int>? = null
+    @JsonProperty("genre_ids") val genreIds: List<Int>? = null
 )
+
 data class TmdbSearch(
-    @JsonProperty("results") val results: ArrayList<TmdbResult>? = null
+    @JsonProperty("results") val results: List<TmdbResult>? = null
 )
+
 data class TmdbSeason(
-    @JsonProperty("episodes") val episodes: ArrayList<TmdbEpisode>? = null
+    @JsonProperty("episodes") val episodes: List<TmdbEpisode>? = null
 )
+
 data class TmdbEpisode(
     @JsonProperty("episode_number") val episodeNumber: Int? = null,
     @JsonProperty("name") val name: String? = null,
     @JsonProperty("still_path") val stillPath: String? = null
 )
+
+// Holds the final extracted TMDB details for UI population
 data class TmdbDetails(
-    val id: Int?, 
-    val type: String?, 
-    val logo: String?, 
+    val id: Int?,
+    val type: String?,
+    val logo: String?,
     val backdrop: String?
 )
 
+// Represents an episode parsed from the site before TMDB metadata is applied
 data class SiteEpisode(
     val href: String,
     val rawName: String,
@@ -61,14 +73,13 @@ data class SiteEpisode(
     var finalName: String = rawName,
     var finalPoster: String? = poster
 )
-// ─────────────────────────
 
 open class AnimeDekhoProvider : MainAPI() {
-    override var mainUrl             = "https://animedekho.app"
-    override var name                = "Anime Dekho"
-    override val hasMainPage         = true
-    override var lang                = "hi"
-    override val hasDownloadSupport  = true
+    override var mainUrl = "https://animedekho.app"
+    override var name = "Anime Dekho"
+    override val hasMainPage = true
+    override var lang = "hi"
+    override val hasDownloadSupport = true
 
     override val supportedTypes = setOf(
         TvType.Cartoon,
@@ -77,113 +88,85 @@ open class AnimeDekhoProvider : MainAPI() {
         TvType.Movie,
     )
 
-    // ─── TMDB API Features ──────────────────────────────────────────
+    // --- TMDB API Constants ---
     private val TMDB_API = "https://api.themoviedb.org/3"
     private val TMDB_KEY = "1865f43a0549ca50d341dd9ab8b29f49"
     private val TMDB_IMG = "https://image.tmdb.org/t/p/original"
 
-    // ─── Safe Regex Declarations ───
-    private val epRegex1 = Regex("(?i)\\s+\\d+[x×]\\d+.*")
-    private val epRegex2 = Regex("(?i)\\s+Episode\\s+\\d+.*")
-    private val seasonRegex = Regex("(?i)\\s+Season\\s+\\d+.*")
-    private val fanDubRegex1 = Regex("(?i)\\s*fan\\s*dub.*")
-    private val fanDubRegex2 = Regex("(?i)\\s*fandub.*")
     private val normalizeRegex = Regex("[^a-zA-Z0-9]")
 
+    /**
+     * Extracts the release year from a TMDB result object.
+     */
     private fun getResultYear(result: TmdbResult): Int? {
-        var dateString = result.releaseDate
-        if (dateString == null) {
-            dateString = result.firstAirDate
-        }
-        
-        if (dateString != null && dateString.contains("-")) {
-            val yearString = dateString.substringBefore("-")
-            return yearString.toIntOrNull()
-        }
-        return null
+        val dateString = result.releaseDate ?: result.firstAirDate
+        return dateString?.substringBefore("-")?.toIntOrNull()
     }
 
+    /**
+     * Checks if the TMDB year matches the site year with a +/- 1 year tolerance.
+     */
     private fun yearMatches(tmdbYear: Int?, siteYear: Int?): Boolean {
         if (siteYear == null || tmdbYear == null) return true
-        val diff = tmdbYear - siteYear
-        return (diff == 0 || diff == 1 || diff == -1)
+        return abs(tmdbYear - siteYear) <= 1
     }
 
+    /**
+     * Selects the most accurate TMDB result from a list of candidates.
+     */
     private fun pickBestResult(candidates: List<TmdbResult>, siteYear: Int?): TmdbResult? {
         if (candidates.isEmpty()) return null
-
         if (siteYear != null) {
-            val yearMatched = ArrayList<TmdbResult>()
-            for (i in 0 until candidates.size) {
-                val candidate = candidates.get(i)
-                if (yearMatches(getResultYear(candidate), siteYear)) {
-                    yearMatched.add(candidate)
-                }
-            }
-
-            if (yearMatched.size > 0) {
-                if (yearMatched.size == 1) {
-                    return yearMatched.get(0)
-                }
-                
-                for (i in 0 until yearMatched.size) {
-                    val match = yearMatched.get(i)
-                    val genres = match.genreIds
-                    if (genres != null) {
-                        for (j in 0 until genres.size) {
-                            if (genres.get(j) == 16) {
-                                return match
-                            }
-                        }
-                    }
-                }
-                
-                return yearMatched.get(0)
+            val matched = candidates.filter { yearMatches(getResultYear(it), siteYear) }
+            if (matched.isNotEmpty()) {
+                if (matched.size == 1) return matched.first()
+                // Prefer animation genre (ID 16) if multiple results have the same year
+                return matched.firstOrNull { it.genreIds?.contains(16) == true } ?: matched.first()
             }
         }
-
-        return candidates.get(0)
+        return candidates.first()
     }
 
+    /**
+     * Cleans titles by removing excess keywords and episode/season markers.
+     */
     private fun cleanTitleText(title: String): String {
-        var clean = title.replace(Regex("Watch Online", RegexOption.IGNORE_CASE), "")
-
-        clean = clean.replace(epRegex1, "")
-        clean = clean.replace(epRegex2, "")
-        clean = clean.replace(seasonRegex, "")
-        clean = clean.replace(fanDubRegex1, "")
-        clean = clean.replace(fanDubRegex2, "")
-
-        clean = clean.substringBefore("(")
-        clean = clean.substringBefore("[")
-
-        return clean.trim()
+        return title.replace(Regex("(?i)Watch Online"), "")
+            .replace(Regex("(?i)\\s+\\d+[x×]\\d+.*"), "")
+            .replace(Regex("(?i)\\s+Episode\\s+\\d+.*"), "")
+            .replace(Regex("(?i)\\s+Season\\s+\\d+.*"), "")
+            .replace(Regex("(?i)\\s*fan\\s*dub.*"), "")
+            .replace(Regex("(?i)\\s*fandub.*"), "")
+            .substringBefore("(")
+            .substringBefore("[")
+            .trim()
     }
 
+    /**
+     * Safely encodes the URI string for network requests.
+     */
     private fun encodeUri(text: String): String {
-        return text.replace("%", "%25")
-            .replace(" ", "%20")
-            .replace("#", "%23")
-            .replace("&", "%26")
-            .replace("?", "%3F")
-            .replace("=", "%3D")
-            .replace(":", "%3A")
-            .replace("/", "%2F")
-            .replace("'", "%27")
-            .replace("\"", "%22")
-            .replace(",", "%2C")
+        return try {
+            URLEncoder.encode(text, "UTF-8")
+        } catch (e: Exception) {
+            text.replace(" ", "%20")
+        }
     }
 
+    /**
+     * Normalizes a title to alphanumeric lowercase for strict comparison.
+     */
     private fun normalizeTitle(s: String?): String {
-        if (s == null) return ""
-        return s.replace(normalizeRegex, "").lowercase()
+        return s?.replace(normalizeRegex, "")?.lowercase() ?: ""
     }
 
+    /**
+     * Strips site-specific branding and extraneous text from the raw title.
+     */
     private fun extractRawTitle(title: String): String? {
-        val processed = title
-            .replace(Regex("Watch Online ", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("\\s+Anime\\s*$", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("\\s*Movie\\s*\\(.*Dubbed.*\\).*$", RegexOption.IGNORE_CASE), "")
+        val processed = title.replace(Regex("(?i)Watch Online "), "")
+            .replace(Regex("(?i)\\s+Anime\\s*$"), "")
+            .replace(Regex("(?i)\\s*Movie\\s*\\(.*Dubbed.*\\).*$"), "")
             .substringBefore(" Movie in Hindi")
             .substringBefore(" Series in Hindi")
             .substringBefore(" in Hindi")
@@ -194,259 +177,110 @@ open class AnimeDekhoProvider : MainAPI() {
             .substringAfter("AnimeDekho - ")
             .substringAfter("AnimeDekho – ")
             .trim()
-            
-        if (processed.isNotEmpty() && processed.length > 2 && !processed.equals("AnimeDekho", ignoreCase = true) && !processed.startsWith("|")) {
-            return processed
-        }
-        return null
+
+        return processed.takeIf { it.length > 2 && !it.equals("AnimeDekho", ignoreCase = true) && !it.startsWith("|") }
     }
 
+    /**
+     * Fetches the release year via site's internal AJAX API using the nonce.
+     */
     private suspend fun fetchYearViaAjax(movieUrl: String, pageHtml: String): Int? {
         return try {
-            val nonceMatch = Regex("\"nonce\"\\s*:\\s*\"([^\"]+)\"").find(pageHtml)
-            if (nonceMatch == null) return null
+            val nonce = Regex("\"nonce\"\\s*:\\s*\"([^\"]+)\"").find(pageHtml)?.groupValues?.get(1) ?: return null
+            val slug = movieUrl.trimEnd('/').substringAfterLast("/")
+            val searchTerm = slug.replace(Regex("-(hin|hindi|dubbed|dub|sub)$", ignoreCase = true), "")
+                .replace("-", " ")
+                .trim()
             
-            val nonce = nonceMatch.groupValues.get(1)
-            var slug = movieUrl.trimEnd('/')
-            val lastSlashIndex = slug.lastIndexOf("/")
-            if (lastSlashIndex != -1) {
-                slug = slug.substring(lastSlashIndex + 1)
-            }
-            
-            val searchTerm = slug.replace(Regex("-(hin|hindi|dubbed|dub|sub)$", RegexOption.IGNORE_CASE), "")
-                                 .replace("-", " ")
-                                 .trim()
-                                 
-            var type = "movies"
-            if (movieUrl.contains("series")) {
-                type = "series"
-            }
-
-            val vars = "{\"_wpsearch\":\"" + nonce + "\",\"search\":\"" + searchTerm + "\",\"type\":\"" + type + "\",\"genres\":[],\"years\":[],\"sort\":1,\"page\":1}"
+            val type = if (movieUrl.contains("series")) "series" else "movies"
+            val vars = "{\"_wpsearch\":\"$nonce\",\"search\":\"$searchTerm\",\"type\":\"$type\",\"genres\":[],\"years\":[],\"sort\":1,\"page\":1}"
 
             val response = app.post(
                 "$mainUrl/wp-admin/admin-ajax.php",
                 data = mapOf("action" to "action_search", "vars" to vars),
                 headers = mapOf(
-                    "Content-Type"     to "application/x-www-form-urlencoded",
-                    "X-WP-Nonce"       to nonce,
+                    "Content-Type" to "application/x-www-form-urlencoded",
+                    "X-WP-Nonce" to nonce,
                     "X-Requested-With" to "XMLHttpRequest",
-                    "Referer"          to movieUrl
+                    "Referer" to movieUrl
                 )
             ).text
 
             val json = parseJson<AjaxResponse>(response)
-            val yearMatch = Regex("<span class=\"year\">(\\d{4})</span>").find(json.html)
-            if (yearMatch != null) {
-                return yearMatch.groupValues.get(1).toIntOrNull()
-            }
-            return null
+            Regex("<span class=\"year\">(\\d{4})</span>").find(json.html)?.groupValues?.get(1)?.toIntOrNull()
         } catch (e: Exception) {
             null
         }
     }
 
+    /**
+     * Fetches enriched metadata (Logo, Backdrop) from TMDB API.
+     */
     private suspend fun fetchTmdbDetails(document: Document, title: String, isSeries: Boolean, year: Int?): TmdbDetails {
         return try {
-            var tmdbId: Int? = null
-            var actualMediaType = "movie"
-            if (isSeries) {
-                actualMediaType = "tv"
-            }
-
             val safeTitle = encodeUri(title)
-
-            val searchRes = app.get("$TMDB_API/search/multi?api_key=$TMDB_KEY&query=$safeTitle")
-                .parsedSafe<TmdbSearch>()
-
-            val validResults = ArrayList<TmdbResult>()
-            if (searchRes != null && searchRes.results != null) {
-                for (i in 0 until searchRes.results.size) {
-                    val res = searchRes.results.get(i)
-                    if (res.mediaType == "movie" || res.mediaType == "tv") {
-                        validResults.add(res)
-                    }
-                }
-            }
+            val searchRes = app.get("$TMDB_API/search/multi?api_key=$TMDB_KEY&query=$safeTitle").parsedSafe<TmdbSearch>()
             
+            val validResults = searchRes?.results?.filter { it.mediaType == "movie" || it.mediaType == "tv" } ?: emptyList()
             val normTitle = normalizeTitle(title)
 
-            val exactCandidates = ArrayList<TmdbResult>()
-            for (i in 0 until validResults.size) {
-                val res = validResults.get(i)
-                if (normalizeTitle(res.title) == normTitle || normalizeTitle(res.name) == normTitle) {
-                    exactCandidates.add(res)
+            // Step 1: Exact Match
+            val exactCandidates = validResults.filter { normalizeTitle(it.title ?: it.name) == normTitle }
+            var bestMatch = pickBestResult(exactCandidates, year)
+
+            // Step 2: Starts-with Match
+            if (bestMatch == null && normTitle.length >= 6) {
+                val startsWithCandidates = validResults.filter {
+                    val tn = normalizeTitle(it.title ?: it.name)
+                    tn.isNotEmpty() && tn.startsWith(normTitle)
                 }
+                bestMatch = pickBestResult(startsWithCandidates, year)
             }
 
-            val exactMatch = pickBestResult(exactCandidates, year)
+            var tmdbId = bestMatch?.id
+            var actualMediaType = bestMatch?.mediaType ?: if (isSeries) "tv" else "movie"
 
-            if (exactMatch != null) {
-                tmdbId = exactMatch.id
-                if (exactMatch.mediaType != null) {
-                    actualMediaType = exactMatch.mediaType
-                }
-            } else {
-                val startsWithCandidates = ArrayList<TmdbResult>()
-                if (normTitle.length >= 6) {
-                    for (i in 0 until validResults.size) {
-                        val res = validResults.get(i)
-                        var tmdbNorm = ""
-                        if (res.title != null) {
-                            tmdbNorm = normalizeTitle(res.title)
-                        } else if (res.name != null) {
-                            tmdbNorm = normalizeTitle(res.name)
-                        }
-                        
-                        if (tmdbNorm.isNotEmpty() && tmdbNorm.startsWith(normTitle)) {
-                            startsWithCandidates.add(res)
-                        }
-                    }
-                }
+            // Step 3: IMDB ID Fallback from DOM
+            if (tmdbId == null) {
+                val imdbId = document.select("a[href*='imdb.com/title']").mapNotNull { link ->
+                    val possibleId = link.attr("href").substringAfter("title/").substringBefore("/")
+                    if (possibleId.startsWith("tt")) possibleId else null
+                }.firstOrNull()
 
-                val startsWithMatch = pickBestResult(startsWithCandidates, year)
-
-                if (startsWithMatch != null) {
-                    tmdbId = startsWithMatch.id
-                    if (startsWithMatch.mediaType != null) {
-                        actualMediaType = startsWithMatch.mediaType
-                    }
-                } else {
-                    var imdbId: String? = null
-                    val imdbLinks = document.select("a[href*='imdb.com/title']")
-                    for (i in 0 until imdbLinks.size) {
-                        val link = imdbLinks.get(i)
-                        val href = link.attr("href")
-                        if (href.contains("title/")) {
-                            val afterTitle = href.substringAfter("title/")
-                            val possibleId = afterTitle.substringBefore("/")
-                            if (possibleId.startsWith("tt")) {
-                                imdbId = possibleId
-                                break
-                            }
-                        }
-                    }
-
-                    if (imdbId != null) {
-                        val findRes = app.get("$TMDB_API/find/$imdbId?api_key=$TMDB_KEY&external_source=imdb_id")
-                            .parsedSafe<TmdbFind>()
-                            
-                        if (findRes != null) {
-                            var tvId: Int? = null
-                            if (findRes.tvShows != null && findRes.tvShows.size > 0) {
-                                tvId = findRes.tvShows.get(0).id
-                            }
-                            
-                            var movieId: Int? = null
-                            if (findRes.movies != null && findRes.movies.size > 0) {
-                                movieId = findRes.movies.get(0).id
-                            }
-
-                            if (isSeries) {
-                                if (tvId != null) { 
-                                    tmdbId = tvId
-                                    actualMediaType = "tv"    
-                                } else if (movieId != null) { 
-                                    tmdbId = movieId
-                                    actualMediaType = "movie" 
-                                }
-                            } else {
-                                if (movieId != null) { 
-                                    tmdbId = movieId
-                                    actualMediaType = "movie" 
-                                } else if (tvId != null) { 
-                                    tmdbId = tvId
-                                    actualMediaType = "tv"    
-                                }
-                            }
-                        }
+                if (imdbId != null) {
+                    val findRes = app.get("$TMDB_API/find/$imdbId?api_key=$TMDB_KEY&external_source=imdb_id").parsedSafe<TmdbFind>()
+                    val match = if (isSeries) findRes?.tvShows?.firstOrNull() ?: findRes?.movies?.firstOrNull()
+                                else findRes?.movies?.firstOrNull() ?: findRes?.tvShows?.firstOrNull()
+                    
+                    if (match != null) {
+                        tmdbId = match.id
+                        actualMediaType = match.mediaType ?: actualMediaType
                     }
                 }
             }
 
             if (tmdbId == null) return TmdbDetails(null, null, null, null)
 
-            val images = app.get(
-                "$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY"
-            ).parsedSafe<TmdbImages>()
-
+            // Fetch Images based on matched TMDB ID
+            val images = app.get("$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY").parsedSafe<TmdbImages>()
             var logoUrl: String? = null
             var backdropUrl: String? = null
 
             if (images != null) {
-                if (images.logos != null) {
-                    val validLogos = ArrayList<TmdbImage>()
-                    for (i in 0 until images.logos.size) {
-                        val logo = images.logos.get(i)
-                        var path = logo.filePath
-                        if (path == null) path = ""
-                        
-                        if (!path.endsWith(".svg") && !path.endsWith(".SVG")) {
-                            validLogos.add(logo)
-                        }
-                    }
-                    
-                    var bestLogo: TmdbImage? = null
-                    for (i in 0 until validLogos.size) {
-                        val logo = validLogos.get(i)
-                        if (logo.lang == "en") {
-                            bestLogo = logo
-                            break
-                        }
-                    }
-                    if (bestLogo == null) {
-                        for (i in 0 until validLogos.size) {
-                            val logo = validLogos.get(i)
-                            if (logo.lang == null) {
-                                bestLogo = logo
-                                break
-                            }
-                        }
-                    }
-                    if (bestLogo == null) {
-                        for (i in 0 until validLogos.size) {
-                            val logo = validLogos.get(i)
-                            if (logo.lang == "ja") {
-                                bestLogo = logo
-                                break
-                            }
-                        }
-                    }
-                    if (bestLogo == null && validLogos.size > 0) {
-                        bestLogo = validLogos.get(0)
-                    }
-                    
-                    if (bestLogo != null && bestLogo.filePath != null) {
-                        logoUrl = "$TMDB_IMG${bestLogo.filePath}"
-                    }
-                }
-                
-                if (images.backdrops != null) {
-                    var bestBackdrop: TmdbImage? = null
-                    for (i in 0 until images.backdrops.size) {
-                        val backdrop = images.backdrops.get(i)
-                        if (backdrop.lang == null) {
-                            bestBackdrop = backdrop
-                            break
-                        }
-                    }
-                    if (bestBackdrop == null) {
-                        for (i in 0 until images.backdrops.size) {
-                            val backdrop = images.backdrops.get(i)
-                            if (backdrop.lang == "en") {
-                                bestBackdrop = backdrop
-                                break
-                            }
-                        }
-                    }
-                    if (bestBackdrop == null && images.backdrops.size > 0) {
-                        bestBackdrop = images.backdrops.get(0)
-                    }
-                    
-                    if (bestBackdrop != null && bestBackdrop.filePath != null) {
-                        backdropUrl = "$TMDB_IMG${bestBackdrop.filePath}"
-                    }
-                }
+                // Parse Logo
+                val validLogos = images.logos?.filter { it.filePath?.endsWith(".svg", ignoreCase = true) != true } ?: emptyList()
+                val bestLogo = validLogos.firstOrNull { it.lang == "en" }
+                    ?: validLogos.firstOrNull { it.lang == null }
+                    ?: validLogos.firstOrNull { it.lang == "ja" }
+                    ?: validLogos.firstOrNull()
+                bestLogo?.filePath?.let { logoUrl = "$TMDB_IMG$it" }
+
+                // Parse Backdrop
+                val backdrops = images.backdrops ?: emptyList()
+                val bestBackdrop = backdrops.firstOrNull { it.lang == null }
+                    ?: backdrops.firstOrNull { it.lang == "en" }
+                    ?: backdrops.firstOrNull()
+                bestBackdrop?.filePath?.let { backdropUrl = "$TMDB_IMG$it" }
             }
 
             TmdbDetails(tmdbId, actualMediaType, logoUrl, backdropUrl)
@@ -459,166 +293,89 @@ open class AnimeDekhoProvider : MainAPI() {
         return "{\"taxonomy\":\"$taxonomy\",\"search\":\"$search\",\"term\":\"$term\",\"type\":\"$type\"}"
     }
 
+    // --- Main Page Configuration ---
     override val mainPage = mainPageOf(
-        mainPageJson("none", "none", "none", "series")          to "Series",
-        mainPageJson("none", "none", "none", "movie")           to "Movies",
-        mainPageJson("category", "none", "anime", "none")       to "Anime",
-        mainPageJson("category", "none", "cartoon", "none")     to "Cartoon",
-        mainPageJson("category", "none", "hindi-dub", "none")   to "Hindi Dub",
-        mainPageJson("category", "none", "tamil", "none")       to "Tamil",
-        mainPageJson("category", "none", "telugu", "none")      to "Telugu"
+        mainPageJson("none", "none", "none", "series")        to "Series",
+        mainPageJson("none", "none", "none", "movie")         to "Movies",
+        mainPageJson("category", "none", "anime", "none")     to "Anime",
+        mainPageJson("category", "none", "cartoon", "none")   to "Cartoon",
+        mainPageJson("category", "none", "hindi-dub", "none") to "Hindi Dub",
+        mainPageJson("category", "none", "tamil", "none")     to "Tamil",
+        mainPageJson("category", "none", "telugu", "none")    to "Telugu"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        var isSeries = false
-        var isMovie = false
-        
-        if (request.data.contains("type\":\"series")) {
-            isSeries = true
-        }
-        if (request.data.contains("type\":\"movie")) {
-            isMovie = true
-        }
-        
+        val isSeries = request.data.contains("type\":\"series")
+        val isMovie = request.data.contains("type\":\"movie")
         val isCategory = !isSeries && !isMovie
 
         if (isCategory) {
-            val termMatch = Regex("\"term\":\"([^\"]+)\"").find(request.data)
-            var term = ""
-            if (termMatch != null) {
-                term = termMatch.groupValues.get(1)
-            }
+            val term = Regex("\"term\":\"([^\"]+)\"").find(request.data)?.groupValues?.get(1) ?: ""
+            val pagedUrl = if (page > 1) "$mainUrl/category/$term/page/$page/" else "$mainUrl/category/$term/"
             
-            val pageUrl   = "$mainUrl/category/$term/"
-            var pagedUrl = pageUrl
-            if (page > 1) {
-                pagedUrl = "${pageUrl}page/$page/"
-            }
-            
-            val document  = app.get(pagedUrl).document
-            
-            val articles = document.select("article")
-            val home = ArrayList<AnimeSearchResponse>()
-            for (i in 0 until articles.size) {
-                val article = articles.get(i)
-                val searchResult = article.toSearchResult()
-                if (searchResult != null) {
-                    home.add(searchResult)
-                }
-            }
-            
+            val document = app.get(pagedUrl).document
+            val home = document.select("article").mapNotNull { it.toSearchResult() }
             val hasNextPage = document.selectFirst("a.next.page-numbers") != null
+            
             return newHomePageResponse(request.name, home, hasNextPage)
         }
 
-        var pageUrl = "$mainUrl/movie-hindi/"
-        if (isSeries) {
-            pageUrl = "$mainUrl/series-hindi/"
-        }
+        val pageUrl = if (isSeries) "$mainUrl/series-hindi/" else "$mainUrl/movie-hindi/"
 
         if (page == 1) {
             val document = app.get(pageUrl).document
-            val articles = document.select("article")
-            val home = ArrayList<AnimeSearchResponse>()
-            for (i in 0 until articles.size) {
-                val article = articles.get(i)
-                val searchResult = article.toSearchResult()
-                if (searchResult != null) {
-                    home.add(searchResult)
-                }
-            }
+            val home = document.select("article").mapNotNull { it.toSearchResult() }
             return newHomePageResponse(request.name, home, true)
         }
 
         val pageDoc = app.get(pageUrl).document
-        val nonceMatch = Regex("\"nonce\":\"([^\"]+)\"").find(pageDoc.html())
-        var nonce = ""
-        if (nonceMatch != null) {
-            nonce = nonceMatch.groupValues.get(1)
-        }
-
-        val filterEl  = pageDoc.selectFirst("[data-taxonomy]")
-        var taxonomy = "none"
-        var termVal = "none"
-        var searchVal = "none"
-        var typeVal = "none"
+        val nonce = Regex("\"nonce\":\"([^\"]+)\"").find(pageDoc.html())?.groupValues?.get(1) ?: ""
+        val filterEl = pageDoc.selectFirst("[data-taxonomy]")
         
-        if (filterEl != null) {
-            if (filterEl.hasAttr("data-taxonomy")) taxonomy = filterEl.attr("data-taxonomy")
-            if (filterEl.hasAttr("data-term")) termVal = filterEl.attr("data-term")
-            if (filterEl.hasAttr("data-search")) searchVal = filterEl.attr("data-search")
-            if (filterEl.hasAttr("data-type")) typeVal = filterEl.attr("data-type")
-        }
+        val taxonomy = filterEl?.attr("data-taxonomy") ?: "none"
+        val termVal = filterEl?.attr("data-term") ?: "none"
+        val searchVal = filterEl?.attr("data-search") ?: "none"
+        val typeVal = filterEl?.attr("data-type") ?: "none"
 
-        val vars = "{\"_wpsearch\":\"" + nonce + "\",\"taxonomy\":\"" + taxonomy + "\",\"search\":\"" + searchVal + "\",\"term\":\"" + termVal + "\",\"type\":\"" + typeVal + "\",\"genres\":[],\"years\":[],\"sort\":1,\"page\":" + page + "}"
+        val vars = "{\"_wpsearch\":\"$nonce\",\"taxonomy\":\"$taxonomy\",\"search\":\"$searchVal\",\"term\":\"$termVal\",\"type\":\"$typeVal\",\"genres\":[],\"years\":[],\"sort\":1,\"page\":$page}"
 
         val response = app.post(
             "$mainUrl/wp-admin/admin-ajax.php",
             data = mapOf("action" to "action_search", "vars" to vars),
             headers = mapOf(
-                "Content-Type"     to "application/x-www-form-urlencoded",
-                "X-WP-Nonce"       to nonce,
+                "Content-Type" to "application/x-www-form-urlencoded",
+                "X-WP-Nonce" to nonce,
                 "X-Requested-With" to "XMLHttpRequest",
-                "Referer"          to pageUrl
+                "Referer" to pageUrl
             )
         ).text
 
         val json = parseJson<AjaxResponse>(response)
         val htmlDoc = Jsoup.parse(json.html)
-        
-        val articles = htmlDoc.select("article")
-        val home = ArrayList<AnimeSearchResponse>()
-        for (i in 0 until articles.size) {
-            val article = articles.get(i)
-            val searchResult = article.toSearchResult()
-            if (searchResult != null) {
-                home.add(searchResult)
-            }
-        }
+        val home = htmlDoc.select("article").mapNotNull { it.toSearchResult() }
 
         return newHomePageResponse(request.name, home, json.next)
     }
 
+    /**
+     * Converts an HTML article element to a Cloudstream SearchResponse.
+     */
     private fun Element.toSearchResult(): AnimeSearchResponse? {
-        val linkEl = this.selectFirst("a.lnk-blk")
-        if (linkEl == null) return null
-        val href = linkEl.attr("href")
-        
-        var posterUrl: String? = null
+        val href = this.selectFirst("a.lnk-blk")?.attr("href") ?: return null
         val imgEl = this.selectFirst("div figure img")
-        if (imgEl != null) {
-            posterUrl = imgEl.attr("src")
-            if (posterUrl != null && posterUrl.contains("data:image")) {
-                posterUrl = imgEl.attr("data-lazy-src")
-            }
+        
+        val posterUrl = imgEl?.let {
+            val src = it.attr("src")
+            if (src.contains("data:image")) it.attr("data-lazy-src") else src
         }
         
-        var imgAlt: String? = null
-        if (imgEl != null) {
-            imgAlt = imgEl.attr("alt")?.trim()
-        }
+        val imgAlt = imgEl?.attr("alt")?.trim()
+        val h2Text = this.selectFirst("header h2")?.text()?.trim()
         
-        var h2Text: String? = null
-        val h2El = this.selectFirst("header h2")
-        if (h2El != null) {
-            h2Text = h2El.text().trim()
-        }
-        
-        var title = ""
-        if (imgAlt != null && imgAlt.isNotEmpty() && !imgAlt.contains("anime", ignoreCase = true) && imgAlt.length > 2) {
-            title = imgAlt
-        } else if (h2Text != null && h2Text.isNotEmpty() && !h2Text.contains("AnimeDekho", ignoreCase = true) && h2Text.length > 2) {
-            title = h2Text
-        } else {
-            var slug = href.trimEnd('/')
-            val lastSlash = slug.lastIndexOf("/")
-            if (lastSlash != -1) {
-                slug = slug.substring(lastSlash + 1)
-            }
-            title = slug.replace("-", " ")
-            if (title.isNotEmpty()) {
-                title = title.substring(0, 1).uppercase() + title.substring(1)
-            }
+        val title = when {
+            !imgAlt.isNullOrEmpty() && !imgAlt.contains("anime", true) && imgAlt.length > 2 -> imgAlt
+            !h2Text.isNullOrEmpty() && !h2Text.contains("AnimeDekho", true) && h2Text.length > 2 -> h2Text
+            else -> href.trimEnd('/').substringAfterLast("/").replace("-", " ").replaceFirstChar { it.uppercase() }
         }
         
         return newAnimeSearchResponse(title, Gson().toJson(Media(href, posterUrl)), TvType.Anime, false) {
@@ -626,452 +383,223 @@ open class AnimeDekhoProvider : MainAPI() {
         }
     }
 
+    // --- Search ---
     override suspend fun search(query: String, page: Int): SearchResponseList {
-        val results = ArrayList<SearchResponse>()
-        var hasNext = false
-
         val searchUrl = "$mainUrl/?s=$query"
-        val document = app.get(searchUrl).document
-        val html = document.html()
+        val html = app.get(searchUrl).document.html()
         
-        var nonce = ""
-        val nonceMatch1 = Regex("\"nonce\"\\s*:\\s*\"([^\"]+)\"").find(html)
-        val nonceMatch2 = Regex("\"_wpsearch\"\\s*:\\s*\"([^\"]+)\"").find(html)
-        
-        if (nonceMatch1 != null) {
-            nonce = nonceMatch1.groupValues.get(1)
-        } else if (nonceMatch2 != null) {
-            nonce = nonceMatch2.groupValues.get(1)
-        }
+        val nonce = Regex("\"nonce\"\\s*:\\s*\"([^\"]+)\"").find(html)?.groupValues?.get(1)
+            ?: Regex("\"_wpsearch\"\\s*:\\s*\"([^\"]+)\"").find(html)?.groupValues?.get(1) ?: ""
 
         if (page == 1) {
+            val document = Jsoup.parse(html)
             var elements = document.select("ul[data-results] li article")
-            if (elements.isEmpty()) {
-                elements = document.select("article")
-            }
+            if (elements.isEmpty()) elements = document.select("article")
             
-            for (i in 0 until elements.size) {
-                val element = elements.get(i)
-                val res = element.toSearchResult()
-                if (res != null) {
-                    results.add(res)
-                }
-            }
-            
-            if (results.size > 0) {
-                hasNext = true
-            }
+            val results = elements.mapNotNull { it.toSearchResult() }
+            return newSearchResponseList(results, results.isNotEmpty())
         } else {
             if (nonce.isNotEmpty()) {
-                val vars = "{\"_wpsearch\":\"" + nonce + "\",\"taxonomy\":\"none\",\"search\":\"" + query + "\",\"season\":\"none\",\"type\":\"mixed\",\"genres\":[],\"years\":[],\"sort\":\"1\",\"page\":" + page + "}"
+                val vars = "{\"_wpsearch\":\"$nonce\",\"taxonomy\":\"none\",\"search\":\"$query\",\"season\":\"none\",\"type\":\"mixed\",\"genres\":[],\"years\":[],\"sort\":\"1\",\"page\":$page}"
                 
                 val response = app.post(
                     url = "$mainUrl/wp-admin/admin-ajax.php",
                     data = mapOf("action" to "action_search", "vars" to vars),
                     headers = mapOf(
-                        "Content-Type"     to "application/x-www-form-urlencoded",
-                        "X-WP-Nonce"       to nonce,
+                        "Content-Type" to "application/x-www-form-urlencoded",
+                        "X-WP-Nonce" to nonce,
                         "X-Requested-With" to "XMLHttpRequest",
-                        "Referer"          to searchUrl
+                        "Referer" to searchUrl
                     )
                 ).text
 
                 val json = parseJson<AjaxResponse>(response)
-                val htmlDoc = Jsoup.parse(json.html)
-                
-                val elements = htmlDoc.select("article")
-                for (i in 0 until elements.size) {
-                    val element = elements.get(i)
-                    val res = element.toSearchResult()
-                    if (res != null) {
-                        results.add(res)
-                    }
-                }
-                hasNext = json.next
+                val results = Jsoup.parse(json.html).select("article").mapNotNull { it.toSearchResult() }
+                return newSearchResponseList(results, json.next)
             }
         }
-
-        return newSearchResponseList(results, hasNext)
+        return newSearchResponseList(emptyList(), false)
     }
 
+    // --- Details / Load ---
     override suspend fun load(url: String): LoadResponse {
-        var media: Media? = null
-        try {
-            media = Gson().fromJson(url, Media::class.java)
+        val media = try {
+            Gson().fromJson(url, Media::class.java)
         } catch (e: Exception) {
-            Log.e("AnimeDekho", "Failed to parse media JSON: ${e.message}")
             return newMovieLoadResponse("Error", url, TvType.Movie, url)
-        }
+        } ?: return newMovieLoadResponse("Error", url, TvType.Movie, url)
 
-        if (media == null) return newMovieLoadResponse("Error", url, TvType.Movie, url)
-
-        var document: Document? = null
-        try {
-            document = app.get(
+        val document = try {
+            app.get(
                 media.url,
                 headers = mapOf(
-                    "User-Agent"      to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                    "Referer"         to mainUrl,
-                    "Accept"          to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    "Accept-Language" to "en-US,en;q=0.5",
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Referer" to mainUrl,
                 ),
                 timeout = 30
             ).document
         } catch (e: Exception) {
-            Log.e("AnimeDekho", "Failed to load page: ${e.message}")
-            return newMovieLoadResponse("Error", url, TvType.Movie, url) {
-                this.posterUrl = media.poster
-            }
+            return newMovieLoadResponse("Error", url, TvType.Movie, url) { this.posterUrl = media.poster }
         }
 
-        var rawTitle: String? = null
-        
-        val h1EntryTitle = document.selectFirst("h1.entry-title")?.text()?.trim()
-        if (h1EntryTitle != null && extractRawTitle(h1EntryTitle) != null) {
-            rawTitle = extractRawTitle(h1EntryTitle)
-        }
-        
-        if (rawTitle == null) {
-            val h1Title = document.selectFirst("h1")?.text()?.trim()
-            if (h1Title != null && extractRawTitle(h1Title) != null) {
-                rawTitle = extractRawTitle(h1Title)
-            }
-        }
-        
-        if (rawTitle == null) {
-            val ogTitle = document.selectFirst("meta[property=og:title]")?.attr("content")?.trim()
-            if (ogTitle != null && extractRawTitle(ogTitle) != null) {
-                rawTitle = extractRawTitle(ogTitle)
-            }
-        }
-        
-        if (rawTitle == null) {
-            val twitterTitle = document.selectFirst("meta[name=twitter:title]")?.attr("content")?.trim()
-            if (twitterTitle != null && extractRawTitle(twitterTitle) != null) {
-                rawTitle = extractRawTitle(twitterTitle)
-            }
-        }
-        
-        if (rawTitle == null) {
-            val headTitle = document.selectFirst("title")?.text()?.trim()
-            if (headTitle != null && extractRawTitle(headTitle) != null) {
-                rawTitle = extractRawTitle(headTitle)
-            }
-        }
-        
-        if (rawTitle == null) {
-            var slug = media.url.trimEnd('/')
-            val lastSlash = slug.lastIndexOf("/")
-            if (lastSlash != -1) {
-                slug = slug.substring(lastSlash + 1)
-            }
-            rawTitle = slug.replace("-", " ")
-            if (rawTitle.isNotEmpty()) {
-                rawTitle = rawTitle.substring(0, 1).uppercase() + rawTitle.substring(1)
-            }
-        }
+        // Title Extraction Fallbacks
+        val rawTitle = extractRawTitle(document.selectFirst("h1.entry-title")?.text().orEmpty())
+            ?: extractRawTitle(document.selectFirst("h1")?.text().orEmpty())
+            ?: extractRawTitle(document.selectFirst("meta[property=og:title]")?.attr("content").orEmpty())
+            ?: extractRawTitle(document.selectFirst("meta[name=twitter:title]")?.attr("content").orEmpty())
+            ?: extractRawTitle(document.selectFirst("title")?.text().orEmpty())
+            ?: media.url.trimEnd('/').substringAfterLast("/").replace("-", " ").replaceFirstChar { it.uppercase() }
 
-        var finalCleanTitle = ""
-        if (rawTitle != null) {
-            finalCleanTitle = cleanTitleText(rawTitle)
-        }
+        val finalCleanTitle = cleanTitleText(rawTitle)
+        val poster = fixUrlNull(document.selectFirst("div.post-thumbnail figure img")?.attr("src")) ?: media.poster
+        val plot = document.selectFirst("div.entry-content p")?.text()?.trim() 
+            ?: document.selectFirst("meta[name=twitter:description]")?.attr("content")
         
-        var poster = media.poster
-        val docPoster = document.selectFirst("div.post-thumbnail figure img")?.attr("src")
-        if (docPoster != null) {
-            poster = fixUrlNull(docPoster)
-        }
-        
-        var plot = document.selectFirst("div.entry-content p")?.text()?.trim()
-        if (plot == null) {
-            plot = document.selectFirst("meta[name=twitter:description]")?.attr("content")
-        }
-        
-        var year: Int? = null
-        val yearText = document.selectFirst("span.year")?.text()?.trim()
-        if (yearText != null) {
-            year = yearText.toIntOrNull()
-        }
-        if (year == null) {
-            year = fetchYearViaAjax(media.url, document.html())
-        }
+        val year = document.selectFirst("span.year")?.text()?.trim()?.toIntOrNull() 
+            ?: fetchYearViaAjax(media.url, document.html())
 
         val lst = document.select("ul.seasons-lst li")
-        var isSeries = false
-        if (lst.size > 0) {
-            isSeries = true
-        }
-
-        // ── Fetch TMDB Details ──
+        val isSeries = lst.isNotEmpty()
         val tmdbDetails = fetchTmdbDetails(document, finalCleanTitle, isSeries, year)
 
         if (!isSeries) {
-            return newMovieLoadResponse(rawTitle ?: "", url, TvType.Movie, Gson().toJson(Media(media.url, mediaType = 1))) {
-                this.posterUrl           = poster
-                if (tmdbDetails.backdrop != null) {
-                    this.backgroundPosterUrl = tmdbDetails.backdrop
-                } else {
-                    this.backgroundPosterUrl = poster
-                }
-                this.plot                = plot
-                this.year                = year
-                this.logoUrl             = tmdbDetails.logo
+            return newMovieLoadResponse(rawTitle, url, TvType.Movie, Gson().toJson(Media(media.url, mediaType = 1))) {
+                this.posterUrl = poster
+                this.backgroundPosterUrl = tmdbDetails.backdrop ?: poster
+                this.plot = plot
+                this.year = year
+                this.logoUrl = tmdbDetails.logo
             }
-        } else {
-            // ─── Phase 1: Parse Raw Site Episodes ───
-            val rawEpisodes = ArrayList<SiteEpisode>()
-            for (i in 0 until lst.size) {
-                val li = lst.get(i)
-                var name = "null"
-                val h3El = li.selectFirst("h3.title")
-                if (h3El != null) {
-                    name = h3El.ownText()
-                }
-                
-                val aEl = li.selectFirst("a")
-                if (aEl != null) {
-                    val href = aEl.attr("href")
-                    val epPoster = li.selectFirst("div > div > figure > img")?.attr("src")
-                    
-                    var season: Int? = null
-                    val seasonSpan = li.selectFirst("h3.title > span")
-                    if (seasonSpan != null) {
-                        val sText = seasonSpan.text()
-                        if (sText.contains("S")) {
-                            val afterS = sText.substringAfter("S")
-                            if (afterS.contains("-")) {
-                                season = afterS.substringBefore("-").toIntOrNull()
-                            }
-                        }
-                    }
-                    
-                    rawEpisodes.add(SiteEpisode(href, name, epPoster, season))
-                }
-            }
+        }
 
-            // ─── Phase 2: Fix Episode Numbering (1-based per season) ───
-            val seasonCounters = HashMap<Int?, Int>()
-            for (i in 0 until rawEpisodes.size) {
-                val ep = rawEpisodes.get(i)
-                var count = 0
-                if (seasonCounters.containsKey(ep.season)) {
-                    val existingCount = seasonCounters.get(ep.season)
-                    if (existingCount != null) {
-                        count = existingCount
-                    }
-                }
-                count += 1
-                seasonCounters.put(ep.season, count)
-                ep.calculatedEpNum = count
-            }
+        // --- Phase 1: Parse Raw Site Episodes ---
+        val rawEpisodes = lst.mapNotNull { li ->
+            val aEl = li.selectFirst("a") ?: return@mapNotNull null
+            val name = li.selectFirst("h3.title")?.ownText() ?: "null"
+            val href = aEl.attr("href")
+            val epPoster = li.selectFirst("div > div > figure > img")?.attr("src")
+            val season = li.selectFirst("h3.title > span")?.text()?.substringAfter("S")?.substringBefore("-")?.toIntOrNull()
+            
+            SiteEpisode(href, name, epPoster, season)
+        }
 
-            // ─── Phase 3: Smart TMDB Episode Fetching ───
-            if (tmdbDetails.id != null && tmdbDetails.type == "tv") {
-                val seasonsGrouped = HashMap<Int?, ArrayList<SiteEpisode>>()
-                for (i in 0 until rawEpisodes.size) {
-                    val ep = rawEpisodes.get(i)
-                    if (!seasonsGrouped.containsKey(ep.season)) {
-                        seasonsGrouped.put(ep.season, ArrayList<SiteEpisode>())
-                    }
-                    val seasonList = seasonsGrouped.get(ep.season)
-                    if (seasonList != null) {
-                        seasonList.add(ep)
-                    }
-                }
-                
-                val iterator = seasonsGrouped.entries.iterator()
-                while (iterator.hasNext()) {
-                    val entry = iterator.next()
-                    val seasonNum = entry.key
-                    val eps = entry.value
-                    
-                    if (seasonNum == null || seasonNum == 0) {
-                        continue
-                    }
-                    
-                    var hasMergedEpisodes = false
-                    for (i in 0 until eps.size) {
-                        val ep = eps.get(i)
-                        if (ep.rawName.contains("/")) {
-                            hasMergedEpisodes = true
-                            break
-                        }
-                    }
-                    
-                    if (!hasMergedEpisodes) {
-                        try {
-                            val tmdbSeason = app.get("$TMDB_API/tv/${tmdbDetails.id}/season/$seasonNum?api_key=$TMDB_KEY")
-                                .parsedSafe<TmdbSeason>()
-                                
-                            if (tmdbSeason != null && tmdbSeason.episodes != null) {
-                                val tmdbEpMap = HashMap<Int, TmdbEpisode>()
-                                for (j in 0 until tmdbSeason.episodes.size) {
-                                    val tmdbEp = tmdbSeason.episodes.get(j)
-                                    if (tmdbEp.episodeNumber != null) {
-                                        tmdbEpMap.put(tmdbEp.episodeNumber, tmdbEp)
-                                    }
-                                }
-                                
-                                for (k in 0 until eps.size) {
-                                    val ep = eps.get(k)
-                                    if (tmdbEpMap.containsKey(ep.calculatedEpNum)) {
-                                        val tmdbData = tmdbEpMap.get(ep.calculatedEpNum)
-                                        if (tmdbData != null) {
-                                            if (tmdbData.name != null && tmdbData.name.isNotEmpty()) {
-                                                ep.finalName = tmdbData.name
-                                            }
-                                            if (tmdbData.stillPath != null && tmdbData.stillPath.isNotEmpty()) {
-                                                ep.finalPoster = "$TMDB_IMG${tmdbData.stillPath}"
-                                            }
-                                        }
-                                    }
+        // --- Phase 2: Fix Episode Numbering (1-based per season) ---
+        val seasonCounters = mutableMapOf<Int?, Int>()
+        rawEpisodes.forEach { ep ->
+            val count = (seasonCounters[ep.season] ?: 0) + 1
+            seasonCounters[ep.season] = count
+            ep.calculatedEpNum = count
+        }
+
+        // --- Phase 3: Smart TMDB Episode Fetching ---
+        if (tmdbDetails.id != null && tmdbDetails.type == "tv") {
+            rawEpisodes.groupBy { it.season }.forEach { (seasonNum, eps) ->
+                if (seasonNum != null && seasonNum != 0 && eps.none { it.rawName.contains("/") }) {
+                    try {
+                        val tmdbSeason = app.get("$TMDB_API/tv/${tmdbDetails.id}/season/$seasonNum?api_key=$TMDB_KEY").parsedSafe<TmdbSeason>()
+                        tmdbSeason?.episodes?.associateBy { it.episodeNumber }?.let { tmdbEpMap ->
+                            eps.forEach { ep ->
+                                tmdbEpMap[ep.calculatedEpNum]?.let { tmdbData ->
+                                    tmdbData.name?.takeIf { it.isNotEmpty() }?.let { ep.finalName = it }
+                                    tmdbData.stillPath?.takeIf { it.isNotEmpty() }?.let { ep.finalPoster = "$TMDB_IMG$it" }
                                 }
                             }
-                        } catch (e: Exception) {
-                            Log.e("AnimeDekho", "TMDB season fetch failed: ${e.message}")
                         }
+                    } catch (e: Exception) {
+                        Log.e("AnimeDekho", "TMDB season fetch failed: ${e.message}")
                     }
                 }
             }
+        }
 
-            // ─── Phase 4: Build Cloudstream Episodes ───
-            val episodes = ArrayList<Episode>()
-            for (i in 0 until rawEpisodes.size) {
-                val ep = rawEpisodes.get(i)
-                episodes.add(
-                    newEpisode(Gson().toJson(Media(ep.href, mediaType = 2))) {
-                        this.name      = ep.finalName
-                        this.posterUrl = ep.finalPoster
-                        this.season    = ep.season
-                        this.episode   = ep.calculatedEpNum
-                    }
-                )
+        // --- Phase 4: Build Cloudstream Episodes & Recommendations ---
+        val episodes = rawEpisodes.map { ep ->
+            newEpisode(Gson().toJson(Media(ep.href, mediaType = 2))) {
+                this.name = ep.finalName
+                this.posterUrl = ep.finalPoster
+                this.season = ep.season
+                this.episode = ep.calculatedEpNum
             }
+        }
 
-            val recommendations = ArrayList<SearchResponse>()
-            val recArticles = document.select("div.swiper-wrapper article")
-            for (i in 0 until recArticles.size) {
-                val recArticle = recArticles.get(i)
-                val h2El = recArticle.selectFirst("h2")
-                val aEl = recArticle.selectFirst("a")
-                
-                if (h2El != null && aEl != null) {
-                    val recName = h2El.text()
-                    val recHref = aEl.attr("href")
-                    
-                    var recPoster: String? = null
-                    val figureImg = recArticle.selectFirst("figure img")
-                    if (figureImg != null) {
-                        recPoster = figureImg.attr("src")
-                    }
-                    
-                    recommendations.add(
-                        newTvSeriesSearchResponse(recName, Gson().toJson(Media(recHref, recPoster, 0)), TvType.TvSeries) {
-                            this.posterUrl = recPoster
-                        }
-                    )
-                }
+        val recommendations = document.select("div.swiper-wrapper article").mapNotNull { recArticle ->
+            val recName = recArticle.selectFirst("h2")?.text() ?: return@mapNotNull null
+            val recHref = recArticle.selectFirst("a")?.attr("href") ?: return@mapNotNull null
+            val recPoster = recArticle.selectFirst("figure img")?.attr("src")
+            
+            newTvSeriesSearchResponse(recName, Gson().toJson(Media(recHref, recPoster, 0)), TvType.TvSeries) {
+                this.posterUrl = recPoster
             }
+        }
 
-            return newTvSeriesLoadResponse(rawTitle ?: "", url, TvType.TvSeries, episodes) {
-                this.posterUrl           = poster
-                if (tmdbDetails.backdrop != null) {
-                    this.backgroundPosterUrl = tmdbDetails.backdrop
-                } else {
-                    this.backgroundPosterUrl = poster
-                }
-                this.plot                = plot
-                this.year                = year
-                this.logoUrl             = tmdbDetails.logo
-                this.recommendations     = recommendations
-            }
+        return newTvSeriesLoadResponse(rawTitle, url, TvType.TvSeries, episodes) {
+            this.posterUrl = poster
+            this.backgroundPosterUrl = tmdbDetails.backdrop ?: poster
+            this.plot = plot
+            this.year = year
+            this.logoUrl = tmdbDetails.logo
+            this.recommendations = recommendations
         }
     }
 
+    // --- Load Links (Video Extraction) ---
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
-        var media: Media? = null
-        try {
-            media = Gson().fromJson(data, Media::class.java)
+        val media = try {
+            Gson().fromJson(data, Media::class.java)
         } catch (e: Exception) {
-            Log.e("Error:", "Failed to parse media JSON ${e.message}")
             return false
-        }
-        
-        if (media == null) return false
+        } ?: return false
 
         val headers = mapOf("Cookie" to "toronites_server=vidstream")
         val doc = app.get(media.url, headers = headers).document
         
-        val iframes = doc.select("iframe.serversel[src]")
-        for (i in 0 until iframes.size) {
-            val iframe = iframes.get(i)
-            val serverUrl = iframe.attr("src")
-            if (serverUrl.isNotEmpty()) {
-                var innerIframeUrl: String? = null
-                try {
-                    val innerDoc = app.get(serverUrl).document
-                    val innerIframe = innerDoc.selectFirst("iframe[src]")
-                    if (innerIframe != null) {
-                        innerIframeUrl = innerIframe.attr("src")
+        // 1. Direct iframe processing using coroutines for faster extraction
+        coroutineScope {
+            doc.select("iframe.serversel[src]").map { it.attr("src") }.filter { it.isNotEmpty() }.forEach { serverUrl ->
+                launch {
+                    try {
+                        val innerDoc = app.get(serverUrl).document
+                        val innerIframeUrl = innerDoc.selectFirst("iframe[src]")?.attr("src")
+                        if (!innerIframeUrl.isNullOrEmpty()) {
+                            loadExtractor(innerIframeUrl, subtitleCallback, callback)
+                        }
+                    } catch (e: Exception) {
+                        // Ignore failure for individual server
                     }
-                } catch (e: Exception) {
-                    // Ignore
-                }
-                
-                if (innerIframeUrl != null && innerIframeUrl.isNotEmpty()) {
-                    loadExtractor(innerIframeUrl, subtitleCallback, callback)
                 }
             }
         }
 
-        var bodyClass: String? = null
-        try {
-            val bodyEl = app.get(media.url).document.selectFirst("body")
-            if (bodyEl != null) {
-                bodyClass = bodyEl.attr("class")
-            }
-        } catch (e: Exception) {
-            // Ignore
-        }
+        // 2. Fallback processing for dynamic/AJAX server iframes
+        val bodyClass = try {
+            app.get(media.url).document.selectFirst("body")?.attr("class")
+        } catch (e: Exception) { null }
 
-        var term: String? = null
-        if (bodyClass != null) {
-            val termMatch = Regex("(?:term|postid)-(\\d+)").find(bodyClass)
-            if (termMatch != null) {
-                term = termMatch.groupValues.get(1)
-            }
-        }
-        
-        if (term == null || term.isEmpty()) {
-            Log.e("Error:", "No postid/term ID found in body class: $bodyClass")
-            return false
-        }
+        val term = bodyClass?.let { Regex("(?:term|postid)-(\\d+)").find(it)?.groupValues?.get(1) }
+        if (term.isNullOrEmpty()) return false
 
         var success = false
-        for (i in 0..10) {
-            var iframeUrl: String? = null
-            try {
-                val iframeDoc = app.get("$mainUrl/?trdekho=$i&trid=$term&trtype=${media.mediaType}").document
-                val iframeEl = iframeDoc.selectFirst("iframe")
-                if (iframeEl != null) {
-                    iframeUrl = iframeEl.attr("src")
-                }
-            } catch (e: Exception) {
-                // Ignore
-            }
-            
-            if (iframeUrl != null && iframeUrl.isNotEmpty()) {
-                Log.d("Error:", "Found iframe: $iframeUrl")
-                try {
-                    loadExtractor(iframeUrl, subtitleCallback, callback)
-                    success = true
-                } catch (e: Exception) {
-                    Log.e("Error:", "Failed to load extractor for $iframeUrl ${e.message}")
+        // Extract multiple Trembed instances asynchronously
+        coroutineScope {
+            (0..10).forEach { i ->
+                launch {
+                    try {
+                        val iframeDoc = app.get("$mainUrl/?trdekho=$i&trid=$term&trtype=${media.mediaType}").document
+                        val iframeUrl = iframeDoc.selectFirst("iframe")?.attr("src")
+                        
+                        if (!iframeUrl.isNullOrEmpty()) {
+                            if (loadExtractor(iframeUrl, subtitleCallback, callback)) {
+                                success = true
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // Ignore
+                    }
                 }
             }
         }
