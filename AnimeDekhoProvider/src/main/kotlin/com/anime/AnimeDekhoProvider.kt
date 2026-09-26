@@ -188,7 +188,8 @@ open class AnimeDekhoProvider : MainAPI() {
         return try {
             val nonce = Regex("\"nonce\"\\s*:\\s*\"([^\"]+)\"").find(pageHtml)?.groupValues?.get(1) ?: return null
             val slug = movieUrl.trimEnd('/').substringAfterLast("/")
-            val searchTerm = slug.replace(Regex("-(hin|hindi|dubbed|dub|sub)$", ignoreCase = true), "")
+            
+            val searchTerm = slug.replace(Regex("-(hin|hindi|dubbed|dub|sub)$", RegexOption.IGNORE_CASE), "")
                 .replace("-", " ")
                 .trim()
             
