@@ -69,6 +69,11 @@ data class SiteEpisode(
     var finalPoster: String? = poster
 )
 
+data class ParsedMetadata(
+    val title: String?,
+    val year: Int?
+)
+
 open class AnimeDekhoProvider : MainAPI() {
     override var mainUrl = "https://animedekho.app"
     override var name = "Anime Dekho"
@@ -153,11 +158,12 @@ open class AnimeDekhoProvider : MainAPI() {
         return processed.takeIf { it.isNotBlank() }
     }
 
-    private suspend fun fetchYearViaAjax(movieUrl: String, pageHtml: String): Int? {
+    private suspend fun fetchMetadataViaAjax(movieUrl: String, pageHtml: String): ParsedMetadata {
         return try {
-            val nonce = Regex("\"nonce\"\\s*:\\s*\"([^\"]+)\"").find(pageHtml)?.groupValues?.get(1) ?: return null
+            val nonce = Regex("\"nonce\"\\s*:\\s*\"([^\"]+)\"").find(pageHtml)?.groupValues?.get(1) 
+                ?: return ParsedMetadata(null, null)
+                
             val slug = movieUrl.trimEnd('/').substringAfterLast("/")
-            
             val searchTerm = slug.replace(Regex("-(hin|hindi|dubbed|dub|sub)$", RegexOption.IGNORE_CASE), "")
                 .replace("-", " ")
                 .trim()
@@ -177,9 +183,17 @@ open class AnimeDekhoProvider : MainAPI() {
             ).text
 
             val json = parseJson<AjaxResponse>(response)
-            Regex("<span class=\"year\">(\\d{4})</span>").find(json.html)?.groupValues?.get(1)?.toIntOrNull()
+            val htmlDoc = Jsoup.parse(json.html)
+            
+            val year = htmlDoc.selectFirst("span.year")?.text()?.toIntOrNull()
+            
+            val title = htmlDoc.selectFirst("h2.entry-title")?.text()?.trim()
+                ?: htmlDoc.selectFirst("div.entry-title")?.text()?.trim()
+                ?: htmlDoc.selectFirst("img")?.attr("alt")?.trim()
+
+            ParsedMetadata(title, year)
         } catch (e: Exception) {
-            null
+            ParsedMetadata(null, null)
         }
     }
 
@@ -384,7 +398,7 @@ open class AnimeDekhoProvider : MainAPI() {
             return newMovieLoadResponse("Error", url, TvType.Movie, url)
         } ?: return newMovieLoadResponse("Error", url, TvType.Movie, url)
 
-        val document = try {
+        val htmlContent = try {
             app.get(
                 media.url,
                 headers = mapOf(
@@ -392,15 +406,21 @@ open class AnimeDekhoProvider : MainAPI() {
                     "Referer" to mainUrl,
                 ),
                 timeout = 30
-            ).document
+            ).text
         } catch (e: Exception) {
             return newMovieLoadResponse("Error", url, TvType.Movie, url) { this.posterUrl = media.poster }
         }
+        
+        val document = Jsoup.parse(htmlContent)
+        val ajaxMetadata = fetchMetadataViaAjax(media.url, htmlContent)
 
         var rawTitle: String? = null
+        
         val titleSelectors = listOf(
             "header.entry-header h1.entry-title",
             "h1.entry-title",
+            "h2.entry-title",
+            "div.entry-title",
             "h1",
             "meta[property=og:title]",
             "meta[name=twitter:title]"
@@ -414,17 +434,21 @@ open class AnimeDekhoProvider : MainAPI() {
         }
 
         if (rawTitle.isNullOrBlank()) {
+            rawTitle = ajaxMetadata.title
+        }
+
+        if (rawTitle.isNullOrBlank()) {
             val scriptData = document.select("script[type=application/ld+json]").html()
             rawTitle = Regex("\"headline\"\\s*:\\s*\"([^\"]+)\"").find(scriptData)?.groupValues?.get(1)
         }
 
         if (rawTitle.isNullOrBlank()) {
-            val img = document.selectFirst("div.post-thumbnail figure img, article img")
+            val img = document.selectFirst("div.post-thumbnail figure img, article img, img")
             rawTitle = img?.attr("alt")?.takeIf { it.isNotBlank() } ?: img?.attr("title")
         }
 
         if (rawTitle.isNullOrBlank()) {
-            rawTitle = Regex("title\\s*:\\s*[\"']([^\"']+)[\"']").find(document.html())?.groupValues?.get(1)
+            rawTitle = Regex("title\\s*:\\s*[\"']([^\"']+)[\"']").find(htmlContent)?.groupValues?.get(1)
         }
 
         if (rawTitle.isNullOrBlank()) {
@@ -439,7 +463,7 @@ open class AnimeDekhoProvider : MainAPI() {
             rawTitle = document.selectFirst("title")?.text()
         }
 
-        val cleanedRawTitle = extractRawTitle(rawTitle ?: "") ?: media.url.trimEnd('/').substringAfterLast("/").replace("-", " ").replaceFirstChar { it.uppercase() }
+        val cleanedRawTitle = extractRawTitle(rawTitle ?: "") ?: rawTitle ?: media.url.trimEnd('/').substringAfterLast("/").replace("-", " ").replaceFirstChar { it.uppercase() }
         val finalCleanTitle = cleanTitleText(cleanedRawTitle)
         
         val poster = fixUrlNull(document.selectFirst("div.post-thumbnail figure img")?.attr("src")) ?: media.poster
@@ -447,7 +471,7 @@ open class AnimeDekhoProvider : MainAPI() {
             ?: document.selectFirst("meta[name=twitter:description]")?.attr("content")
         
         val year = document.selectFirst("span.year")?.text()?.trim()?.toIntOrNull() 
-            ?: fetchYearViaAjax(media.url, document.html())
+            ?: ajaxMetadata.year
 
         val lst = document.select("ul.seasons-lst li")
         val isSeries = lst.isNotEmpty()
@@ -547,7 +571,7 @@ open class AnimeDekhoProvider : MainAPI() {
                     loadExtractor(innerIframeUrl, subtitleCallback, callback)
                 }
             } catch (e: Exception) {
-                // Ignore
+                // Ignore failure for individual server
             }
         }
 
