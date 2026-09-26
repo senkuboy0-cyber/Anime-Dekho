@@ -454,12 +454,29 @@ open class AnimeDekhoProvider : MainAPI() {
         val isSeries = lst.isNotEmpty()
 
         // Title Extraction Fallbacks
-        var rawTitle = extractRawTitle(document.selectFirst("h1.entry-title")?.text().orEmpty())
-            ?: extractRawTitle(document.selectFirst("h1")?.text().orEmpty())
-            ?: extractRawTitle(document.selectFirst("meta[property=og:title]")?.attr("content").orEmpty())
-            ?: extractRawTitle(document.selectFirst("meta[name=twitter:title]")?.attr("content").orEmpty())
-            ?: extractRawTitle(document.selectFirst("title")?.text().orEmpty())
-            ?: media.url.trimEnd('/').substringAfterLast("/").replace("-", " ").replaceFirstChar { it.uppercase() }
+        var rawTitle = listOf(
+            // Most clean twitter title (often a shorter, cleaner version exists)
+            document.select("meta[name=twitter:title]").mapNotNull { it.attr("content") }
+                .firstOrNull { it.isNotBlank() && !it.contains("Watch Online", true) && !it.contains("AnimeDekho", true) },
+            document.selectFirst("meta[name=twitter:title]")?.attr("content"),
+            document.selectFirst("meta[property=og:title]")?.attr("content"),
+            document.selectFirst("title")?.text(),
+            // h1 only if it is not SCHEDULE
+            document.select("h1").firstOrNull { 
+                val t = it.text().trim()
+                t.isNotEmpty() && !t.contains("SCHEDULE", true) && !t.contains("TIMING", true)
+            }?.text()
+        ).firstNotNullOfOrNull { text ->
+            text?.let { extractRawTitle(it) ?: it }
+                ?.takeIf { 
+                    it.length > 2 && 
+                    !it.contains("SCHEDULE", true) && 
+                    !it.contains("TIMING", true) &&
+                    !it.equals("AnimeDekho", true)
+                }
+        } ?: media.url.trimEnd('/').substringAfterLast("/")
+            .replace("-", " ")
+            .replaceFirstChar { it.uppercase() }
             
         var year = document.selectFirst("span.year")?.text()?.trim()?.toIntOrNull()
 
