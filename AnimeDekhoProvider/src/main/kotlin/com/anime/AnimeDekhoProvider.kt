@@ -487,10 +487,10 @@ open class AnimeDekhoProvider : MainAPI() {
         
         val tmdbDetails = fetchTmdbDetails(document, finalCleanTitle, isSeries, year)
 
-        // Fetch recommendations for both movies and series
-        val recommendations = document.select("div.swiper-wrapper article, ul.post-lst li article").mapNotNull {
-            it.toSearchResult()
-        }
+        // Fetch recommendations for both movies and series with robust selectors
+        val recommendations = document.select(
+            "div.swiper-wrapper article, section.cl1 ul.post-lst li article, ul.post-lst li article"
+        ).mapNotNull { it.toSearchResult() }.distinctBy { it.url }
 
         if (!isSeries) {
             return newMovieLoadResponse(rawTitle, url, TvType.Movie, Gson().toJson(Media(media.url, mediaType = 1))) {
