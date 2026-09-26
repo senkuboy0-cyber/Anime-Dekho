@@ -34,7 +34,7 @@
             "senkuboy0-cyber"
         ],
         "description": "MyAnimes: Hindi, Tamil, Telugu, English multi-audio anime, series and movies.",
-        "fileSize": 46037,
+        "fileSize": 45931,
         "repositoryUrl": "https://github.com/senkuboy0-cyber/Anime-Dekho",
         "language": "hi",
         "tvTypes": [
@@ -46,10 +46,10 @@
         ],
         "iconUrl": "https://myanimes.in/wp-content/uploads/2026/09/cropped-ChatGPT-Image-Sep-21-2026-08_48_22-AM.png",
         "apiVersion": 1,
-        "fileHash": "sha256-4eb8612a9ae393f68929c2c2a6d4c35ef4a6ffc8a41fb4ca88fcdec1ab7cbf55",
-        "jarFileSize": 173464,
+        "fileHash": "sha256-3d433451bd9509ea3d6b774dc7cc77bb223381c9e96b4fd3ae60a458a8d3039c",
+        "jarFileSize": 172905,
         "jarUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/MyAnimesProvider.jar",
-        "jarHash": "sha256-6f594d2869f365a208e3394a28c054fce130c42568963a910ab57e87c3fea68c"
+        "jarHash": "sha256-99b7558a1b8c6748a0339e9a8427f22af275ae76bee205aad1b219e52c6a4d07"
     },
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/TooniboyProvider.cs3",
