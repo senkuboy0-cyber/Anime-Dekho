@@ -452,21 +452,46 @@ open class AnimeDekhoProvider : MainAPI() {
         
         val lst = document.select("ul.seasons-lst li")
         val isSeries = lst.isNotEmpty()
+        var year = document.selectFirst("span.year")?.text()?.trim()?.toIntOrNull()
+
+        // Fetch AJAX data early if it's a movie or year is missing
+        var ajaxTitle: String? = null
+        if (!isSeries || year == null) {
+            val ajaxData = fetchAjaxData(media.url, document.html())
+            if (!isSeries && !ajaxData.first.isNullOrEmpty()) {
+                ajaxTitle = extractRawTitle(ajaxData.first!!)
+            }
+            if (year == null) {
+                year = ajaxData.second
+            }
+        }
 
         // Title Extraction Fallbacks
-        var rawTitle = listOf(
-            // Most clean twitter title (often a shorter, cleaner version exists)
-            document.select("meta[name=twitter:title]").mapNotNull { it.attr("content") }
-                .firstOrNull { it.isNotBlank() && !it.contains("Watch Online", true) && !it.contains("AnimeDekho", true) },
-            document.selectFirst("meta[name=twitter:title]")?.attr("content"),
-            document.selectFirst("meta[property=og:title]")?.attr("content"),
-            document.selectFirst("title")?.text(),
-            // h1 only if it is not SCHEDULE
-            document.select("h1").firstOrNull { 
-                val t = it.text().trim()
-                t.isNotEmpty() && !t.contains("SCHEDULE", true) && !t.contains("TIMING", true)
-            }?.text()
-        ).firstNotNullOfOrNull { text ->
+        val fallbackList = if (!isSeries) {
+            // For movies: Do NOT search in h1 or h1.entry-title
+            listOf(
+                document.select("meta[name=twitter:title]").mapNotNull { it.attr("content") }
+                    .firstOrNull { it.isNotBlank() && !it.contains("Watch Online", true) && !it.contains("AnimeDekho", true) },
+                document.selectFirst("meta[name=twitter:title]")?.attr("content"),
+                document.selectFirst("meta[property=og:title]")?.attr("content"),
+                document.selectFirst("title")?.text()
+            )
+        } else {
+            // For series: Can search in h1
+            listOf(
+                document.select("meta[name=twitter:title]").mapNotNull { it.attr("content") }
+                    .firstOrNull { it.isNotBlank() && !it.contains("Watch Online", true) && !it.contains("AnimeDekho", true) },
+                document.selectFirst("meta[name=twitter:title]")?.attr("content"),
+                document.selectFirst("meta[property=og:title]")?.attr("content"),
+                document.selectFirst("title")?.text(),
+                document.select("h1").firstOrNull { 
+                    val t = it.text().trim()
+                    t.isNotEmpty() && !t.contains("SCHEDULE", true) && !t.contains("TIMING", true)
+                }?.text()
+            )
+        }
+
+        val parsedTitle = fallbackList.firstNotNullOfOrNull { text ->
             text?.let { extractRawTitle(it) ?: it }
                 ?.takeIf { 
                     it.length > 2 && 
@@ -474,28 +499,14 @@ open class AnimeDekhoProvider : MainAPI() {
                     !it.contains("TIMING", true) &&
                     !it.equals("AnimeDekho", true)
                 }
-        } ?: media.url.trimEnd('/').substringAfterLast("/")
-            .replace("-", " ")
-            .replaceFirstChar { it.uppercase() }
-            
-        var year = document.selectFirst("span.year")?.text()?.trim()?.toIntOrNull()
-
-        // Fetch AJAX data if we need the year, or if it's a movie (to get the AJAX title)
-        if (!isSeries || year == null) {
-            val ajaxData = fetchAjaxData(media.url, document.html())
-            
-            // Override rawTitle ONLY for movies if AJAX gives a valid title
-            if (!isSeries && !ajaxData.first.isNullOrEmpty()) {
-                val ajaxTitle = extractRawTitle(ajaxData.first!!)
-                if (!ajaxTitle.isNullOrEmpty()) {
-                    rawTitle = ajaxTitle
-                }
-            }
-            
-            if (year == null) {
-                year = ajaxData.second
-            }
         }
+
+        // Priority for movies: AJAX Title > Fallback Tags > URL
+        // Priority for series: Fallback Tags (includes h1) > URL
+        val rawTitle = (if (!isSeries) ajaxTitle ?: parsedTitle else parsedTitle) 
+            ?: media.url.trimEnd('/').substringAfterLast("/")
+                .replace("-", " ")
+                .replaceFirstChar { it.uppercase() }
 
         val finalCleanTitle = cleanTitleText(rawTitle)
         val poster = fixUrlNull(document.selectFirst("div.post-thumbnail figure img")?.attr("src")) ?: media.poster
