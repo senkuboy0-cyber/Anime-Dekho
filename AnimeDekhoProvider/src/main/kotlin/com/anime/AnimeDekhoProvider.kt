@@ -306,10 +306,7 @@ open class AnimeDekhoProvider : MainAPI() {
         mainPageJson("none", "none", "none", "series")        to "Series",
         mainPageJson("none", "none", "none", "movie")         to "Movies",
         mainPageJson("category", "none", "anime", "none")     to "Anime",
-        mainPageJson("category", "none", "cartoon", "none")   to "Cartoon",
-        mainPageJson("category", "none", "hindi-dub", "none") to "Hindi Dub",
-        mainPageJson("category", "none", "tamil", "none")     to "Tamil",
-        mainPageJson("category", "none", "telugu", "none")    to "Telugu"
+        mainPageJson("category", "none", "cartoon", "none")   to "Cartoon"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
