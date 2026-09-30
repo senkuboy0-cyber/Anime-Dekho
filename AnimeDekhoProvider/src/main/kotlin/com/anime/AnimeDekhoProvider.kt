@@ -266,10 +266,7 @@ open class AnimeDekhoProvider : MainAPI() {
         mainPageJson("none", "none", "none", "series")        to "Series",
         mainPageJson("none", "none", "none", "movie")         to "Movies",
         mainPageJson("category", "none", "anime", "none")     to "Anime",
-        mainPageJson("category", "none", "cartoon", "none")   to "Cartoon",
-        mainPageJson("category", "none", "hindi-dub", "none") to "Hindi Dub",
-        mainPageJson("category", "none", "tamil", "none")     to "Tamil",
-        mainPageJson("category", "none", "telugu", "none")    to "Telugu"
+        mainPageJson("category", "none", "cartoon", "none")   to "Cartoon"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -409,7 +406,6 @@ open class AnimeDekhoProvider : MainAPI() {
         val isSeries = lst.isNotEmpty()
         var year = document.selectFirst("span.year")?.text()?.trim()?.toIntOrNull()
 
-        // Fetch AJAX data early if it's a movie or year is missing
         var ajaxTitle: String? = null
         if (!isSeries || year == null) {
             val ajaxData = fetchAjaxData(media.url, document.html())
@@ -422,7 +418,6 @@ open class AnimeDekhoProvider : MainAPI() {
         }
 
         val rawTitle: String = if (isSeries) {
-            // Original extraction logic strictly for Series
             extractRawTitle(document.selectFirst("h1.entry-title")?.text().orEmpty())
                 ?: extractRawTitle(document.selectFirst("h1")?.text().orEmpty())
                 ?: extractRawTitle(document.selectFirst("meta[property=og:title]")?.attr("content").orEmpty())
@@ -430,7 +425,6 @@ open class AnimeDekhoProvider : MainAPI() {
                 ?: extractRawTitle(document.selectFirst("title")?.text().orEmpty())
                 ?: media.url.trimEnd('/').substringAfterLast("/").replace("-", " ").replaceFirstChar { it.uppercase() }
         } else {
-            // New extraction logic strictly for Movies (AJAX -> twitter -> og -> title -> URL)
             val fallbackTitle = listOf(
                 document.select("meta[name=twitter:title]").mapNotNull { it.attr("content") }
                     .firstOrNull { it.isNotBlank() && !it.contains("Watch Online", true) && !it.contains("AnimeDekho", true) },
@@ -469,7 +463,6 @@ open class AnimeDekhoProvider : MainAPI() {
             }
         }
 
-        // --- Phase 1: Parse Raw Site Episodes ---
         val rawEpisodes = lst.mapNotNull { li ->
             val aEl = li.selectFirst("a") ?: return@mapNotNull null
             val name = li.selectFirst("h3.title")?.ownText() ?: "null"
@@ -480,7 +473,6 @@ open class AnimeDekhoProvider : MainAPI() {
             SiteEpisode(href, name, epPoster, season)
         }
 
-        // --- Phase 2: Fix Episode Numbering (1-based per season) ---
         val seasonCounters = mutableMapOf<Int?, Int>()
         rawEpisodes.forEach { ep ->
             val count = (seasonCounters[ep.season] ?: 0) + 1
@@ -488,7 +480,6 @@ open class AnimeDekhoProvider : MainAPI() {
             ep.calculatedEpNum = count
         }
 
-        // --- Phase 3: Smart TMDB Episode Fetching ---
         if (tmdbDetails.id != null && tmdbDetails.type == "tv") {
             rawEpisodes.groupBy { it.season }.forEach { (seasonNum, eps) ->
                 if (seasonNum != null && seasonNum != 0 && eps.none { it.rawName.contains("/") }) {
@@ -509,7 +500,6 @@ open class AnimeDekhoProvider : MainAPI() {
             }
         }
 
-        // --- Phase 4: Build Cloudstream Episodes & Recommendations ---
         val episodes = rawEpisodes.map { ep ->
             newEpisode(Gson().toJson(Media(ep.href, mediaType = 2))) {
                 this.name = ep.finalName
