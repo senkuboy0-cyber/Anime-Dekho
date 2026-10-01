@@ -338,18 +338,26 @@ class MyAnimesProvider : MainAPI() {
 
         val episodes = mutableListOf<Episode>()
 
-        document.select("ul.seasons-lst > li").forEach { li ->
+        // Updated selector to support both old format (.seasons-lst) and new format (.aa-episode-grid)
+        document.select("ul.seasons-lst > li, ul.aa-episode-grid > li").forEach { li ->
             val a = li.selectFirst("a[href*=/episode/]") ?: return@forEach
             val href = fixUrl(a.attr("href"))
 
-            val titleEl = li.selectFirst("h3.title")
-            val seText = titleEl?.selectFirst("span")?.text()?.trim().orEmpty()
+            // Find title element in both structures (old: h3.title, new: h3 inside .aa-episode-body)
+            val titleEl = li.selectFirst("h3.title, .aa-episode-body h3, h3")
+            
+            // Extract Season and Episode string, check both the old span in title and new .aa-episode-topline span
+            val seText = titleEl?.selectFirst("span")?.text()?.trim().orEmpty().ifEmpty {
+                li.selectFirst(".aa-episode-topline span")?.text()?.trim().orEmpty()
+            }
+            
             val seMatch = Regex("""S(\d+)\s*-?\s*E(\d+)""", RegexOption.IGNORE_CASE).find(seText)
                 ?: Regex("""(\d+)x(\d+)""").find(href)
 
             val seasonNum = seMatch?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 1
             val epNum = seMatch?.groupValues?.getOrNull(2)?.toIntOrNull() ?: 0
 
+            // Fetch episode name gracefully using ownText() to exclude span tags, fallback to cleaned text or image alt
             val epName = titleEl?.ownText()?.trim()?.ifBlank { null }
                 ?: titleEl?.text()?.replace(Regex("""S\d+\s*-?\s*E\d+""", RegexOption.IGNORE_CASE), "")?.trim()?.ifBlank { null }
                 ?: li.selectFirst("img[alt]")?.attr("alt")?.trim()?.ifBlank { null }
@@ -365,6 +373,7 @@ class MyAnimesProvider : MainAPI() {
             })
         }
 
+        // Fallback if no matching lists were found (e.g. structure completely different)
         if (episodes.isEmpty()) {
             document.select("a[href*=/episode/]").forEach { a ->
                 val href = fixUrl(a.attr("href"))
@@ -374,7 +383,8 @@ class MyAnimesProvider : MainAPI() {
                 val epNum = seMatch?.groupValues?.getOrNull(2)?.toIntOrNull() ?: 0
                 val parent = a.parents().firstOrNull { it.tagName() == "li" } ?: a.parent()
                 val epPoster = parent?.selectFirst("img")?.attr("src")
-                val epName = parent?.selectFirst("h3.title, .title")?.text()
+                // Added h3 for a generic fallback on title
+                val epName = parent?.selectFirst("h3.title, .title, h3")?.text()
                     ?.replace(Regex("""S\d+\s*-?\s*E\d+""", RegexOption.IGNORE_CASE), "")
                     ?.trim()?.ifBlank { null } ?: "Episode $epNum"
 
