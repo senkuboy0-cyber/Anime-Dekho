@@ -49,7 +49,8 @@ data class TmdbSeason(
 data class TmdbEpisode(
     @JsonProperty("episode_number") val episodeNumber: Int? = null,
     @JsonProperty("name") val name: String? = null,
-    @JsonProperty("still_path") val stillPath: String? = null
+    @JsonProperty("still_path") val stillPath: String? = null,
+    @JsonProperty("overview") val overview: String? = null
 )
 
 data class TmdbDetails(
@@ -66,7 +67,8 @@ data class SiteEpisode(
     val season: Int?,
     var calculatedEpNum: Int = 1,
     var finalName: String = rawName,
-    var finalPoster: String? = poster
+    var finalPoster: String? = poster,
+    var finalDescription: String? = null
 )
 
 open class AnimeDekhoProvider : MainAPI() {
@@ -490,6 +492,7 @@ open class AnimeDekhoProvider : MainAPI() {
                                 tmdbEpMap[ep.calculatedEpNum]?.let { tmdbData ->
                                     tmdbData.name?.takeIf { it.isNotEmpty() }?.let { ep.finalName = it }
                                     tmdbData.stillPath?.takeIf { it.isNotEmpty() }?.let { ep.finalPoster = "$TMDB_IMG$it" }
+                                    tmdbData.overview?.takeIf { it.isNotEmpty() }?.let { ep.finalDescription = it }
                                 }
                             }
                         }
@@ -506,6 +509,7 @@ open class AnimeDekhoProvider : MainAPI() {
                 this.posterUrl = ep.finalPoster
                 this.season = ep.season
                 this.episode = ep.calculatedEpNum
+                this.description = ep.finalDescription
             }
         }
 
