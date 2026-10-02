@@ -130,7 +130,7 @@ open class GDMirrorbot : ExtractorApi() {
 
 class ascdn21 : AWSStream() {
     override val name = "Zephyrflick"
-    override val mainUrl = "https://as-cdn26.top"
+    override val mainUrl = "https://as-cdn28.top"
     override val requiresReferer = true
 }
 
