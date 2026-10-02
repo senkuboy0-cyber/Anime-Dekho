@@ -134,6 +134,11 @@ class ascdn21 : AWSStream() {
     override val requiresReferer = true
 }
 
+class Vexal : AWSStream() {
+    override val name = "Vexal"
+    override val mainUrl = "https://vexal.top"
+    override val requiresReferer = true
+}
 
 open class AWSStream : ExtractorApi() {
     override val name = "AWSStream"
