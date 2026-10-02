@@ -69,9 +69,11 @@ open class AWSStream : ExtractorApi() {
             val extractedPack = doc.selectFirst("script:containsData(function(p,a,c,k,e,d))")?.data().orEmpty()
             JsUnpacker(extractedPack).unpack()?.let { unpacked ->
                 val regex = Regex("""\u0022kind\u0022\s*:\s*\u0022captions\u0022\s*,\s*\u0022file\u0022\s*:\s*\u0022(https[^\u0022]+)\u0022""")
-                regex.findAll(unpacked).forEachIndexed { index, matchResult ->
+                val matches = regex.findAll(unpacked).toList()
+                for (i in matches.indices) {
+                    val matchResult = matches[i]
                     val subtitleUrl = matchResult.groupValues[1]
-                    val subtitleName = if (index == 0) "English" else "Subtitle ${index + 1}"
+                    val subtitleName = if (i == 0) "English" else "Subtitle ${i + 1}"
                     subtitleCallback.invoke(SubtitleFile(subtitleName, subtitleUrl))
                 }
             }
@@ -120,21 +122,20 @@ class Abyss : ExtractorApi() {
             requestBody = """{"text":"$encrypted"}""".toRequestBody("application/json".toMediaType())
         ).parsedSafe<AbyssResponse>()?.result ?: return
 
-        decrypted.sources
-            .filter { it.status }
-            .forEach { source ->
-                callback.invoke(
-                    newExtractorLink(
-                        source = name,
-                        name = "$name [${source.codec.uppercase()}]",
-                        url = source.url,
-                        type = INFER_TYPE
-                    ) {
-                        this.quality = getQualityFromName(source.type)
-                        this.headers = mapOf("Referer" to "https://playhydrax.com/")
-                    }
-                )
-            }
+        val validSources = decrypted.sources.filter { it.status }
+        for (source in validSources) {
+            callback.invoke(
+                newExtractorLink(
+                    source = name,
+                    name = "$name [${source.codec.uppercase()}]",
+                    url = source.url,
+                    type = INFER_TYPE
+                ) {
+                    this.quality = getQualityFromName(source.type)
+                    this.headers = mapOf("Referer" to "https://playhydrax.com/")
+                }
+            )
+        }
     }
 
     data class AbyssResponse(val status: Long, val result: Result)
@@ -184,12 +185,13 @@ class StreamRuby : ExtractorApi() {
         val m3u8 = Regex("""file\s*:\s*\u0022(https?://[^\u0022]+\.m3u8[^\u0022]*)\u0022""")
             .find(unpacked)?.groupValues?.get(1) ?: return
 
-        Regex("""file\s*:\s*\u0022(https?://[^\u0022]+_([a-z]{2,3})\.vtt[^\u0022]*)\u0022[\s\S]+?kind\s*:\s*\u0022captions\u0022""")
-            .findAll(unpacked).forEach { match ->
-                subtitleCallback(SubtitleFile(match.groupValues[2], match.groupValues[1]))
-            }
+        val subMatches = Regex("""file\s*:\s*\u0022(https?://[^\u0022]+_([a-z]{2,3})\.vtt[^\u0022]*)\u0022[\s\S]+?kind\s*:\s*\u0022captions\u0022""")
+            .findAll(unpacked)
+        for (match in subMatches) {
+            subtitleCallback.invoke(SubtitleFile(match.groupValues[2], match.groupValues[1]))
+        }
 
-        callback(
+        callback.invoke(
             newExtractorLink(source = name, name = name, url = m3u8, type = ExtractorLinkType.M3U8) {
                 this.referer = mainUrl
                 this.quality = Qualities.Unknown.value
@@ -263,7 +265,7 @@ open class UpnsPlayer : ExtractorApi() {
                 return
             }
 
-        callback(
+        callback.invoke(
             newExtractorLink(name, name, url = finalUrl, type = ExtractorLinkType.M3U8) {
                 this.referer = "$baseurl/"
                 this.quality = Qualities.Unknown.value
@@ -271,11 +273,15 @@ open class UpnsPlayer : ExtractorApi() {
         )
 
         val subs = obj.optJSONObject("subtitle")
-        subs?.keys()?.forEach { lang ->
-            val rawPath = subs.optString(lang).split("#").firstOrNull().orEmpty()
-            if (rawPath.isNotBlank()) {
-                val subUrl = if (rawPath.startsWith("http")) rawPath else "$baseurl$rawPath"
-                subtitleCallback(SubtitleFile(lang.uppercase(), subUrl))
+        if (subs != null) {
+            val keys = subs.keys()
+            while (keys.hasNext()) {
+                val lang = keys.next()
+                val rawPath = subs.optString(lang).split("#").firstOrNull().orEmpty()
+                if (rawPath.isNotBlank()) {
+                    val subUrl = if (rawPath.startsWith("http")) rawPath else "$baseurl$rawPath"
+                    subtitleCallback.invoke(SubtitleFile(lang.uppercase(), subUrl))
+                }
             }
         }
     }
@@ -299,7 +305,10 @@ open class UpnsPlayer : ExtractorApi() {
                 for (i in 0 until order.length())
                     adjust.optJSONObject(order.getString(i))?.let { candidates.add(it) }
             } else {
-                adjust.keys().forEach { k -> adjust.optJSONObject(k)?.let { candidates.add(it) } }
+                val keys = adjust.keys()
+                while(keys.hasNext()) {
+                    adjust.optJSONObject(keys.next())?.let { candidates.add(it) }
+                }
             }
 
             for (c in candidates) {
@@ -528,7 +537,7 @@ open class GDMirrorbot : ExtractorApi() {
             else -> Qualities.Unknown.value
         }
 
-        callback(
+        callback.invoke(
             newExtractorLink(name, name, url = finalUrl, type = ExtractorLinkType.M3U8) {
                 this.referer = STREAMHG_BASE
                 this.quality = quality
@@ -602,7 +611,7 @@ class EmTurboVid : ExtractorApi() {
 
         val finalUrl = m3u8 ?: return
 
-        callback(
+        callback.invoke(
             newExtractorLink(name, name, url = finalUrl, type = ExtractorLinkType.M3U8) {
                 this.referer = "$mainUrl/"
                 this.quality = Qualities.P1080.value
@@ -631,12 +640,13 @@ class VidMolyNet : ExtractorApi() {
             ?: Regex("""https?://[^\s\u0022'<>]+\.m3u8[^\s\u0022'<>]*""").find(txt)?.value
             ?: return
 
-        Regex("""file\s*:\s*[\u0022'](https[^\u0022']+\.vtt[^\u0022']*)[\u0022'][\s\S]{0,200}?label\s*:\s*[\u0022']([^\u0022']*)[\u0022']""")
-            .find(txt)?.let { match ->
-                subtitleCallback(SubtitleFile(match.groupValues[2].ifBlank { "English" }, match.groupValues[1]))
-            }
+        val match = Regex("""file\s*:\s*[\u0022'](https[^\u0022']+\.vtt[^\u0022']*)[\u0022'][\s\S]{0,200}?label\s*:\s*[\u0022']([^\u0022']*)[\u0022']""")
+            .find(txt)
+        if (match != null) {
+            subtitleCallback.invoke(SubtitleFile(match.groupValues[2].ifBlank { "English" }, match.groupValues[1]))
+        }
 
-        callback(
+        callback.invoke(
             newExtractorLink(name, name, url = m3u8, type = ExtractorLinkType.M3U8) {
                 this.referer = mainUrl
                 this.quality = Qualities.Unknown.value
@@ -705,10 +715,13 @@ class Blakite : ExtractorApi() {
 
         if (data.format.equals("M3U8", ignoreCase = true)) {
             val rangeMap = mutableMapOf<String, String>()
-            data.ranges?.split("\n")?.forEach { line ->
-                val m = Regex("""(\d+-\d+)\s*\(([^)]+)\)""").find(line.trim())
-                if (m != null) {
-                    rangeMap[m.groupValues[2].trim()] = m.groupValues[1]
+            val lines = data.ranges?.split("\n")
+            if (lines != null) {
+                for (line in lines) {
+                    val m = Regex("""(\d+-\d+)\s*\(([^)]+)\)""").find(line.trim())
+                    if (m != null) {
+                        rangeMap[m.groupValues[2].trim()] = m.groupValues[1]
+                    }
                 }
             }
 
@@ -721,7 +734,7 @@ class Blakite : ExtractorApi() {
                 val streamUrl = CDN_BASE +
                     "$dataId.$code.tar?r_file=chunklist.m3u8&r_type=application%2Fvnd.apple.mpegurl&r_range=$range"
 
-                callback(
+                callback.invoke(
                     newExtractorLink(name, "$name [$label]", streamUrl, ExtractorLinkType.M3U8) {
                         this.referer = ""
                         this.quality = getQualityFromName(label)
@@ -736,7 +749,7 @@ class Blakite : ExtractorApi() {
                     val label = QUALITY_LABELS[i]
                     val code = QUALITY_CODES[i]
                     val streamUrl = CDN_BASE + "$dataId.$code.tar?r_file=chunklist.m3u8&r_type=application%2Fvnd.apple.mpegurl"
-                    callback(
+                    callback.invoke(
                         newExtractorLink(name, "$name [$label]", streamUrl, ExtractorLinkType.M3U8) {
                             this.referer = ""
                             this.quality = getQualityFromName(label)
@@ -750,7 +763,7 @@ class Blakite : ExtractorApi() {
                 val label = QUALITY_LABELS[i]
                 val code = QUALITY_CODES[i]
                 val streamUrl = "$CDN_BASE$dataId.$code.mp4"
-                callback(
+                callback.invoke(
                     newExtractorLink(name, "$name [$label]", streamUrl, INFER_TYPE) {
                         this.referer = ""
                         this.quality = getQualityFromName(label)
@@ -793,8 +806,9 @@ class WorldMirror : ExtractorApi() {
         callback: (ExtractorLink) -> Unit
     ) {
         val doc = app.get(url, referer = referer ?: mainUrl).document
-        // <option value="https://..." data-server="Rpmshare">
-        doc.select("select#serverSelect option[value], option[data-server]").forEach { opt ->
+        
+        val options = doc.select("select#serverSelect option[value], option[data-server]")
+        for (opt in options) {
             val embed = opt.attr("value").trim()
             if (embed.startsWith("http")) {
                 loadExtractor(embed, url, subtitleCallback, callback)
@@ -841,11 +855,12 @@ open class Streamhg : ExtractorApi() {
             ?: return
 
         // subtitles .vtt
-        Regex("""["'](https?://[^"']+\.vtt[^"']*)["']""").findAll(unpacked).forEach { m ->
-            subtitleCallback(SubtitleFile("English", m.groupValues[1]))
+        val subMatches = Regex("""["'](https?://[^"']+\.vtt[^"']*)["']""").findAll(unpacked)
+        for (m in subMatches) {
+            subtitleCallback.invoke(SubtitleFile("English", m.groupValues[1]))
         }
 
-        callback(
+        callback.invoke(
             newExtractorLink(name, name, m3u8, ExtractorLinkType.M3U8) {
                 this.referer = mainUrl
                 this.quality = Qualities.Unknown.value
@@ -932,25 +947,17 @@ class XerverMirror : ExtractorApi() {
 
         val results = json.results ?: return
 
-        // Detect quality once from any URL/filename in this response
         val qualityLabel = detectQuality(results)
         val qualityValue = getQualityFromName(qualityLabel ?: "")
 
-        preferredKeys.forEach { key ->
-            val entry = results[key] ?: return@forEach
-            val streamUrl = entry.url?.takeIf { it.startsWith("http") } ?: return@forEach
+        for (key in preferredKeys) {
+            val entry = results[key] ?: continue
+            val streamUrl = entry.url?.takeIf { it.startsWith("http") } ?: continue
             
-            val serverLabel = entry.label ?: key
-            val display = if (qualityLabel != null) {
-                "$name [$qualityLabel][$serverLabel]"
-            } else {
-                "$name [$serverLabel]"
-            }
-
             callback.invoke(
                 newExtractorLink(
                     source = name,
-                    name = display,
+                    name = "$name [${entry.label ?: key}]",
                     url = streamUrl,
                     type = INFER_TYPE
                 ) {
@@ -960,24 +967,17 @@ class XerverMirror : ExtractorApi() {
             )
         }
 
-        results.forEach { (key, entry) ->
-            if (key in preferredKeys) return@forEach
-            if (key.contains("telegram", ignoreCase = true)) return@forEach
-            if (key.contains("gofile", ignoreCase = true)) return@forEach
+        for ((key, entry) in results) {
+            if (key in preferredKeys) continue
+            if (key.contains("telegram", ignoreCase = true)) continue
+            if (key.contains("gofile", ignoreCase = true)) continue
 
-            val streamUrl = entry.url?.takeIf { it.startsWith("http") } ?: return@forEach
+            val streamUrl = entry.url?.takeIf { it.startsWith("http") } ?: continue
             
-            val serverLabel = entry.label ?: key
-            val display = if (qualityLabel != null) {
-                "$name [$qualityLabel][$serverLabel]"
-            } else {
-                "$name [$serverLabel]"
-            }
-
             callback.invoke(
                 newExtractorLink(
                     source = name,
-                    name = display,
+                    name = "$name [${entry.label ?: key}]",
                     url = streamUrl,
                     type = INFER_TYPE
                 ) {
@@ -990,7 +990,7 @@ class XerverMirror : ExtractorApi() {
 
     private fun detectQuality(results: Map<String, XerverEntry>): String? {
         val texts = mutableListOf<String>()
-        results.values.forEach { e ->
+        for (e in results.values) {
             e.url?.let { texts.add(java.net.URLDecoder.decode(it, "UTF-8")) }
             e.page?.let { texts.add(java.net.URLDecoder.decode(it, "UTF-8")) }
             e.label?.let { texts.add(it) }
