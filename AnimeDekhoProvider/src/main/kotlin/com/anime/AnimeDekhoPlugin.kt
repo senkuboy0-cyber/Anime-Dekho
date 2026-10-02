@@ -25,5 +25,6 @@ class AnimeDekhoPlugin: BasePlugin() {
         registerExtractorAPI(Streamhg())
         registerExtractorAPI(Earnvids())
         registerExtractorAPI(Byse())
+        registerExtractorAPI(XerverMirror())
     }
 }
