@@ -10,6 +10,7 @@ class ToonstreamPlugin : BasePlugin() {
 
         // Servers present on toonstream.us iframes
         registerExtractorAPI(Zephyrflick())
+        registerExtractorAPI(Vexal())
         registerExtractorAPI(Abyss())
         registerExtractorAPI(StreamRuby())
         registerExtractorAPI(Cloudy())
