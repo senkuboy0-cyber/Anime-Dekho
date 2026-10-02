@@ -19,5 +19,6 @@ class AnimeDekhoPlugin: BasePlugin() {
         registerExtractorAPI(GDMirrorbotFHD())
         registerExtractorAPI(Blakite())
         registerExtractorAPI(FilesForever())
+        registerExtractorAPI(NeoCDN())
     }
 }
