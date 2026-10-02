@@ -27,7 +27,7 @@ import javax.crypto.spec.SecretKeySpec
 // Handles the Zephyrflick server, utilizing the base AWSStream extraction logic.
 class Zephyrflick : AWSStream() {
     override val name = "Zephyrflick"
-    override val mainUrl = "https://as-cdn26.top"
+    override val mainUrl = "https://as-cdn28.top"
     override val requiresReferer = true
 }
 
