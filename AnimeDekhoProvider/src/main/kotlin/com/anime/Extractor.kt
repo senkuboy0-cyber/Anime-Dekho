@@ -27,7 +27,7 @@ import javax.crypto.spec.SecretKeySpec
 // Handles the Zephyrflick server, utilizing the base AWSStream extraction logic.
 class Zephyrflick : AWSStream() {
     override val name = "Zephyrflick"
-    override val mainUrl = "https://as-cdn26.top"
+    override val mainUrl = "https://as-cdn28.top"
     override val requiresReferer = true
 }
 
@@ -891,5 +891,95 @@ class Byse : ExtractorApi() {
         val embed_frame_url: String? = null,
         val code: String? = null,
         val title: String? = null,
+    )
+}
+
+// VidSrc / mirror.xerver.xyz — play.php?url=...&fetch=1 → progressive file URLs
+class XerverMirror : ExtractorApi() {
+    override var name = "XerverMirror"
+    override var mainUrl = "https://mirror.xerver.xyz"
+    override val requiresReferer = true
+
+    // Player prefers these keys first
+    private val preferredKeys = listOf("instant_dl", "cloud_r2", "direct_mgt")
+
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        // Ensure we hit the fetch API
+        val apiUrl = when {
+            url.contains("fetch=1") -> url
+            url.contains("?") -> "$url&fetch=1"
+            else -> "$url?fetch=1"
+        }
+
+        val json = try {
+            app.get(
+                apiUrl,
+                headers = mapOf(
+                    "Accept" to "application/json",
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Referer" to (referer ?: mainUrl),
+                ),
+                referer = referer ?: mainUrl
+            ).parsedSafe<XerverResponse>()
+        } catch (e: Exception) {
+            Log.e(name, "fetch failed: ${e.message}")
+            return
+        } ?: return
+
+        val results = json.results ?: return
+
+        // Preferred stream keys first
+        preferredKeys.forEach { key ->
+            val entry = results[key] ?: return@forEach
+            val streamUrl = entry.url?.takeIf { it.startsWith("http") } ?: return@forEach
+            callback.invoke(
+                newExtractorLink(
+                    source = name,
+                    name = "$name [${entry.label ?: key}]",
+                    url = streamUrl,
+                    type = INFER_TYPE
+                ) {
+                    this.quality = Qualities.Unknown.value
+                    this.referer = mainUrl
+                }
+            )
+        }
+
+        // Any other direct url entries (skip telegram / page-only)
+        results.forEach { (key, entry) ->
+            if (key in preferredKeys) return@forEach
+            if (key.contains("telegram", ignoreCase = true)) return@forEach
+            if (key.contains("gofile", ignoreCase = true)) return@forEach
+
+            val streamUrl = entry.url?.takeIf { it.startsWith("http") } ?: return@forEach
+            callback.invoke(
+                newExtractorLink(
+                    source = name,
+                    name = "$name [${entry.label ?: key}]",
+                    url = streamUrl,
+                    type = INFER_TYPE
+                ) {
+                    this.quality = Qualities.Unknown.value
+                    this.referer = mainUrl
+                }
+            )
+        }
+    }
+
+    data class XerverResponse(
+        val results: Map<String, XerverEntry>? = null,
+        val cached: Boolean? = null,
+        val error: String? = null,
+    )
+
+    data class XerverEntry(
+        val label: String? = null,
+        val url: String? = null,
+        val page: String? = null,
     )
 }
