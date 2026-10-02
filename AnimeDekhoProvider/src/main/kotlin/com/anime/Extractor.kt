@@ -793,8 +793,9 @@ class WorldMirror : ExtractorApi() {
         callback: (ExtractorLink) -> Unit
     ) {
         val doc = app.get(url, referer = referer ?: mainUrl).document
-        // <option value="https://..." data-server="Rpmshare">
-        doc.select("select#serverSelect option[value], option[data-server]").forEach { opt ->
+        
+        val options = doc.select("select#serverSelect option[value], option[data-server]")
+        for (opt in options) {
             val embed = opt.attr("value").trim()
             if (embed.startsWith("http")) {
                 loadExtractor(embed, url, subtitleCallback, callback)
