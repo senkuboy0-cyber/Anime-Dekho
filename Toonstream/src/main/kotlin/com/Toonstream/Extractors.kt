@@ -31,6 +31,13 @@ class Zephyrflick : AWSStream() {
     override val requiresReferer = true
 }
 
+// Handles the Vexal server, utilizing the base AWSStream extraction logic.
+class Vexal : AWSStream() {
+    override val name = "Vexal"
+    override val mainUrl = "https://vexal.top"
+    override val requiresReferer = true
+}
+
 // Base extractor for AWSStream backend.
 // Fetches the HLS video source via a POST request and unpacks JavaScript to extract subtitle captions.
 open class AWSStream : ExtractorApi() {
@@ -61,10 +68,12 @@ open class AWSStream : ExtractorApi() {
 
             val extractedPack = doc.selectFirst("script:containsData(function(p,a,c,k,e,d))")?.data().orEmpty()
             JsUnpacker(extractedPack).unpack()?.let { unpacked ->
-                Regex("""\u0022kind\u0022\s*:\s*\u0022captions\u0022\s*,\s*\u0022file\u0022\s*:\s*\u0022(https.*?\.srt)\u0022""")
-                    .find(unpacked)?.groupValues?.get(1)?.let { subtitleUrl ->
-                        subtitleCallback.invoke(SubtitleFile("English", subtitleUrl))
-                    }
+                val regex = Regex("""\u0022kind\u0022\s*:\s*\u0022captions\u0022\s*,\s*\u0022file\u0022\s*:\s*\u0022(https[^\u0022]+)\u0022""")
+                regex.findAll(unpacked).forEachIndexed { index, matchResult ->
+                    val subtitleUrl = matchResult.groupValues[1]
+                    val subtitleName = if (index == 0) "English" else "Subtitle ${index + 1}"
+                    subtitleCallback.invoke(SubtitleFile(subtitleName, subtitleUrl))
+                }
             }
         }
     }
