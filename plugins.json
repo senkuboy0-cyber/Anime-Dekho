@@ -97,9 +97,9 @@
         ],
         "iconUrl": "https://raw.githubusercontent.com/phisher98/TVVVV/refs/heads/main/Icons/toonstream.png",
         "apiVersion": 1,
-        "fileHash": "sha256-c6e0e54996c286df3060972a2b8f53cc23b9480b10de94318c2e8f4ab2a90b1b",
+        "fileHash": "sha256-01984d4755ca475c05cb43545bfe83329f33230487ad9c151e979549a14d1362",
         "jarFileSize": 383782,
         "jarUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/Toonstream.jar",
-        "jarHash": "sha256-5a84154feff2f34ee16ab9c49dc11a0af69be9b6c2802909dd52db59b030a6f0"
+        "jarHash": "sha256-7594fddc014638c045b33cf5fa03c2a502f42c0324c3bd84097e4079d02a1f67"
     }
 ]
