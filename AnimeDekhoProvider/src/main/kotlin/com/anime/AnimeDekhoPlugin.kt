@@ -31,6 +31,7 @@ class AnimeDekhoPlugin: BasePlugin() {
         registerExtractorAPI(Animedekhoco())
         registerExtractorAPI(Blakiteapi())
         registerExtractorAPI(ascdn21())
+        registerExtractorAPI(Vexal())
         registerExtractorAPI(Abyass())
     }
 }
