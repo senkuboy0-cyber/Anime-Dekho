@@ -90,6 +90,50 @@ open class AnimeDekhoProvider : MainAPI() {
 
     private val normalizeRegex = Regex("[^a-zA-Z0-9]")
 
+    // Initializing supported custom extractors
+    private val zephyrflick  = Zephyrflick()
+    private val awsStream    = AWSStream()
+    private val abyss        = Abyss()
+    private val streamRuby   = StreamRuby()
+    private val cloudy       = Cloudy()
+    private val upnsPlayer   = UpnsPlayer()
+    private val gdMirrorbot  = GDMirrorbot()
+    private val filesForever = FilesForever()
+    private val emTurboVid   = EmTurboVid()
+    private val vidMolyNet   = VidMolyNet()
+    private val blakite      = Blakite()
+
+    /**
+     * Matches the provider URL with the appropriate extractor instance.
+     */
+    private suspend fun invokeExtractor(
+        url: String,
+        referer: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return try {
+            when {
+                url.contains("zephyrflick", true) || url.contains("as-cdn", true) -> { zephyrflick.getUrl(url, referer, subtitleCallback, callback); true }
+                url.contains("awstream", true) -> { awsStream.getUrl(url, referer, subtitleCallback, callback); true }
+                url.contains("abyssplayer", true) || url.contains("playhydrax", true) -> { abyss.getUrl(url, referer, subtitleCallback, callback); true }
+                url.contains("rubystm", true) || url.contains("streamruby", true) -> { streamRuby.getUrl(url, referer, subtitleCallback, callback); true }
+                url.contains("cloudy.upns", true) -> { cloudy.getUrl(url, referer, subtitleCallback, callback); true }
+                url.contains("upns", true) || url.contains("p2pplay", true) -> { upnsPlayer.getUrl(url, referer, subtitleCallback, callback); true }
+                url.contains("gdmirrorbot.nl", true) -> { gdMirrorbot.getUrl(url, referer, subtitleCallback, callback); true }
+                url.contains("filesforever", true) -> { filesForever.getUrl(url, referer, subtitleCallback, callback); true }
+                url.contains("emturbovid", true) || url.contains("turboviplay", true) -> { emTurboVid.getUrl(url, referer, subtitleCallback, callback); true }
+                url.contains("vidmoly", true) -> { vidMolyNet.getUrl(url, referer, subtitleCallback, callback); true }
+                url.contains("blakite", true) -> { blakite.getUrl(url, referer, subtitleCallback, callback); true }
+                // Fallback for generic extractors registered in Cloudstream
+                else -> loadExtractor(url, referer, subtitleCallback, callback)
+            }
+        } catch (e: Exception) {
+            Log.e("AnimeDekho", "Extractor failed for $url: ${e.message}")
+            false
+        }
+    }
+
     private fun getResultYear(result: TmdbResult): Int? {
         val dateString = result.releaseDate ?: result.firstAirDate
         return dateString?.substringBefore("-")?.toIntOrNull()
@@ -549,7 +593,8 @@ open class AnimeDekhoProvider : MainAPI() {
                 val innerDoc = app.get(serverUrl).document
                 val innerIframeUrl = innerDoc.selectFirst("iframe[src]")?.attr("src")
                 if (!innerIframeUrl.isNullOrEmpty()) {
-                    loadExtractor(innerIframeUrl, subtitleCallback, callback)
+                    // Using custom invokeExtractor instead of loadExtractor
+                    invokeExtractor(innerIframeUrl, media.url, subtitleCallback, callback)
                 }
             } catch (e: Exception) {
                 // Ignore failure for individual server
@@ -570,7 +615,8 @@ open class AnimeDekhoProvider : MainAPI() {
                 val iframeUrl = iframeDoc.selectFirst("iframe")?.attr("src")
                 
                 if (!iframeUrl.isNullOrEmpty()) {
-                    if (loadExtractor(iframeUrl, subtitleCallback, callback)) {
+                    // Using custom invokeExtractor instead of loadExtractor
+                    if (invokeExtractor(iframeUrl, media.url, subtitleCallback, callback)) {
                         success = true
                     }
                 }
