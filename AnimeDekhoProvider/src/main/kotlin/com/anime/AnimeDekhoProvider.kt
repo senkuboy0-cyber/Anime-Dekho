@@ -585,6 +585,7 @@ open class AnimeDekhoProvider : MainAPI() {
             return false
         } ?: return false
 
+        var success = false
         val headers = mapOf("Cookie" to "toronites_server=vidstream")
         val doc = app.get(media.url, headers = headers).document
         
@@ -594,21 +595,39 @@ open class AnimeDekhoProvider : MainAPI() {
                 val innerIframeUrl = innerDoc.selectFirst("iframe[src]")?.attr("src")
                 if (!innerIframeUrl.isNullOrEmpty()) {
                     // Using custom invokeExtractor instead of loadExtractor
-                    invokeExtractor(innerIframeUrl, media.url, subtitleCallback, callback)
+                    if (invokeExtractor(innerIframeUrl, media.url, subtitleCallback, callback)) {
+                        success = true
+                    }
                 }
             } catch (e: Exception) {
                 // Ignore failure for individual server
             }
         }
 
+        // NeoCDN from server list data-src (base64)
+        doc.select("a[data-src]").forEach { el ->
+            val b64 = el.attr("data-src").trim()
+            if (b64.isBlank()) return@forEach
+            try {
+                val decoded = base64Decode(b64)
+                if (decoded.contains("/aaa/myth/play.php")) {
+                    // Using custom invokeExtractor instead of loadExtractor for consistency
+                    if (invokeExtractor(decoded, media.url, subtitleCallback, callback)) {
+                        success = true
+                    }
+                }
+            } catch (_: Exception) {
+                // ignore bad base64
+            }
+        } 
+
         val bodyClass = try {
             app.get(media.url).document.selectFirst("body")?.attr("class")
         } catch (e: Exception) { null }
 
         val term = bodyClass?.let { Regex("(?:term|postid)-(\\d+)").find(it)?.groupValues?.get(1) }
-        if (term.isNullOrEmpty()) return false
+        if (term.isNullOrEmpty()) return success
 
-        var success = false
         (0..10).forEach { i ->
             try {
                 val iframeDoc = app.get("$mainUrl/?trdekho=$i&trid=$term&trtype=${media.mediaType}").document
