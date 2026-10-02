@@ -900,8 +900,8 @@ class XerverMirror : ExtractorApi() {
     override var mainUrl = "https://mirror.xerver.xyz"
     override val requiresReferer = true
 
-    // Player prefers these keys first
     private val preferredKeys = listOf("instant_dl", "cloud_r2", "direct_mgt")
+    private val qualityRegex = Regex("""(2160|1440|1080|720|480|360|240)p""", RegexOption.IGNORE_CASE)
 
     override suspend fun getUrl(
         url: String,
@@ -909,7 +909,6 @@ class XerverMirror : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        // Ensure we hit the fetch API
         val apiUrl = when {
             url.contains("fetch=1") -> url
             url.contains("?") -> "$url&fetch=1"
@@ -933,42 +932,73 @@ class XerverMirror : ExtractorApi() {
 
         val results = json.results ?: return
 
-        // Preferred stream keys first
+        // Detect quality once from any URL/filename in this response
+        val qualityLabel = detectQuality(results)
+        val qualityValue = getQualityFromName(qualityLabel ?: "")
+
         preferredKeys.forEach { key ->
             val entry = results[key] ?: return@forEach
             val streamUrl = entry.url?.takeIf { it.startsWith("http") } ?: return@forEach
+            
+            val serverLabel = entry.label ?: key
+            val display = if (qualityLabel != null) {
+                "$name [$qualityLabel][$serverLabel]"
+            } else {
+                "$name [$serverLabel]"
+            }
+
             callback.invoke(
                 newExtractorLink(
                     source = name,
-                    name = "$name [${entry.label ?: key}]",
+                    name = display,
                     url = streamUrl,
                     type = INFER_TYPE
                 ) {
-                    this.quality = Qualities.Unknown.value
+                    this.quality = qualityValue
                     this.referer = mainUrl
                 }
             )
         }
 
-        // Any other direct url entries (skip telegram / page-only)
         results.forEach { (key, entry) ->
             if (key in preferredKeys) return@forEach
             if (key.contains("telegram", ignoreCase = true)) return@forEach
             if (key.contains("gofile", ignoreCase = true)) return@forEach
 
             val streamUrl = entry.url?.takeIf { it.startsWith("http") } ?: return@forEach
+            
+            val serverLabel = entry.label ?: key
+            val display = if (qualityLabel != null) {
+                "$name [$qualityLabel][$serverLabel]"
+            } else {
+                "$name [$serverLabel]"
+            }
+
             callback.invoke(
                 newExtractorLink(
                     source = name,
-                    name = "$name [${entry.label ?: key}]",
+                    name = display,
                     url = streamUrl,
                     type = INFER_TYPE
                 ) {
-                    this.quality = Qualities.Unknown.value
+                    this.quality = qualityValue
                     this.referer = mainUrl
                 }
             )
         }
+    }
+
+    private fun detectQuality(results: Map<String, XerverEntry>): String? {
+        val texts = mutableListOf<String>()
+        results.values.forEach { e ->
+            e.url?.let { texts.add(java.net.URLDecoder.decode(it, "UTF-8")) }
+            e.page?.let { texts.add(java.net.URLDecoder.decode(it, "UTF-8")) }
+            e.label?.let { texts.add(it) }
+        }
+        for (t in texts) {
+            qualityRegex.find(t)?.groupValues?.get(1)?.let { return "${it}p" }
+        }
+        return null
     }
 
     data class XerverResponse(
