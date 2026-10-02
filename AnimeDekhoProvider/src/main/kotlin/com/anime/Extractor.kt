@@ -779,3 +779,117 @@ class Blakite : ExtractorApi() {
         val ranges: String? = null,
     )
 }
+
+// animeworld.site/mirror/play.php — multi-server router
+class WorldMirror : ExtractorApi() {
+    override var name = "WorldMirror"
+    override var mainUrl = "https://animeworld.site"
+    override val requiresReferer = true
+
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val doc = app.get(url, referer = referer ?: mainUrl).document
+        // <option value="https://..." data-server="Rpmshare">
+        doc.select("select#serverSelect option[value], option[data-server]").forEach { opt ->
+            val embed = opt.attr("value").trim()
+            if (embed.startsWith("http")) {
+                loadExtractor(embed, url, subtitleCallback, callback)
+            }
+        }
+    }
+}
+
+class Rpmshare : UpnsPlayer() {
+    override var name = "Rpmshare"
+    override var mainUrl = "https://zoro.rpmhub.site"
+}
+
+class Streamp2p : UpnsPlayer() {
+    override var name = "Streamp2p"
+    override var mainUrl = "https://zoro.streamcasthub.store"
+}
+
+// StreamHG-style hosts (hanerix / morencius) — unpack JWPlayer for m3u8
+open class Streamhg : ExtractorApi() {
+    override var name = "Streamhg"
+    override var mainUrl = "https://hanerix.com"
+    override val requiresReferer = true
+
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val html = app.get(url, referer = referer ?: mainUrl).text
+
+        val packed = Regex("""eval\(function\(p,a,c,k,e,d\)[\s\S]+?\.split\('\|'\)\)\)""")
+            .find(html)?.value
+            ?: Regex("""eval\(function\(p,a,c,k,e,d\)[\s\S]+?\}\('[\s\S]+?'\.split\('\|'\)""").find(html)?.value
+            ?: return
+
+        val unpacked = JsUnpacker(packed).unpack() ?: return
+
+        // master.txt or .m3u8
+        val m3u8 = Regex("""(https?://[^"'\s\\]+(?:master\.txt|master\.m3u8|\.m3u8)[^"'\s\\]*)""")
+            .find(unpacked)?.groupValues?.get(1)
+            ?: Regex("""file\s*:\s*["'](https?://[^"']+)["']""").find(unpacked)?.groupValues?.get(1)
+            ?: return
+
+        // subtitles .vtt
+        Regex("""["'](https?://[^"']+\.vtt[^"']*)["']""").findAll(unpacked).forEach { m ->
+            subtitleCallback(SubtitleFile("English", m.groupValues[1]))
+        }
+
+        callback(
+            newExtractorLink(name, name, m3u8, ExtractorLinkType.M3U8) {
+                this.referer = mainUrl
+                this.quality = Qualities.Unknown.value
+            }
+        )
+    }
+}
+
+class Earnvids : Streamhg() {
+    override var name = "Earnvids"
+    override var mainUrl = "https://morencius.com"
+}
+
+class Byse : ExtractorApi() {
+    override var name = "Byse"
+    override var mainUrl = "https://bysetayico.com"
+    override val requiresReferer = true
+
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        // https://bysetayico.com/e/qxjrjngr3ulp
+        val code = url.substringAfter("/e/").substringBefore("/").substringBefore("?")
+        if (code.isBlank()) return
+
+        val json = app.get(
+            "$mainUrl/api/videos/$code/embed/details",
+            headers = mapOf("Accept" to "application/json"),
+            referer = url
+        ).parsedSafe<ByseResponse>() ?: return
+
+        val embed = json.embed_frame_url
+        if (!embed.isNullOrBlank()) {
+            // nested player (e.g. n1mwq.org) — delegate
+            loadExtractor(embed, url, subtitleCallback, callback)
+        }
+    }
+
+    data class ByseResponse(
+        val embed_frame_url: String? = null,
+        val code: String? = null,
+        val title: String? = null,
+    )
+}
