@@ -2,36 +2,22 @@ package com.anime
 
 import com.lagradost.cloudstream3.plugins.BasePlugin
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
-import com.lagradost.cloudstream3.extractors.FileMoon
-import com.lagradost.cloudstream3.extractors.FilemoonV2
-import com.lagradost.cloudstream3.extractors.Krakenfiles
-import com.lagradost.cloudstream3.extractors.StreamTape
-import com.lagradost.cloudstream3.extractors.Voe
 
 @CloudstreamPlugin
 class AnimeDekhoPlugin: BasePlugin() {
     override fun load() {
         registerMainAPI(AnimeDekhoProvider())
-        registerExtractorAPI(StreamRuby())
-        registerExtractorAPI(Vidmolynet())   // vidmoly.net
-        registerExtractorAPI(Vidmolybiz())   // vidmoly.biz
-        registerExtractorAPI(GDMirrorbot())
-        registerExtractorAPI(Techinmind())
-        registerExtractorAPI(Cdnwish())
-        registerExtractorAPI(Multimovies())
-        registerExtractorAPI(FileMoon())
-        registerExtractorAPI(FileMoonNL())
-        registerExtractorAPI(Krakenfiles())
-        registerExtractorAPI(Voe())
-        registerExtractorAPI(StreamTape())
-        registerExtractorAPI(FilemoonV2())
-        registerExtractorAPI(Animezia())
-        registerExtractorAPI(Cloudy())
-        registerExtractorAPI(vidcloudupns())
-        registerExtractorAPI(Animedekhoco())
-        registerExtractorAPI(Blakiteapi())
-        registerExtractorAPI(ascdn21())
+        
+        registerExtractorAPI(Zephyrflick())
         registerExtractorAPI(Vexal())
-        registerExtractorAPI(Abyass())
+        registerExtractorAPI(Abyss())
+        registerExtractorAPI(StreamRuby())
+        registerExtractorAPI(Cloudy())
+        registerExtractorAPI(EmTurboVid())
+        registerExtractorAPI(VidMolyNet())
+        registerExtractorAPI(GDMirrorbot())
+        registerExtractorAPI(GDMirrorbotFHD())
+        registerExtractorAPI(Blakite())
+        registerExtractorAPI(FilesForever())
     }
 }
