@@ -1,6 +1,5 @@
 package com.anime
 
-import android.util.Base64
 import com.google.gson.JsonParser
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.SubtitleFile
@@ -21,6 +20,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.net.URI
+import java.util.Base64
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.IvParameterSpec
@@ -990,7 +990,7 @@ class Byse : ExtractorApi() {
                 .ifBlank { t.optString("language") }
                 .ifBlank { t.optString("lang") }
                 .ifBlank { "Unknown" }
-            subtitleCallback(SubtitleFile(lang, subUrl))
+            subtitleCallback.invoke(SubtitleFile(lang, subUrl))
         }
     }
 
@@ -1036,7 +1036,7 @@ class Byse : ExtractorApi() {
         var t = s.replace('-', '+').replace('_', '/')
         val pad = (4 - t.length % 4) % 4
         t += "=".repeat(pad)
-        return Base64.decode(t, Base64.DEFAULT)
+        return Base64.getDecoder().decode(t)
     }
 }
 
