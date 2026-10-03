@@ -309,10 +309,11 @@ class MyAnimesProvider : MainAPI() {
             ?: document.selectFirst("h1 a")?.text()?.trim()
             ?: return null
 
-        val poster = document.selectFirst(
-            ".as-poster img, .as-hero img, img[src*=image.tmdb.org], img[src*=storyblok], .post-thumbnail img"
-        )?.attr("src")?.ifBlank { null }
-            ?: document.selectFirst("img[src*=tmdb], img[src*=w500], img[src*=w1280]")?.attr("src")
+        // Fix: Prioritize only actual vertical posters instead of hero/backdrop images
+        val poster = document.selectFirst(".as-poster img, .post-thumbnail img")?.let {
+            it.attr("src").ifBlank { it.attr("data-src") }
+        } ?: document.selectFirst("img[src*=w500], img[src*=w300]")?.attr("src")
+          ?: document.selectFirst(".as-hero img, img[src*=storyblok], img[src*=image.tmdb.org]")?.attr("src")
 
         val plot = document.selectFirst(
             ".as-overview, .overview, .description, .entry-content p, section.single p"
