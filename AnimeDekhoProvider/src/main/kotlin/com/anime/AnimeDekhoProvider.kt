@@ -105,6 +105,7 @@ open class AnimeDekhoProvider : MainAPI() {
     private val emTurboVid   = EmTurboVid()
     private val vidMolyNet   = VidMolyNet()
     private val blakite      = Blakite()
+    private val neoCdn       = NeoCDN()
 
     /**
      * Matches the provider URL with the appropriate extractor instance.
@@ -117,6 +118,7 @@ open class AnimeDekhoProvider : MainAPI() {
     ): Boolean {
         return try {
             when {
+                url.contains("aaa/myth", true) -> { neoCdn.getUrl(url, referer, subtitleCallback, callback); true }
                 url.contains("zephyrflick", true) || url.contains("as-cdn", true) -> { zephyrflick.getUrl(url, referer, subtitleCallback, callback); true }
                 url.contains("awstream", true) -> { awsStream.getUrl(url, referer, subtitleCallback, callback); true }
                 url.contains("abyssplayer", true) || url.contains("playhydrax", true) -> { abyss.getUrl(url, referer, subtitleCallback, callback); true }
@@ -604,13 +606,26 @@ open class AnimeDekhoProvider : MainAPI() {
             coroutineScope {
                 val serverUrls = doc.select("iframe.serversel[src]").map { it.attr("src") }.filter { it.isNotEmpty() }
                 
+                val neoCdnJobs = doc.select("div.player aside.bx.options ul.bx-lst.aa-tbs li a[data-src]").map { a ->
+                    async {
+                        val b64 = a.attr("data-src").trim()
+                        if (b64.isNotBlank()) {
+                            try {
+                                val decoded = base64Decode(b64)
+                                if (decoded.contains("/aaa/myth/play.php")) {
+                                    invokeExtractor(decoded, media.url, subtitleCallback, callback)
+                                }
+                            } catch (e: Exception) { }
+                        }
+                    }
+                }
+
                 val jobs1 = serverUrls.map { serverUrl ->
                     async {
                         try {
                             val innerDoc = app.get(serverUrl).document
                             val innerIframeUrl = innerDoc.selectFirst("iframe[src]")?.attr("src")
                             if (!innerIframeUrl.isNullOrEmpty()) {
-                                // Using custom invokeExtractor instead of loadExtractor
                                 invokeExtractor(innerIframeUrl, media.url, subtitleCallback, callback)
                             }
                         } catch (e: Exception) {
@@ -628,7 +643,6 @@ open class AnimeDekhoProvider : MainAPI() {
                                 val iframeUrl = iframeDoc.selectFirst("iframe")?.attr("src")
                                 
                                 if (!iframeUrl.isNullOrEmpty()) {
-                                    // Using custom invokeExtractor instead of loadExtractor
                                     if (invokeExtractor(iframeUrl, media.url, subtitleCallback, callback)) {
                                         localSuccess = true
                                     }
@@ -641,6 +655,7 @@ open class AnimeDekhoProvider : MainAPI() {
                     }
                 } else emptyList()
 
+                neoCdnJobs.awaitAll()
                 jobs1.awaitAll()
                 val results2 = jobs2.awaitAll()
                 
@@ -649,13 +664,23 @@ open class AnimeDekhoProvider : MainAPI() {
                 }
             }
         } else {
-            // Existing sequential behavior for Series / Episodes
+            doc.select("div.player aside.bx.options ul.bx-lst.aa-tbs li a[data-src]").forEach { a ->
+                val b64 = a.attr("data-src").trim()
+                if (b64.isNotBlank()) {
+                    try {
+                        val decoded = base64Decode(b64)
+                        if (decoded.contains("/aaa/myth/play.php")) {
+                            invokeExtractor(decoded, media.url, subtitleCallback, callback)
+                        }
+                    } catch (e: Exception) { }
+                }
+            }
+
             doc.select("iframe.serversel[src]").map { it.attr("src") }.filter { it.isNotEmpty() }.forEach { serverUrl ->
                 try {
                     val innerDoc = app.get(serverUrl).document
                     val innerIframeUrl = innerDoc.selectFirst("iframe[src]")?.attr("src")
                     if (!innerIframeUrl.isNullOrEmpty()) {
-                        // Using custom invokeExtractor instead of loadExtractor
                         invokeExtractor(innerIframeUrl, media.url, subtitleCallback, callback)
                     }
                 } catch (e: Exception) {
@@ -670,7 +695,6 @@ open class AnimeDekhoProvider : MainAPI() {
                         val iframeUrl = iframeDoc.selectFirst("iframe")?.attr("src")
                         
                         if (!iframeUrl.isNullOrEmpty()) {
-                            // Using custom invokeExtractor instead of loadExtractor
                             if (invokeExtractor(iframeUrl, media.url, subtitleCallback, callback)) {
                                 success = true
                             }
