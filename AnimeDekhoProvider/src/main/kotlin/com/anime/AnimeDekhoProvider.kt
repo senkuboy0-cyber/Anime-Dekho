@@ -118,7 +118,6 @@ open class AnimeDekhoProvider : MainAPI() {
     ): Boolean {
         return try {
             when {
-                url.contains("aaa/myth", true) -> { neoCdn.getUrl(url, referer, subtitleCallback, callback); true }
                 url.contains("zephyrflick", true) || url.contains("as-cdn", true) -> { zephyrflick.getUrl(url, referer, subtitleCallback, callback); true }
                 url.contains("awstream", true) -> { awsStream.getUrl(url, referer, subtitleCallback, callback); true }
                 url.contains("abyssplayer", true) || url.contains("playhydrax", true) -> { abyss.getUrl(url, referer, subtitleCallback, callback); true }
@@ -130,6 +129,7 @@ open class AnimeDekhoProvider : MainAPI() {
                 url.contains("emturbovid", true) || url.contains("turboviplay", true) -> { emTurboVid.getUrl(url, referer, subtitleCallback, callback); true }
                 url.contains("vidmoly", true) -> { vidMolyNet.getUrl(url, referer, subtitleCallback, callback); true }
                 url.contains("blakite", true) -> { blakite.getUrl(url, referer, subtitleCallback, callback); true }
+                url.contains("aaa/myth", true) -> { neoCdn.getUrl(url, referer, subtitleCallback, callback); true }
                 // Fallback for generic extractors registered in Cloudstream
                 else -> loadExtractor(url, referer, subtitleCallback, callback)
             }
@@ -606,20 +606,6 @@ open class AnimeDekhoProvider : MainAPI() {
             coroutineScope {
                 val serverUrls = doc.select("iframe.serversel[src]").map { it.attr("src") }.filter { it.isNotEmpty() }
                 
-                val neoCdnJobs = doc.select("div.player aside.bx.options ul.bx-lst.aa-tbs li a[data-src]").map { a ->
-                    async {
-                        val b64 = a.attr("data-src").trim()
-                        if (b64.isNotBlank()) {
-                            try {
-                                val decoded = base64Decode(b64)
-                                if (decoded.contains("/aaa/myth/play.php")) {
-                                    invokeExtractor(decoded, media.url, subtitleCallback, callback)
-                                }
-                            } catch (e: Exception) { }
-                        }
-                    }
-                }
-
                 val jobs1 = serverUrls.map { serverUrl ->
                     async {
                         try {
@@ -655,27 +641,33 @@ open class AnimeDekhoProvider : MainAPI() {
                     }
                 } else emptyList()
 
-                neoCdnJobs.awaitAll()
+                // NeoCDN is processed last
+                val neoCdnJobs = doc.select("div.player aside.bx.options ul.bx-lst.aa-tbs li a[data-src]").map { a ->
+                    async {
+                        val b64 = a.attr("data-src").trim()
+                        if (b64.isNotBlank()) {
+                            try {
+                                val decoded = base64Decode(b64)
+                                if (decoded.contains("/aaa/myth/play.php")) {
+                                    invokeExtractor(decoded, media.url, subtitleCallback, callback)
+                                }
+                            } catch (e: Exception) { }
+                        }
+                    }
+                }
+
                 jobs1.awaitAll()
                 val results2 = jobs2.awaitAll()
+                neoCdnJobs.awaitAll()
                 
                 if (results2.any { it }) {
                     success = true
                 }
             }
         } else {
-            doc.select("div.player aside.bx.options ul.bx-lst.aa-tbs li a[data-src]").forEach { a ->
-                val b64 = a.attr("data-src").trim()
-                if (b64.isNotBlank()) {
-                    try {
-                        val decoded = base64Decode(b64)
-                        if (decoded.contains("/aaa/myth/play.php")) {
-                            invokeExtractor(decoded, media.url, subtitleCallback, callback)
-                        }
-                    } catch (e: Exception) { }
-                }
-            }
-
+            // Sequential block for Series
+            
+            // 1. Process standard servers first
             doc.select("iframe.serversel[src]").map { it.attr("src") }.filter { it.isNotEmpty() }.forEach { serverUrl ->
                 try {
                     val innerDoc = app.get(serverUrl).document
@@ -688,6 +680,7 @@ open class AnimeDekhoProvider : MainAPI() {
                 }
             }
 
+            // 2. Process trdekho next
             if (!term.isNullOrEmpty()) {
                 (0..10).forEach { i ->
                     try {
@@ -702,6 +695,19 @@ open class AnimeDekhoProvider : MainAPI() {
                     } catch (e: Exception) {
                         // Ignore
                     }
+                }
+            }
+
+            // 3. Process NeoCDN at the very end
+            doc.select("div.player aside.bx.options ul.bx-lst.aa-tbs li a[data-src]").forEach { a ->
+                val b64 = a.attr("data-src").trim()
+                if (b64.isNotBlank()) {
+                    try {
+                        val decoded = base64Decode(b64)
+                        if (decoded.contains("/aaa/myth/play.php")) {
+                            invokeExtractor(decoded, media.url, subtitleCallback, callback)
+                        }
+                    } catch (e: Exception) { }
                 }
             }
         }
