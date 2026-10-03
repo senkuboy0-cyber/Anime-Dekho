@@ -1013,3 +1013,85 @@ class XerverMirror : ExtractorApi() {
         val page: String? = null,
     )
 }
+
+// NeoCDN — animedekho.app/aaa/myth/play.php
+// 1) GET play.php → regex fetch.php?id=XXXX
+// 2) GET /aaa/myth/fetch.php?id=XXXX → JSON sources (progressive MP4)
+class NeoCDN : ExtractorApi() {
+    override var name = "NeoCDN"
+    override var mainUrl = "https://animedekho.app/aaa/myth"
+    override val requiresReferer = true
+
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val headers = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer" to (referer ?: "https://animedekho.app/"),
+        )
+
+        val page = try {
+            app.get(url, headers = headers).text
+        } catch (e: Exception) {
+            Log.e(name, "play.php failed: ${e.message}")
+            return
+        }
+
+        val fetchId = Regex("""fetch\.php\?id=([A-Za-z0-9_-]+)""")
+            .find(page)?.groupValues?.getOrNull(1)
+            ?: run {
+                Log.e(name, "fetch.php id not found")
+                return
+            }
+
+        val apiUrl = "https://animedekho.app/aaa/myth/fetch.php?id=$fetchId"
+        val response = try {
+            app.get(
+                apiUrl,
+                headers = headers + mapOf("Accept" to "application/json"),
+                referer = url
+            ).parsedSafe<NeoCDNResponse>()
+        } catch (e: Exception) {
+            Log.e(name, "fetch.php failed: ${e.message}")
+            return
+        } ?: return
+
+        val sources = response.sources
+        if (sources.isNullOrEmpty()) {
+            Log.e(name, "empty sources")
+            return
+        }
+
+        for (source in sources) {
+            val streamUrl = source.url?.takeIf { it.startsWith("http") } ?: continue
+            callback.invoke(
+                newExtractorLink(
+                    source = name,
+                    name = "$name [${source.type ?: "Unknown"}]",
+                    url = streamUrl,
+                    type = INFER_TYPE
+                ) {
+                    this.quality = getQualityFromName(source.type ?: "")
+                    this.headers = mapOf(
+                        "Referer" to "https://animedekho.app/",
+                        "User-Agent" to headers.getValue("User-Agent")
+                    )
+                }
+            )
+        }
+    }
+
+    data class NeoCDNResponse(
+        val final_url: String? = null,
+        val sources: List<NeoCDNSource>? = null,
+    )
+
+    data class NeoCDNSource(
+        val url: String? = null,
+        val size: String? = null,
+        val type: String? = null, // "360p", "720p", ...
+    )
+}
