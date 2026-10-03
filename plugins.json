@@ -2,7 +2,7 @@
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/AnimeDekhoProvider.cs3",
         "status": 1,
-        "version": 20,
+        "version": 32,
         "name": "AnimeDekhoProvider",
         "internalName": "AnimeDekhoProvider",
         "authors": [
@@ -19,7 +19,7 @@
         ],
         "iconUrl": "https://animedekho.app/wp-content/uploads/2023/07/AnimeDekho-Logo-300x-1.png",
         "apiVersion": 1,
-        "fileHash": "sha256-8b1a8fb1d5a856226b824fd13097aed693ecf6b8a796bf06d64cef185ab3e754",
+        "fileHash": "sha256-16f157f337e761a2dbceda461203f69eee3539f648bb098f7d771cd5d27db9d7",
         "jarFileSize": 545795,
         "jarUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/AnimeDekhoProvider.jar",
         "jarHash": "sha256-a44fd839ad6c6cfe83475d893d8d4ba3ac9ac355b6856f42f5e52cbd26eee149"
