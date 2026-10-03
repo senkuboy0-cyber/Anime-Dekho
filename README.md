@@ -1,40 +1,20 @@
-# <img src="assets/icons/star.svg" width="28" height="28"/> Cloudstream Extension: AnimeDekho, ToonStream & Tooniboy
+# <img src="assets/icons/star.svg" width="28" height="28"/> Cloudstream Extension
 
-A **Cloudstream** extension dedicated to streaming anime, cartoons, and movies from **AnimeDekho**, **ToonStream** and **Tooniboy** with high-quality multi-language audio, Hindi dubbing, and subtitle support.
+A **Cloudstream** extension template dedicated to streaming anime, cartoons, and movies with high-quality multi-language audio, dubbing, and subtitle support. 
+
+> **Note:** This project is created strictly for **educational purposes** and academic papers.
 
 ---
 
 ## <img src="assets/icons/features.svg" width="24" height="24"/> Features
 
-- <img src="assets/icons/check.svg" width="16" height="16"/> **Hindi & Multi-Language** Dubbed Anime and Cartoons
+- <img src="assets/icons/check.svg" width="16" height="16"/> **Multi-Language** Dubbed Anime and Cartoons
 - <img src="assets/icons/check.svg" width="16" height="16"/> **Anime Series & Movies** Streaming
-- <img src="assets/icons/check.svg" width="16" height="16"/> **Multiple Server** Support (Up to 10 Servers)
+- <img src="assets/icons/check.svg" width="16" height="16"/> **Multiple Server** Support
 - <img src="assets/icons/check.svg" width="16" height="16"/> **Search** Functionality
 - <img src="assets/icons/check.svg" width="16" height="16"/> **Cross-Platform** Compatibility
 - <img src="assets/icons/check.svg" width="16" height="16"/> **Subtitle** Support
 - <img src="assets/icons/check.svg" width="16" height="16"/> **TMDB Logo & Backdrop** Integration
-
----
-
-## <img src="assets/icons/package.svg" width="24" height="24"/> Supported Sources
-
-| Source | Language | Type |
-|--------|----------|------|
-| [AnimeDekho](https://animedekho.app/home/) | Hindi | Anime, Movies, Series, Cartoon |
-| [ToonStream](https://toon-stream.site/home/) | Multi-Language | Anime, Movies, Cartoon |
-| [Tooniboy](https://tooniboy.co/) | Hindi & Multi-Language | Anime, Movies, Series, Cartoon |
-
----
-
-## <img src="assets/icons/folder.svg" width="24" height="24"/> Categories
-
-- <img src="assets/icons/star.svg" width="16" height="16"/> **Series**
-- <img src="assets/icons/star.svg" width="16" height="16"/> **Movies**
-- <img src="assets/icons/star.svg" width="16" height="16"/> **Anime**
-- <img src="assets/icons/star.svg" width="16" height="16"/> **Cartoon**
-- <img src="assets/icons/star.svg" width="16" height="16"/> **Hindi Dub**
-- <img src="assets/icons/star.svg" width="16" height="16"/> **Tamil & Telugu**
-- <img src="assets/icons/star.svg" width="16" height="16"/> **Adventure**
 
 ---
 
@@ -53,15 +33,16 @@ A **Cloudstream** extension dedicated to streaming anime, cartoons, and movies f
 
 ---
 
-## <img src="assets/icons/warning.svg" width="24" height="24"/> Disclaimer
+## <img src="assets/icons/warning.svg" width="24" height="24"/> Disclaimer & Educational Use
 
-**We do not host, upload, or manage any videos, media files, or content.** This extension is for educational purposes only and acts strictly as a web scraper. It simply fetches video links from third-party websites that are publicly available on the internet. All content is hosted by non-affiliated external third parties. We take no responsibility for the copyright, legality, or accuracy of the hosted material. Use this extension at your own risk.
+**We do not host, upload, or manage any videos, media files, or content.** This extension is developed strictly for **educational purposes and academic research**. It acts merely as a web scraper demonstrating how to fetch data from publicly available sources on the internet. 
+
+All content is hosted by non-affiliated external third parties. We take no responsibility for the copyright, legality, or accuracy of the hosted material. Use this extension at your own risk.
 
 ---
 
 ## <img src="assets/icons/heart.svg" width="24" height="24"/> Credits
 
-- Original extension by [Phisher98](https://github.com/phisher98)
 - Cloudstream3 by [recloudstream](https://github.com/recloudstream)
 
 ---
