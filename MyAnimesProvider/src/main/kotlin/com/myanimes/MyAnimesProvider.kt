@@ -63,6 +63,12 @@ data class PlayerSource(
     @JsonProperty("direct") val direct: Boolean? = null
 )
 
+// Data class to preserve poster from search/home page to details page
+data class Media(
+    @JsonProperty("url") val url: String,
+    @JsonProperty("poster") val poster: String? = null
+)
+
 class MyAnimesProvider : MainAPI() {
     override var mainUrl = "https://myanimes.in"
     override var name = "My Animes"
@@ -280,12 +286,15 @@ class MyAnimesProvider : MainAPI() {
                     val title = item.title ?: return@mapNotNull null
                     val poster = item.image
                     val isMovie = href.contains("/movies/") || item.type.equals("movie", true)
+                    
+                    val mediaJson = AppUtils.toJson(Media(href, poster))
+                    
                     if (isMovie) {
-                        newMovieSearchResponse(title, href, TvType.AnimeMovie) {
+                        newMovieSearchResponse(title, mediaJson, TvType.AnimeMovie) {
                             this.posterUrl = poster
                         }
                     } else {
-                        newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
+                        newTvSeriesSearchResponse(title, mediaJson, TvType.TvSeries) {
                             this.posterUrl = poster
                         }
                     }
@@ -302,18 +311,27 @@ class MyAnimesProvider : MainAPI() {
     // --- Details / Load ---
 
     override suspend fun load(url: String): LoadResponse? {
-        val document = app.get(url).document
-        val isMovie = url.contains("/movies/")
+        val media = try {
+            if (url.startsWith("{")) AppUtils.parseJson<Media>(url) else Media(url, null)
+        } catch (e: Exception) {
+            Media(url, null)
+        }
+        
+        val actualUrl = media.url
+        val document = app.get(actualUrl).document
+        val isMovie = actualUrl.contains("/movies/")
 
         val title = document.selectFirst("h1")?.text()?.trim()
             ?: document.selectFirst("h1 a")?.text()?.trim()
             ?: return null
 
-        // Fix: Prioritize only actual vertical posters instead of hero/backdrop images
-        val poster = document.selectFirst(".as-poster img, .post-thumbnail img")?.let {
+        // Fix: Strictly use the main poster or the poster passed from the homepage.
+        // No random image fallbacks to prevent showing the wrong anime in history.
+        val scrapedPoster = document.selectFirst(".as-poster img, .post-thumbnail img")?.let {
             it.attr("src").ifBlank { it.attr("data-src") }
-        } ?: document.selectFirst("img[src*=w500], img[src*=w300]")?.attr("src")
-          ?: document.selectFirst(".as-hero img, img[src*=storyblok], img[src*=image.tmdb.org]")?.attr("src")
+        }
+        
+        val poster = scrapedPoster ?: media.poster 
 
         val plot = document.selectFirst(
             ".as-overview, .overview, .description, .entry-content p, section.single p"
@@ -338,13 +356,13 @@ class MyAnimesProvider : MainAPI() {
 
         val recommendations = document.select("article.as-card")
             .mapNotNull { it.toSearchResult() }
-            .filter { it.url != url }
+            .filter { !it.url.contains(actualUrl) }
 
         val tmdbTitle = cleanTitleForTmdb(title)
         val tmdbDetails = fetchTmdbDetails(document, tmdbTitle, !isMovie, year)
 
         if (isMovie) {
-            return newMovieLoadResponse(title, url, TvType.AnimeMovie, url) {
+            return newMovieLoadResponse(title, url, TvType.AnimeMovie, actualUrl) {
                 this.posterUrl = poster
                 this.backgroundPosterUrl = tmdbDetails.backdrop ?: poster
                 this.logoUrl = tmdbDetails.logo
@@ -427,7 +445,14 @@ class MyAnimesProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val document = app.get(data).document
+        // Fallback for robust parsing just in case data is passed as JSON
+        val actualUrl = try {
+            if (data.startsWith("{")) AppUtils.parseJson<Media>(data).url else data
+        } catch (e: Exception) {
+            data
+        }
+
+        val document = app.get(actualUrl).document
         var found = false
 
         val sourcesJson = document.selectFirst("section.as-player")?.attr("data-sources")
@@ -607,12 +632,14 @@ class MyAnimesProvider : MainAPI() {
             it.attr("src").ifBlank { it.attr("data-src") }
         }
 
+        val mediaJson = AppUtils.toJson(Media(href, poster))
+
         return if (href.contains("/movies/")) {
-            newMovieSearchResponse(title, href, TvType.AnimeMovie) {
+            newMovieSearchResponse(title, mediaJson, TvType.AnimeMovie) {
                 this.posterUrl = poster
             }
         } else {
-            newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
+            newTvSeriesSearchResponse(title, mediaJson, TvType.TvSeries) {
                 this.posterUrl = poster
             }
         }
