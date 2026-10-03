@@ -9,7 +9,7 @@
             "senkuboy0-cyber"
         ],
         "description": "AnimeDekho: The best place for Hindi Dubbed Anime, Movies & Cartoons.",
-        "fileSize": 112112,
+        "fileSize": 114591,
         "repositoryUrl": "https://github.com/senkuboy0-cyber/Anime-Dekho",
         "language": "hi",
         "tvTypes": [
@@ -19,10 +19,10 @@
         ],
         "iconUrl": "https://animedekho.app/wp-content/uploads/2023/07/AnimeDekho-Logo-300x-1.png",
         "apiVersion": 1,
-        "fileHash": "sha256-41c374f9e60a04299f3f4abfcafb275cb11e9543f1c1774866762df4e010c108",
-        "jarFileSize": 536671,
+        "fileHash": "sha256-8b1a8fb1d5a856226b824fd13097aed693ecf6b8a796bf06d64cef185ab3e754",
+        "jarFileSize": 545795,
         "jarUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/AnimeDekhoProvider.jar",
-        "jarHash": "sha256-1160c6ee817a835a436e513a4fd5f67cd3df741d9727051f3ff4dc901ef79655"
+        "jarHash": "sha256-a44fd839ad6c6cfe83475d893d8d4ba3ac9ac355b6856f42f5e52cbd26eee149"
     },
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/MyAnimesProvider.cs3",
