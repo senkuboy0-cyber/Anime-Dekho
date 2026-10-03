@@ -33,10 +33,10 @@ class Zephyrflick : AWSStream() {
     override val requiresReferer = true
 }
 
-// Handles the Vexal server, utilizing the base AWSStream extraction logic.
-class Vexal : AWSStream() {
-    override val name = "Vexal"
-    override val mainUrl = "https://vexal.top"
+// Handles the Ravok server, utilizing the base AWSStream extraction logic.
+class Ravok : AWSStream() {
+    override val name = "Ravok"
+    override val mainUrl = "https://ravok.buzz"
     override val requiresReferer = true
 }
 
@@ -825,7 +825,7 @@ class Rpmshare : UpnsPlayer() {
 }
 
 class Streamp2p : UpnsPlayer() {
-    override var name = "Streamp2p"
+    override var name = "StreamPro"
     override var mainUrl = "https://zoro.streamcasthub.store"
 }
 
