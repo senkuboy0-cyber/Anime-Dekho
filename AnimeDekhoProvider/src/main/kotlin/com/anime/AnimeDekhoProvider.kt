@@ -6,6 +6,9 @@ import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -585,45 +588,100 @@ open class AnimeDekhoProvider : MainAPI() {
             return false
         } ?: return false
 
+        val isMovie = media.mediaType == 1
+
         val headers = mapOf("Cookie" to "toronites_server=vidstream")
         val doc = app.get(media.url, headers = headers).document
-        
-        doc.select("iframe.serversel[src]").map { it.attr("src") }.filter { it.isNotEmpty() }.forEach { serverUrl ->
-            try {
-                val innerDoc = app.get(serverUrl).document
-                val innerIframeUrl = innerDoc.selectFirst("iframe[src]")?.attr("src")
-                if (!innerIframeUrl.isNullOrEmpty()) {
-                    // Using custom invokeExtractor instead of loadExtractor
-                    invokeExtractor(innerIframeUrl, media.url, subtitleCallback, callback)
-                }
-            } catch (e: Exception) {
-                // Ignore failure for individual server
-            }
-        }
 
         val bodyClass = try {
             app.get(media.url).document.selectFirst("body")?.attr("class")
         } catch (e: Exception) { null }
 
         val term = bodyClass?.let { Regex("(?:term|postid)-(\\d+)").find(it)?.groupValues?.get(1) }
-        if (term.isNullOrEmpty()) return false
-
         var success = false
-        (0..10).forEach { i ->
-            try {
-                val iframeDoc = app.get("$mainUrl/?trdekho=$i&trid=$term&trtype=${media.mediaType}").document
-                val iframeUrl = iframeDoc.selectFirst("iframe")?.attr("src")
+
+        if (isMovie) {
+            coroutineScope {
+                val serverUrls = doc.select("iframe.serversel[src]").map { it.attr("src") }.filter { it.isNotEmpty() }
                 
-                if (!iframeUrl.isNullOrEmpty()) {
-                    // Using custom invokeExtractor instead of loadExtractor
-                    if (invokeExtractor(iframeUrl, media.url, subtitleCallback, callback)) {
-                        success = true
+                val jobs1 = serverUrls.map { serverUrl ->
+                    async {
+                        try {
+                            val innerDoc = app.get(serverUrl).document
+                            val innerIframeUrl = innerDoc.selectFirst("iframe[src]")?.attr("src")
+                            if (!innerIframeUrl.isNullOrEmpty()) {
+                                // Using custom invokeExtractor instead of loadExtractor
+                                invokeExtractor(innerIframeUrl, media.url, subtitleCallback, callback)
+                            }
+                        } catch (e: Exception) {
+                            // Ignore failure for individual server
+                        }
                     }
                 }
-            } catch (e: Exception) {
-                // Ignore
+
+                val jobs2 = if (!term.isNullOrEmpty()) {
+                    (0..10).map { i ->
+                        async {
+                            var localSuccess = false
+                            try {
+                                val iframeDoc = app.get("$mainUrl/?trdekho=$i&trid=$term&trtype=${media.mediaType}").document
+                                val iframeUrl = iframeDoc.selectFirst("iframe")?.attr("src")
+                                
+                                if (!iframeUrl.isNullOrEmpty()) {
+                                    // Using custom invokeExtractor instead of loadExtractor
+                                    if (invokeExtractor(iframeUrl, media.url, subtitleCallback, callback)) {
+                                        localSuccess = true
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                // Ignore
+                            }
+                            localSuccess
+                        }
+                    }
+                } else emptyList()
+
+                jobs1.awaitAll()
+                val results2 = jobs2.awaitAll()
+                
+                if (results2.any { it }) {
+                    success = true
+                }
+            }
+        } else {
+            // Existing sequential behavior for Series / Episodes
+            doc.select("iframe.serversel[src]").map { it.attr("src") }.filter { it.isNotEmpty() }.forEach { serverUrl ->
+                try {
+                    val innerDoc = app.get(serverUrl).document
+                    val innerIframeUrl = innerDoc.selectFirst("iframe[src]")?.attr("src")
+                    if (!innerIframeUrl.isNullOrEmpty()) {
+                        // Using custom invokeExtractor instead of loadExtractor
+                        invokeExtractor(innerIframeUrl, media.url, subtitleCallback, callback)
+                    }
+                } catch (e: Exception) {
+                    // Ignore failure for individual server
+                }
+            }
+
+            if (!term.isNullOrEmpty()) {
+                (0..10).forEach { i ->
+                    try {
+                        val iframeDoc = app.get("$mainUrl/?trdekho=$i&trid=$term&trtype=${media.mediaType}").document
+                        val iframeUrl = iframeDoc.selectFirst("iframe")?.attr("src")
+                        
+                        if (!iframeUrl.isNullOrEmpty()) {
+                            // Using custom invokeExtractor instead of loadExtractor
+                            if (invokeExtractor(iframeUrl, media.url, subtitleCallback, callback)) {
+                                success = true
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // Ignore
+                    }
+                }
             }
         }
+
         return success
     }
 
