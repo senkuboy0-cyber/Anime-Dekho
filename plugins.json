@@ -27,14 +27,14 @@
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/MyAnimesProvider.cs3",
         "status": 1,
-        "version": 1,
+        "version": 10,
         "name": "MyAnimesProvider",
         "internalName": "MyAnimesProvider",
         "authors": [
             "senkuboy0-cyber"
         ],
         "description": "MyAnimes: Hindi, Tamil, Telugu, English multi-audio anime, series and movies.",
-        "fileSize": 55938,
+        "fileSize": 55939,
         "repositoryUrl": "https://github.com/senkuboy0-cyber/Anime-Dekho",
         "language": "hi",
         "tvTypes": [
@@ -46,7 +46,7 @@
         ],
         "iconUrl": "https://myanimes.in/wp-content/uploads/2026/09/cropped-ChatGPT-Image-Sep-21-2026-08_48_22-AM.png",
         "apiVersion": 1,
-        "fileHash": "sha256-f1d7de3a023452438d5e13c75e1e3cbb5b83eb468f44ccf363889c8e7a2eee4e",
+        "fileHash": "sha256-6769c352070f67c6f4ef3346c9aece23c351de7ca9ff0bd7b33f7ca71c735688",
         "jarFileSize": 207964,
         "jarUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/MyAnimesProvider.jar",
         "jarHash": "sha256-3b39eda05cc3dbd933a4afa50decbeda4dbfce864b491347abcdceb3038472d3"
