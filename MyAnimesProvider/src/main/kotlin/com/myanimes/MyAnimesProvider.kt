@@ -1,6 +1,7 @@
 package com.myanimes
 
 import com.fasterxml.jackson.annotation.JsonProperty
+import com.google.gson.Gson
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
@@ -287,7 +288,7 @@ class MyAnimesProvider : MainAPI() {
                     val poster = item.image
                     val isMovie = href.contains("/movies/") || item.type.equals("movie", true)
                     
-                    val mediaJson = AppUtils.toJson(Media(href, poster))
+                    val mediaJson = Gson().toJson(Media(href, poster))
                     
                     if (isMovie) {
                         newMovieSearchResponse(title, mediaJson, TvType.AnimeMovie) {
@@ -312,7 +313,7 @@ class MyAnimesProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         val media = try {
-            if (url.startsWith("{")) AppUtils.parseJson<Media>(url) else Media(url, null)
+            if (url.startsWith("{")) Gson().fromJson(url, Media::class.java) else Media(url, null)
         } catch (e: Exception) {
             Media(url, null)
         }
@@ -447,7 +448,7 @@ class MyAnimesProvider : MainAPI() {
     ): Boolean {
         // Fallback for robust parsing just in case data is passed as JSON
         val actualUrl = try {
-            if (data.startsWith("{")) AppUtils.parseJson<Media>(data).url else data
+            if (data.startsWith("{")) Gson().fromJson(data, Media::class.java).url else data
         } catch (e: Exception) {
             data
         }
@@ -632,7 +633,7 @@ class MyAnimesProvider : MainAPI() {
             it.attr("src").ifBlank { it.attr("data-src") }
         }
 
-        val mediaJson = AppUtils.toJson(Media(href, poster))
+        val mediaJson = Gson().toJson(Media(href, poster))
 
         return if (href.contains("/movies/")) {
             newMovieSearchResponse(title, mediaJson, TvType.AnimeMovie) {
