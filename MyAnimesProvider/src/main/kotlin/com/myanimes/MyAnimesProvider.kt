@@ -326,13 +326,11 @@ class MyAnimesProvider : MainAPI() {
             ?: document.selectFirst("h1 a")?.text()?.trim()
             ?: return null
 
-        // Fix: Strictly use the main poster or the poster passed from the homepage.
-        // No random image fallbacks to prevent showing the wrong anime in history.
-        val scrapedPoster = document.selectFirst(".as-poster img, .post-thumbnail img")?.let {
-            it.attr("src").ifBlank { it.attr("data-src") }
-        }
-        
-        val poster = scrapedPoster ?: media.poster 
+        // সবার আগে মেইন পেজ থেকে আসা poster টাকেই নেওয়া হচ্ছে। যদি সেটা কোনো কারণে না থাকে, তবেই পেজ থেকে স্ক্র্যাপ করবে।
+        val poster = media.poster?.takeIf { it.isNotBlank() } 
+            ?: document.selectFirst(".as-poster img, .post-thumbnail img")?.let {
+                it.attr("src").ifBlank { it.attr("data-src") }
+            }
 
         val plot = document.selectFirst(
             ".as-overview, .overview, .description, .entry-content p, section.single p"
