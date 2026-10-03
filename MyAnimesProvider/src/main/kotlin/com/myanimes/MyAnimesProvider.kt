@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
+import com.lagradost.cloudstream3.utils.AppUtils
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.nodes.Element
@@ -271,7 +272,7 @@ class MyAnimesProvider : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         try {
-            val apiRes = app.get("\( searchApi?q= \){encodeUri(query)}")
+            val apiRes = app.get("$searchApi?q=${encodeUri(query)}")
                 .parsedSafe<ArrayList<AnimeSaltSearchItem>>()
             if (!apiRes.isNullOrEmpty()) {
                 return apiRes.mapNotNull { item ->
@@ -294,7 +295,7 @@ class MyAnimesProvider : MainAPI() {
             Log.e("MyAnimes", "Search API failed: ${e.message}")
         }
 
-        val document = app.get("\( mainUrl/?s= \){encodeUri(query)}").document
+        val document = app.get("$mainUrl/?s=${encodeUri(query)}").document
         return document.select("article.as-card").mapNotNull { it.toSearchResult() }
     }
 
@@ -431,7 +432,7 @@ class MyAnimesProvider : MainAPI() {
         val sourcesJson = document.selectFirst("section.as-player")?.attr("data-sources")
         val sources = try {
             if (!sourcesJson.isNullOrBlank()) {
-                parseJson<List<PlayerSource>>(sourcesJson)
+                AppUtils.parseJson<List<PlayerSource>>(sourcesJson)
             } else emptyList()
         } catch (e: Exception) {
             Log.e("MyAnimes", "data-sources parse failed: ${e.message}")
@@ -552,17 +553,15 @@ class MyAnimesProvider : MainAPI() {
                     // so we wrap callback to tag the language.
                     val taggedCallback: (ExtractorLink) -> Unit = { link ->
                         callback(
-                            newExtractorLink(
+                            ExtractorLink(
                                 source = link.source,
-                                name = if (lang.equals("Default", true)) link.name
-                                else "${link.name} [$lang]",
+                                name = if (lang.equals("Default", true)) link.name else "${link.name} [$lang]",
                                 url = link.url,
-                                type = link.type
-                            ) {
-                                this.quality = link.quality
-                                this.headers = link.headers
-                                this.referer = link.referer
-                            }
+                                referer = link.referer,
+                                quality = link.quality,
+                                type = link.type,
+                                headers = link.headers
+                            )
                         )
                     }
                     extAbyss.getUrl(playerUrl, mainUrl, subtitleCallback, taggedCallback)
