@@ -6,8 +6,6 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
-import org.jsoup.Jsoup
-import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
 import kotlin.math.abs
@@ -49,9 +47,19 @@ data class TmdbDetails(
     val backdrop: String?
 )
 
-data class LoadMoreResponse(
-    @JsonProperty("next") val next: Boolean? = null,
-    @JsonProperty("html") val html: String? = null
+data class AnimeSaltSearchItem(
+    @JsonProperty("title") val title: String? = null,
+    @JsonProperty("url") val url: String? = null,
+    @JsonProperty("image") val image: String? = null,
+    @JsonProperty("type") val type: String? = null
+)
+
+data class PlayerSource(
+    @JsonProperty("url") val url: String? = null,
+    @JsonProperty("language") val language: String? = null,
+    @JsonProperty("server") val server: String? = null,
+    @JsonProperty("quality") val quality: String? = null,
+    @JsonProperty("direct") val direct: Boolean? = null
 )
 
 class MyAnimesProvider : MainAPI() {
@@ -70,22 +78,22 @@ class MyAnimesProvider : MainAPI() {
     )
 
     override val mainPage = mainPageOf(
-        "$mainUrl/" to "Fresh Drop",
+        "$mainUrl/" to "Latest Drop",
         "$mainUrl/series/" to "Series",
         "$mainUrl/movies/" to "Movies",
-        "$mainUrl/category/crunchyroll/" to "Crunchyroll"
+        "$mainUrl/category/crunchyroll/" to "Crunchyroll",
+        "$mainUrl/category/ongoing/?type=series" to "On-Air Series"
     )
 
-    // --- Extractor Instances ---
     private val extAbyss = Abyss()
     private val extStreamP2P = StreamP2P()
     private val extCloudy = Cloudy()
 
-    // --- TMDB API Constants ---
     private val TMDB_API = "https://api.themoviedb.org/3"
     private val TMDB_KEY = "1865f43a0549ca50d341dd9ab8b29f49"
     private val TMDB_IMG = "https://image.tmdb.org/t/p/original"
     private val normalizeRegex = Regex("[^a-zA-Z0-9]")
+    private val searchApi = "$mainUrl/wp-json/animesalt/v1/search"
 
     private fun getResultYear(result: TmdbResult): Int? {
         val dateString = result.releaseDate ?: result.firstAirDate
@@ -130,19 +138,24 @@ class MyAnimesProvider : MainAPI() {
     }
 
     private suspend fun fetchTmdbDetails(
-        document: Document,
+        document: org.jsoup.nodes.Document,
         title: String,
         isSeries: Boolean,
         year: Int?
     ): TmdbDetails {
         return try {
             val safeTitle = encodeUri(title)
-            val searchRes = app.get("$TMDB_API/search/multi?api_key=$TMDB_KEY&query=$safeTitle").parsedSafe<TmdbSearch>()
-            
-            val validResults = searchRes?.results?.filter { it.mediaType == "movie" || it.mediaType == "tv" } ?: emptyList()
+            val searchRes = app.get("$TMDB_API/search/multi?api_key=$TMDB_KEY&query=$safeTitle")
+                .parsedSafe<TmdbSearch>()
+
+            val validResults = searchRes?.results?.filter {
+                it.mediaType == "movie" || it.mediaType == "tv"
+            } ?: emptyList()
             val normTitle = normalizeTitle(title)
 
-            val exactCandidates = validResults.filter { normalizeTitle(it.title ?: it.name) == normTitle }
+            val exactCandidates = validResults.filter {
+                normalizeTitle(it.title ?: it.name) == normTitle
+            }
             var bestMatch = pickBestResult(exactCandidates, year)
 
             if (bestMatch == null && normTitle.length >= 6) {
@@ -163,10 +176,14 @@ class MyAnimesProvider : MainAPI() {
                 }.firstOrNull()
 
                 if (imdbId != null) {
-                    val findRes = app.get("$TMDB_API/find/$imdbId?api_key=$TMDB_KEY&external_source=imdb_id").parsedSafe<TmdbFind>()
-                    val match = if (isSeries) findRes?.tvShows?.firstOrNull() ?: findRes?.movies?.firstOrNull()
-                                else findRes?.movies?.firstOrNull() ?: findRes?.tvShows?.firstOrNull()
-                    
+                    val findRes = app.get(
+                        "$TMDB_API/find/$imdbId?api_key=$TMDB_KEY&external_source=imdb_id"
+                    ).parsedSafe<TmdbFind>()
+                    val match = if (isSeries) {
+                        findRes?.tvShows?.firstOrNull() ?: findRes?.movies?.firstOrNull()
+                    } else {
+                        findRes?.movies?.firstOrNull() ?: findRes?.tvShows?.firstOrNull()
+                    }
                     if (match != null) {
                         tmdbId = match.id
                         actualMediaType = match.mediaType ?: actualMediaType
@@ -182,24 +199,27 @@ class MyAnimesProvider : MainAPI() {
 
             if (tmdbId == null) return TmdbDetails(null, null, null, null)
 
-            val images = app.get("$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY").parsedSafe<TmdbImages>()
+            val images = app.get(
+                "$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY"
+            ).parsedSafe<TmdbImages>()
+
             var logoUrl: String? = null
             var backdropUrl: String? = null
 
             if (images != null) {
-                val validLogos = images.logos?.filter { it.filePath?.endsWith(".svg", ignoreCase = true) != true } ?: emptyList()
+                val validLogos = images.logos?.filter {
+                    it.filePath?.endsWith(".svg", ignoreCase = true) != true
+                } ?: emptyList()
                 val bestLogo = validLogos.firstOrNull { it.lang == "en" }
                     ?: validLogos.firstOrNull { it.lang == null }
                     ?: validLogos.firstOrNull { it.lang == "ja" }
                     ?: validLogos.firstOrNull()
-                
                 bestLogo?.filePath?.let { logoUrl = "$TMDB_IMG$it" }
 
                 val backdrops = images.backdrops ?: emptyList()
                 val bestBackdrop = backdrops.firstOrNull { it.lang == null }
                     ?: backdrops.firstOrNull { it.lang == "en" }
                     ?: backdrops.firstOrNull()
-                
                 bestBackdrop?.filePath?.let { backdropUrl = "$TMDB_IMG$it" }
             }
 
@@ -217,82 +237,65 @@ class MyAnimesProvider : MainAPI() {
 
         if (isHome) {
             if (page > 1) return newHomePageResponse(request.name, emptyList(), false)
-
             val document = app.get(mainUrl).document
-            val home = document.select("section.latest-drop article.post").mapNotNull { it.toSearchResult() }
+            val home = document.select("section.as-latest-drop article.as-card")
+                .mapNotNull { it.toSearchResult() }
             return newHomePageResponse(request.name, home, false)
         }
 
-        if (page <= 1) {
-            val document = app.get(request.data).document
-            val home = document.select("article.post").mapNotNull { it.toSearchResult() }
-            val hasNext = document.selectFirst("p[data-loadmore] button:not([disabled])") != null
-                    || document.selectFirst("link[rel=next]") != null
-            return newHomePageResponse(request.name, home, hasNext)
-        }
-
-        return try {
-            val baseDoc = app.get(request.data).document
-            val nonce = Regex(""""nonce"\s*:\s*"([^"]+)"""").find(baseDoc.html())?.groupValues?.get(1)
-                ?: return newHomePageResponse(request.name, emptyList(), false)
-
-            val filters = baseDoc.selectFirst("[data-filters]")
-            val taxonomy = filters?.attr("data-taxonomy")?.ifBlank { "none" } ?: "none"
-            val search = filters?.attr("data-search")?.ifBlank { "none" } ?: "none"
-            val term = filters?.attr("data-term")?.ifBlank { "none" } ?: "none"
-            val type = filters?.attr("data-type")?.ifBlank { "series" } ?: "series"
-
-            val varsJson = buildString {
-                append("{")
-                append("\"_wpsearch\":\"$nonce\",")
-                append("\"taxonomy\":\"$taxonomy\",")
-                append("\"search\":\"$search\",")
-                append("\"term\":\"$term\",")
-                append("\"type\":\"$type\",")
-                append("\"genres\":[],")
-                append("\"years\":[],")
-                append("\"sort\":1,")
-                append("\"page\":$page")
-                append("}")
+        val url = if (page <= 1) {
+            request.data
+        } else {
+            val base = request.data.trimEnd('/')
+            when {
+                base.contains("/page/") -> base.replace(Regex("/page/\\d+"), "/page/$page")
+                base.contains("?") -> {
+                    val path = base.substringBefore("?")
+                    val query = base.substringAfter("?")
+                    "$path/page/$page/?$query"
+                }
+                else -> "$base/page/$page/"
             }
-
-            val response = app.post(
-                "$mainUrl/wp-admin/admin-ajax.php",
-                data = mapOf(
-                    "action" to "action_search",
-                    "vars" to varsJson
-                ),
-                headers = mapOf(
-                    "Content-Type" to "application/x-www-form-urlencoded",
-                    "X-WP-Nonce" to nonce,
-                    "X-Requested-With" to "XMLHttpRequest"
-                )
-            ).parsedSafe<LoadMoreResponse>()
-
-            val html = response?.html ?: return newHomePageResponse(request.name, emptyList(), false)
-            val doc = Jsoup.parse(html)
-            val home = doc.select("article.post").mapNotNull { it.toSearchResult() }
-            val hasNext = response.next == true
-
-            newHomePageResponse(request.name, home, hasNext)
-        } catch (e: Exception) {
-            Log.e("MyAnimes", "Load more failed: ${e.message}")
-            newHomePageResponse(request.name, emptyList(), false)
         }
+
+        val document = app.get(url).document
+        val home = document.select("article.as-card").mapNotNull { it.toSearchResult() }
+        val hasNext = document.selectFirst("nav.as-pagination a.next.page-numbers") != null
+                || document.selectFirst("nav.as-pagination a.page-numbers[href*=/page/${page + 1}]") != null
+                || document.selectFirst("link[rel=next]") != null
+
+        return newHomePageResponse(request.name, home, hasNext)
     }
 
     // --- Search ---
 
     override suspend fun search(query: String): List<SearchResponse> {
-        return searchPage(query, 1)
-    }
+        try {
+            val apiRes = app.get("\( searchApi?q= \){encodeUri(query)}")
+                .parsedSafe<ArrayList<AnimeSaltSearchItem>>()
+            if (!apiRes.isNullOrEmpty()) {
+                return apiRes.mapNotNull { item ->
+                    val href = item.url ?: return@mapNotNull null
+                    val title = item.title ?: return@mapNotNull null
+                    val poster = item.image
+                    val isMovie = href.contains("/movies/") || item.type.equals("movie", true)
+                    if (isMovie) {
+                        newMovieSearchResponse(title, href, TvType.AnimeMovie) {
+                            this.posterUrl = poster
+                        }
+                    } else {
+                        newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
+                            this.posterUrl = poster
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("MyAnimes", "Search API failed: ${e.message}")
+        }
 
-    private suspend fun searchPage(query: String, page: Int): List<SearchResponse> {
-        val safeQuery = encodeUri(query)
-        val url = if (page <= 1) "$mainUrl/?s=$safeQuery" else "$mainUrl/page/$page/?s=$safeQuery"
-        
-        val document = app.get(url).document
-        return document.select("article.post").mapNotNull { it.toSearchResult() }
+        val document = app.get("\( mainUrl/?s= \){encodeUri(query)}").document
+        return document.select("article.as-card").mapNotNull { it.toSearchResult() }
     }
 
     // --- Details / Load ---
@@ -301,24 +304,39 @@ class MyAnimesProvider : MainAPI() {
         val document = app.get(url).document
         val isMovie = url.contains("/movies/")
 
-        val title = document.selectFirst("h1.entry-title, h1")?.text()?.trim() ?: return null
-        val poster = document.selectFirst("img[src*=image.tmdb.org], .post-thumbnail img, figure img")?.attr("src")
-        val plot = document.selectFirst(".entry-content p, .description p, section.single p")?.text()?.trim()
+        val title = document.selectFirst("h1")?.text()?.trim()
+            ?: document.selectFirst("h1 a")?.text()?.trim()
+            ?: return null
 
-        val year = document.selectFirst("span.year")?.text()?.trim()?.toIntOrNull()
-            ?: Regex("""\b(19|20)\d{2}\b""").find(document.selectFirst(".entry-meta")?.text().orEmpty())?.value?.toIntOrNull()
+        val poster = document.selectFirst(
+            ".as-poster img, .as-hero img, img[src*=image.tmdb.org], img[src*=storyblok], .post-thumbnail img"
+        )?.attr("src")?.ifBlank { null }
+            ?: document.selectFirst("img[src*=tmdb], img[src*=w500], img[src*=w1280]")?.attr("src")
 
-        val tags = document.select("li.rw span a[href*=/category/], .categories a, a[href*=/category/]")
+        val plot = document.selectFirst(
+            ".as-overview, .overview, .description, .entry-content p, section.single p"
+        )?.text()?.trim()
+
+        val year = document.selectFirst("span.year, .as-meta")?.text()?.let {
+            Regex("""\b(19|20)\d{2}\b""").find(it)?.value?.toIntOrNull()
+        } ?: Regex("""\b(19|20)\d{2}\b""").find(document.text())?.value?.toIntOrNull()
+
+        val tags = document.select("a[href*=/category/]")
             .map { it.text().trim() }
-            .filter { it.isNotBlank() && !it.equals("Watch Now", true) }
+            .filter {
+                it.isNotBlank()
+                        && !it.equals("Watch Now", true)
+                        && !it.equals("View More", true)
+            }
             .distinct()
 
         val actors = document.select("li.rw")
             .firstOrNull { it.selectFirst("span")?.text()?.contains("Cast", true) == true }
             ?.select("a")?.map { it.text().trim() }.orEmpty()
 
-        val recommendations = document.select("section.nt-related article.post, aside.right article.post")
+        val recommendations = document.select("article.as-card")
             .mapNotNull { it.toSearchResult() }
+            .filter { it.url != url }
 
         val tmdbTitle = cleanTitleForTmdb(title)
         val tmdbDetails = fetchTmdbDetails(document, tmdbTitle, !isMovie, year)
@@ -338,55 +356,43 @@ class MyAnimesProvider : MainAPI() {
 
         val episodes = mutableListOf<Episode>()
 
-        // Updated selector to support both old format (.seasons-lst) and new format (.aa-episode-grid)
-        document.select("ul.seasons-lst > li, ul.aa-episode-grid > li").forEach { li ->
-            val a = li.selectFirst("a[href*=/episode/]") ?: return@forEach
-            val href = fixUrl(a.attr("href"))
+        document.select("div.as-episode-grid").forEach { grid ->
+            val seasonFromPanel = grid.attr("data-season-panel").toIntOrNull()
+                ?: grid.id().substringAfter("season-", "").toIntOrNull()
+                ?: 1
 
-            // Find title element in both structures (old: h3.title, new: h3 inside .aa-episode-body)
-            val titleEl = li.selectFirst("h3.title, .aa-episode-body h3, h3")
-            
-            // Extract Season and Episode string, check both the old span in title and new .aa-episode-topline span
-            val seText = titleEl?.selectFirst("span")?.text()?.trim().orEmpty().ifEmpty {
-                li.selectFirst(".aa-episode-topline span")?.text()?.trim().orEmpty()
-            }
-            
-            val seMatch = Regex("""S(\d+)\s*-?\s*E(\d+)""", RegexOption.IGNORE_CASE).find(seText)
-                ?: Regex("""(\d+)x(\d+)""").find(href)
-
-            val seasonNum = seMatch?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 1
-            val epNum = seMatch?.groupValues?.getOrNull(2)?.toIntOrNull() ?: 0
-
-            // Fetch episode name gracefully using ownText() to exclude span tags, fallback to cleaned text or image alt
-            val epName = titleEl?.ownText()?.trim()?.ifBlank { null }
-                ?: titleEl?.text()?.replace(Regex("""S\d+\s*-?\s*E\d+""", RegexOption.IGNORE_CASE), "")?.trim()?.ifBlank { null }
-                ?: li.selectFirst("img[alt]")?.attr("alt")?.trim()?.ifBlank { null }
-                ?: "Episode $epNum"
-
-            val epPoster = li.selectFirst("figure img, img.brd1, img")?.let { it.attr("src").ifBlank { it.attr("data-src") } }
-
-            episodes.add(newEpisode(href) {
-                this.name = epName
-                this.season = seasonNum
-                this.episode = epNum
-                this.posterUrl = epPoster
-            })
-        }
-
-        // Fallback if no matching lists were found (e.g. structure completely different)
-        if (episodes.isEmpty()) {
-            document.select("a[href*=/episode/]").forEach { a ->
+            grid.select("a.as-episode[href*=/episode/]").forEach { a ->
                 val href = fixUrl(a.attr("href"))
                 val seMatch = Regex("""(\d+)x(\d+)""").find(href)
-                
+                val seasonNum = seMatch?.groupValues?.getOrNull(1)?.toIntOrNull() ?: seasonFromPanel
+                val epNum = seMatch?.groupValues?.getOrNull(2)?.toIntOrNull()
+                    ?: a.selectFirst("b")?.text()?.trim()?.toIntOrNull()
+                    ?: 0
+
+                val epName = a.selectFirst("h3")?.text()?.trim()?.ifBlank { null }
+                    ?: "Episode $epNum"
+
+                val epPoster = a.selectFirst("img")?.attr("src")?.ifBlank {
+                    a.selectFirst("img")?.attr("data-src")
+                }
+
+                episodes.add(newEpisode(href) {
+                    this.name = epName
+                    this.season = seasonNum
+                    this.episode = epNum
+                    this.posterUrl = epPoster
+                })
+            }
+        }
+
+        if (episodes.isEmpty()) {
+            document.select("a.as-episode[href*=/episode/], a[href*=/episode/]").forEach { a ->
+                val href = fixUrl(a.attr("href"))
+                val seMatch = Regex("""(\d+)x(\d+)""").find(href)
                 val seasonNum = seMatch?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 1
                 val epNum = seMatch?.groupValues?.getOrNull(2)?.toIntOrNull() ?: 0
-                val parent = a.parents().firstOrNull { it.tagName() == "li" } ?: a.parent()
-                val epPoster = parent?.selectFirst("img")?.attr("src")
-                // Added h3 for a generic fallback on title
-                val epName = parent?.selectFirst("h3.title, .title, h3")?.text()
-                    ?.replace(Regex("""S\d+\s*-?\s*E\d+""", RegexOption.IGNORE_CASE), "")
-                    ?.trim()?.ifBlank { null } ?: "Episode $epNum"
+                val epName = a.selectFirst("h3")?.text()?.trim()?.ifBlank { null } ?: "Episode $epNum"
+                val epPoster = a.selectFirst("img")?.attr("src")
 
                 episodes.add(newEpisode(href) {
                     this.name = epName
@@ -411,7 +417,7 @@ class MyAnimesProvider : MainAPI() {
         }
     }
 
-    // --- Load Links (Video Extraction) ---
+    // --- Load Links ---
 
     override suspend fun loadLinks(
         data: String,
@@ -421,49 +427,74 @@ class MyAnimesProvider : MainAPI() {
     ): Boolean {
         val document = app.get(data).document
         var found = false
+
+        val sourcesJson = document.selectFirst("section.as-player")?.attr("data-sources")
+        val sources = try {
+            if (!sourcesJson.isNullOrBlank()) {
+                parseJson<List<PlayerSource>>(sourcesJson)
+            } else emptyList()
+        } catch (e: Exception) {
+            Log.e("MyAnimes", "data-sources parse failed: ${e.message}")
+            emptyList()
+        }
+
         val embedUrls = LinkedHashSet<String>()
 
-        document.select("[data-src]").forEach { el ->
-            decodeEmbed(el.attr("data-src"))?.let { embedUrls.add(it) }
+        sources.forEach { src ->
+            src.url?.takeIf { it.isNotBlank() }?.let { embedUrls.add(fixUrl(it)) }
         }
 
-        document.select("iframe.aa-embed-frame, iframe[src*=trembed], iframe[src*=trid]").forEach { iframe ->
-            val src = iframe.attr("src").ifBlank { iframe.attr("data-src") }
-            if (src.contains("trembed") || src.contains("trid")) {
-                embedUrls.add(fixUrl(src))
-            }
-        }
-
-        val trid = Regex("""trid=(\d+)""").find(document.html())?.groupValues?.getOrNull(1)
-        val trtype = Regex("""trtype=(\d+)""").find(document.html())?.groupValues?.getOrNull(1)
-            ?: if (data.contains("/movies/")) "1" else "2"
-
-        if (trid != null && embedUrls.isEmpty()) {
-            embedUrls.add("$mainUrl/?trembed=0&trid=$trid&trtype=$trtype")
-            embedUrls.add("$mainUrl/?trembed=1&trid=$trid&trtype=$trtype")
+        if (embedUrls.isEmpty()) {
+            document.select(".as-player-screen iframe[src], iframe[src*=hydrax], iframe[src*=streamp2p], iframe[src*=php/]")
+                .forEach { iframe ->
+                    val src = iframe.attr("src").ifBlank { iframe.attr("data-src") }
+                    if (src.isNotBlank()) embedUrls.add(fixUrl(src))
+                }
         }
 
         for (embedUrl in embedUrls) {
             try {
-                val playerSrc = resolvePlayerSrc(embedUrl) ?: continue
-                val lowerSrc = playerSrc.lowercase()
-                
+                val lower = embedUrl.lowercase()
                 when {
-                    lowerSrc.contains("abyssplayer") || lowerSrc.contains("hydrax") -> {
-                        extAbyss.getUrl(playerSrc, mainUrl, subtitleCallback, callback)
-                        found = true
+                    lower.contains("hydrax.php") -> {
+                        if (resolveHydraxAllLangs(embedUrl, subtitleCallback, callback)) {
+                            found = true
+                        }
                     }
-                    lowerSrc.contains("p2pplay") || (lowerSrc.contains("#") && lowerSrc.contains("play")) -> {
+                    lower.contains("streamp2p.php") -> {
+                        val playerSrc = resolveWrapperIframe(embedUrl) ?: continue
                         extStreamP2P.getUrl(playerSrc, mainUrl, subtitleCallback, callback)
                         found = true
                     }
-                    lowerSrc.contains("upns") || lowerSrc.contains("cloudy") -> {
-                        extCloudy.getUrl(playerSrc, mainUrl, subtitleCallback, callback)
+                    lower.contains("upns") || lower.contains("cloudy") || lower.contains("p2pplay") -> {
+                        extCloudy.getUrl(embedUrl, mainUrl, subtitleCallback, callback)
+                        found = true
+                    }
+                    lower.contains("abyssplayer") || lower.contains("hydrax") -> {
+                        extAbyss.getUrl(embedUrl, mainUrl, subtitleCallback, callback)
                         found = true
                     }
                     else -> {
-                        if (loadExtractor(playerSrc, mainUrl, subtitleCallback, callback)) {
-                            found = true
+                        val playerSrc = resolveWrapperIframe(embedUrl) ?: embedUrl
+                        val pLower = playerSrc.lowercase()
+                        when {
+                            pLower.contains("abyssplayer") || pLower.contains("hydrax") -> {
+                                extAbyss.getUrl(playerSrc, mainUrl, subtitleCallback, callback)
+                                found = true
+                            }
+                            pLower.contains("p2pplay") || pLower.contains("upns") || pLower.contains("cloudy") -> {
+                                if (pLower.contains("p2pplay") || (pLower.contains("#") && pLower.contains("play"))) {
+                                    extStreamP2P.getUrl(playerSrc, mainUrl, subtitleCallback, callback)
+                                } else {
+                                    extCloudy.getUrl(playerSrc, mainUrl, subtitleCallback, callback)
+                                }
+                                found = true
+                            }
+                            else -> {
+                                if (loadExtractor(playerSrc, mainUrl, subtitleCallback, callback)) {
+                                    found = true
+                                }
+                            }
                         }
                     }
                 }
@@ -471,50 +502,108 @@ class MyAnimesProvider : MainAPI() {
                 Log.e("MyAnimes", "loadLinks error: ${e.message}")
             }
         }
+
         return found
     }
 
-    private suspend fun resolvePlayerSrc(embedUrl: String): String? {
-        if (!embedUrl.contains("trembed")) return embedUrl
+    /**
+     * hydrax.php contains multi-language Abyss tracks.
+     * Extract every language URL and run Abyss on each.
+     */
+    private suspend fun resolveHydraxAllLangs(
+        hydraxUrl: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        var any = false
+        try {
+            val doc = app.get(hydraxUrl, referer = mainUrl).document
+            val html = doc.html()
 
-        val doc = app.get(embedUrl, referer = mainUrl).document
-        val iframe = doc.selectFirst("iframe[src]")?.attr("src")?.trim().orEmpty()
-        
-        if (iframe.isNotBlank()) {
-            if (iframe.contains("hydrax.php") || iframe.contains("streamp2p.php")) {
-                val inner = app.get(fixUrl(iframe), referer = mainUrl).document
-                val innerSrc = inner.selectFirst("iframe[src]")?.attr("src")?.trim()
-                return if (!innerSrc.isNullOrBlank()) fixUrl(innerSrc) else fixUrl(iframe)
+            // tracks = {"Hindi":"https://player.abyssplayer.com/...","Tamil":"...",...}
+            val tracksBlock = Regex(
+                """tracks\s*=\s*(\{[^}]+\})""",
+                RegexOption.IGNORE_CASE
+            ).find(html)?.groupValues?.getOrNull(1)
+
+            val trackUrls = linkedMapOf<String, String>()
+
+            if (!tracksBlock.isNullOrBlank()) {
+                Regex(""""([^"]+)"\s*:\s*"(https?://[^"]+)"""")
+                    .findAll(tracksBlock)
+                    .forEach { m ->
+                        val lang = m.groupValues[1]
+                        val url = m.groupValues[2]
+                        trackUrls[lang] = url
+                    }
             }
-            return fixUrl(iframe)
+
+            // Fallback: single iframe
+            if (trackUrls.isEmpty()) {
+                val iframeSrc = doc.selectFirst("iframe[src]")?.attr("src")?.trim()
+                if (!iframeSrc.isNullOrBlank()) {
+                    trackUrls["Default"] = fixUrl(iframeSrc)
+                }
+            }
+
+            for ((lang, playerUrl) in trackUrls) {
+                try {
+                    // Pass language via a temporary name trick: Abyss uses its own name,
+                    // so we wrap callback to tag the language.
+                    val taggedCallback: (ExtractorLink) -> Unit = { link ->
+                        callback(
+                            newExtractorLink(
+                                source = link.source,
+                                name = if (lang.equals("Default", true)) link.name
+                                else "${link.name} [$lang]",
+                                url = link.url,
+                                type = link.type
+                            ) {
+                                this.quality = link.quality
+                                this.headers = link.headers
+                                this.referer = link.referer
+                            }
+                        )
+                    }
+                    extAbyss.getUrl(playerUrl, mainUrl, subtitleCallback, taggedCallback)
+                    any = true
+                } catch (e: Exception) {
+                    Log.e("MyAnimes", "Abyss track $lang failed: ${e.message}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("MyAnimes", "resolveHydraxAllLangs failed: ${e.message}")
         }
-        return null
+        return any
     }
 
-    private fun decodeEmbed(raw: String): String? {
-        if (raw.isBlank()) return null
-        if (raw.startsWith("http")) return raw
+    private suspend fun resolveWrapperIframe(wrapperUrl: String): String? {
         return try {
-            val decoded = base64Decode(raw)
-            if (decoded.contains("trembed") || decoded.startsWith("http")) decoded else null
+            if (!wrapperUrl.contains(".php/")) return wrapperUrl
+            val doc = app.get(wrapperUrl, referer = mainUrl).document
+            val iframe = doc.selectFirst("iframe[src]")?.attr("src")?.trim()
+            if (!iframe.isNullOrBlank()) fixUrl(iframe) else null
         } catch (e: Exception) {
+            Log.e("MyAnimes", "resolveWrapperIframe failed: ${e.message}")
             null
         }
     }
 
-    // --- Extension Helpers ---
+    // --- Helpers ---
 
     private fun Element.toSearchResult(): SearchResponse? {
-        val anchor = this.selectFirst("a.lnk-blk[href], a[href*=/series/], a[href*=/movies/]") ?: return null
+        val anchor = this.selectFirst("a.as-card-link[href], a[href*=/series/], a[href*=/movies/]")
+            ?: return null
         val href = fixUrl(anchor.attr("href"))
-        
+
         if (!href.contains("/series/") && !href.contains("/movies/")) return null
 
-        val title = this.selectFirst("h2.entry-title, .entry-title")?.text()?.trim()
+        val title = this.selectFirst("h3, h2.entry-title, .entry-title")?.text()?.trim()
             ?: this.selectFirst("img[alt]")?.attr("alt")?.trim()
+            ?: anchor.attr("aria-label")?.trim()
             ?: return null
 
-        val poster = this.selectFirst(".post-thumbnail img, figure img, img")?.let {
+        val poster = this.selectFirst(".as-poster img, figure img, img")?.let {
             it.attr("src").ifBlank { it.attr("data-src") }
         }
 
