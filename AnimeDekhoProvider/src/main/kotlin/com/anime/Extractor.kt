@@ -1,5 +1,6 @@
 package com.anime
 
+import android.util.Base64
 import com.google.gson.JsonParser
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.SubtitleFile
@@ -21,6 +22,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.net.URI
 import javax.crypto.Cipher
+import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
@@ -735,7 +737,7 @@ class Blakite : ExtractorApi() {
                     "$dataId.$code.tar?r_file=chunklist.m3u8&r_type=application%2Fvnd.apple.mpegurl&r_range=$range"
 
                 callback.invoke(
-                    newExtractorLink(name, "$name [$label]", streamUrl, ExtractorLinkType.M3U8) {
+                    newExtractorLink(name, name, streamUrl, ExtractorLinkType.M3U8) {
                         this.referer = ""
                         this.quality = getQualityFromName(label)
                     }
@@ -750,7 +752,7 @@ class Blakite : ExtractorApi() {
                     val code = QUALITY_CODES[i]
                     val streamUrl = CDN_BASE + "$dataId.$code.tar?r_file=chunklist.m3u8&r_type=application%2Fvnd.apple.mpegurl"
                     callback.invoke(
-                        newExtractorLink(name, "$name [$label]", streamUrl, ExtractorLinkType.M3U8) {
+                        newExtractorLink(name, name, streamUrl, ExtractorLinkType.M3U8) {
                             this.referer = ""
                             this.quality = getQualityFromName(label)
                         }
@@ -764,7 +766,7 @@ class Blakite : ExtractorApi() {
                 val code = QUALITY_CODES[i]
                 val streamUrl = "$CDN_BASE$dataId.$code.mp4"
                 callback.invoke(
-                    newExtractorLink(name, "$name [$label]", streamUrl, INFER_TYPE) {
+                    newExtractorLink(name, name, streamUrl, INFER_TYPE) {
                         this.referer = ""
                         this.quality = getQualityFromName(label)
                     }
@@ -874,6 +876,16 @@ class Earnvids : Streamhg() {
     override var mainUrl = "https://morencius.com"
 }
 
+/**
+ * Byse (bysetayico.com) — used inside animeworld.site mirror.
+ *
+ * Flow:
+ *  1) URL: https://bysetayico.com/e/{code}
+ *  2) GET  https://bysetayico.com/api/videos/{code}
+ *  3) playback = AES-256-GCM encrypted JSON
+ *  4) version N → key_parts[N-1] + key_parts[31-N-1] (1-based indices N and 31-N)
+ *  5) decrypt → sources[].url (m3u8) + tracks[] (subs)
+ */
 class Byse : ExtractorApi() {
     override var name = "Byse"
     override var mainUrl = "https://bysetayico.com"
@@ -885,28 +897,147 @@ class Byse : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        // https://bysetayico.com/e/qxjrjngr3ulp
-        val code = url.substringAfter("/e/").substringBefore("/").substringBefore("?")
+        val code = Regex("""/e/([A-Za-z0-9]+)""")
+            .find(url)?.groupValues?.getOrNull(1)
+            ?: url.trimEnd('/').substringAfterLast('/').substringBefore('?')
         if (code.isBlank()) return
 
-        val json = app.get(
-            "$mainUrl/api/videos/$code/embed/details",
-            headers = mapOf("Accept" to "application/json"),
-            referer = url
-        ).parsedSafe<ByseResponse>() ?: return
+        val apiUrl = "$mainUrl/api/videos/$code"
+        val raw = try {
+            app.get(
+                apiUrl,
+                headers = mapOf(
+                    "Accept" to "application/json",
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Referer" to url,
+                ),
+                referer = referer ?: url
+            ).text
+        } catch (e: Exception) {
+            Log.e(name, "API failed: ${e.message}")
+            return
+        }
 
-        val embed = json.embed_frame_url
-        if (!embed.isNullOrBlank()) {
-            // nested player (e.g. n1mwq.org) — delegate
-            loadExtractor(embed, url, subtitleCallback, callback)
+        val root = try {
+            JSONObject(raw)
+        } catch (e: Exception) {
+            Log.e(name, "JSON parse failed: ${e.message}")
+            return
+        }
+
+        // Top-level tracks (sometimes present outside playback)
+        emitTracks(root.optJSONArray("tracks"), subtitleCallback)
+
+        val playback = root.optJSONObject("playback") ?: run {
+            Log.e(name, "no playback object")
+            return
+        }
+
+        val decrypted = try {
+            decryptPlayback(playback)
+        } catch (e: Exception) {
+            Log.e(name, "decrypt failed: ${e.message}")
+            return
+        }
+
+        val sources = decrypted.optJSONArray("sources")
+        if (sources == null || sources.length() == 0) {
+            Log.e(name, "no sources after decrypt")
+            return
+        }
+
+        for (i in 0 until sources.length()) {
+            val src = sources.optJSONObject(i) ?: continue
+            val streamUrl = src.optString("url").takeIf { it.startsWith("http") } ?: continue
+            val label = src.optString("label").ifBlank { src.optString("quality") }.ifBlank { "Unknown" }
+            val mime = src.optString("mime_type")
+            val isHls = mime.contains("mpegurl", true) ||
+                streamUrl.contains(".m3u8", true)
+
+            callback.invoke(
+                newExtractorLink(
+                    source = name,
+                    name = name,
+                    url = streamUrl,
+                    type = if (isHls) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                ) {
+                    this.quality = getQualityFromName(label)
+                    this.referer = mainUrl
+                    this.headers = mapOf(
+                        "Referer" to "$mainUrl/",
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                    )
+                }
+            )
+        }
+
+        // tracks inside decrypted payload
+        emitTracks(decrypted.optJSONArray("tracks"), subtitleCallback)
+    }
+
+    private fun emitTracks(
+        tracks: org.json.JSONArray?,
+        subtitleCallback: (SubtitleFile) -> Unit
+    ) {
+        if (tracks == null) return
+        for (i in 0 until tracks.length()) {
+            val t = tracks.optJSONObject(i) ?: continue
+            val subUrl = t.optString("url")
+                .ifBlank { t.optString("file") }
+                .ifBlank { t.optString("src") }
+            if (!subUrl.startsWith("http")) continue
+            val lang = t.optString("label")
+                .ifBlank { t.optString("language") }
+                .ifBlank { t.optString("lang") }
+                .ifBlank { "Unknown" }
+            subtitleCallback(SubtitleFile(lang, subUrl))
         }
     }
 
-    data class ByseResponse(
-        val embed_frame_url: String? = null,
-        val code: String? = null,
-        val title: String? = null,
-    )
+    /**
+     * AES-256-GCM decrypt of playback object.
+     * version "N" → use key_parts indices N and (31-N) (1-based).
+     */
+    private fun decryptPlayback(playback: JSONObject): JSONObject {
+        val version = playback.optString("version").trim()
+        val v = version.toIntOrNull()
+            ?: throw IllegalArgumentException("bad version: $version")
+
+        val keyPartsArr = playback.optJSONArray("key_parts")
+            ?: throw IllegalArgumentException("missing key_parts")
+        val keyParts = buildList {
+            for (i in 0 until keyPartsArr.length()) {
+                add(keyPartsArr.optString(i))
+            }
+        }
+
+        // 1-based indices: v and 31-v (same as JS Qa()/Ea())
+        val i1 = v
+        val i2 = 31 - v
+        if (i1 < 1 || i2 < 1 || i1 > keyParts.size || i2 > keyParts.size) {
+            throw IllegalArgumentException("version indices out of range: $i1, $i2 size=${keyParts.size}")
+        }
+
+        val keyBytes = b64UrlDecode(keyParts[i1 - 1]) + b64UrlDecode(keyParts[i2 - 1])
+        val iv = b64UrlDecode(playback.optString("iv"))
+        val ciphertext = b64UrlDecode(playback.optString("payload"))
+
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(
+            Cipher.DECRYPT_MODE,
+            SecretKeySpec(keyBytes, "AES"),
+            GCMParameterSpec(128, iv) // 128-bit auth tag
+        )
+        val plain = cipher.doFinal(ciphertext)
+        return JSONObject(String(plain, Charsets.UTF_8))
+    }
+
+    private fun b64UrlDecode(s: String): ByteArray {
+        var t = s.replace('-', '+').replace('_', '/')
+        val pad = (4 - t.length % 4) % 4
+        t += "=".repeat(pad)
+        return Base64.decode(t, Base64.DEFAULT)
+    }
 }
 
 // VidSrc / mirror.xerver.xyz — play.php?url=...&fetch=1 → progressive file URLs
@@ -953,11 +1084,12 @@ class XerverMirror : ExtractorApi() {
         for (key in preferredKeys) {
             val entry = results[key] ?: continue
             val streamUrl = entry.url?.takeIf { it.startsWith("http") } ?: continue
+            val serverLabel = entry.label ?: key
             
             callback.invoke(
                 newExtractorLink(
                     source = name,
-                    name = "$name [${entry.label ?: key}]",
+                    name = "$name [$serverLabel]",
                     url = streamUrl,
                     type = INFER_TYPE
                 ) {
@@ -973,11 +1105,12 @@ class XerverMirror : ExtractorApi() {
             if (key.contains("gofile", ignoreCase = true)) continue
 
             val streamUrl = entry.url?.takeIf { it.startsWith("http") } ?: continue
+            val serverLabel = entry.label ?: key
             
             callback.invoke(
                 newExtractorLink(
                     source = name,
-                    name = "$name [${entry.label ?: key}]",
+                    name = "$name [$serverLabel]",
                     url = streamUrl,
                     type = INFER_TYPE
                 ) {
