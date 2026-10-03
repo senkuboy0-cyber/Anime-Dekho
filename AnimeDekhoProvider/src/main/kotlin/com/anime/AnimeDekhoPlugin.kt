@@ -9,7 +9,7 @@ class AnimeDekhoPlugin: BasePlugin() {
         registerMainAPI(AnimeDekhoProvider())
         
         registerExtractorAPI(Zephyrflick())
-        registerExtractorAPI(Vexal())
+        registerExtractorAPI(Ravok())
         registerExtractorAPI(Abyss())
         registerExtractorAPI(StreamRuby())
         registerExtractorAPI(Cloudy())
