@@ -1070,7 +1070,7 @@ class NeoCDN : ExtractorApi() {
             callback.invoke(
                 newExtractorLink(
                     source = name,
-                    name = "$name [${source.type ?: "Unknown"}]",
+                    name = name,
                     url = streamUrl,
                     type = INFER_TYPE
                 ) {
