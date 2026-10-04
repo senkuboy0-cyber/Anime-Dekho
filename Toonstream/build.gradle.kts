@@ -19,7 +19,7 @@ cloudstream {
 
     // List of video source types. Users are able to filter for extensions in a given category.
     tvTypes = listOf("AnimeMovie","Anime","Cartoon")
-    iconUrl="https://raw.githubusercontent.com/phisher98/TVVVV/refs/heads/main/Icons/toonstream.png"
+    iconUrl="https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/refs/heads/main/assets/icons/toonstream.png"
 
     isCrossPlatform = true
 }
