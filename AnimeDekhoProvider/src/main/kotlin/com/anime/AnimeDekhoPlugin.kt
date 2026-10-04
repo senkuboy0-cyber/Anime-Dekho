@@ -21,7 +21,7 @@ class AnimeDekhoPlugin: BasePlugin() {
         registerExtractorAPI(FilesForever())
         registerExtractorAPI(WorldMirror())
         registerExtractorAPI(Rpmshare())
-        registerExtractorAPI(Streamp2p())
+        registerExtractorAPI(StreamPro())
         registerExtractorAPI(Streamhg())
         registerExtractorAPI(Earnvids())
         registerExtractorAPI(Byse())
