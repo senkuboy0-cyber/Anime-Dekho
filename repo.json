@@ -1,6 +1,6 @@
 {
-  "name": "AnimeDekho Provider",
-  "description": "AnimeDekho - Hindi Anime, Cartoon and Movies Streaming Extension",
+  "name": "Toonify Stream",
+  "description": "The ultimate extension bundle for streaming your favorite Anime and Cartoons.",
   "manifestVersion": 1,
   "pluginLists": [
     "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/plugins.json"
