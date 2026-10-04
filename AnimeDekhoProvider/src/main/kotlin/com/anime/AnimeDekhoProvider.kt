@@ -74,7 +74,7 @@ data class SiteEpisode(
 )
 
 open class AnimeDekhoProvider : MainAPI() {
-    override var mainUrl = "https://animedekho.app"
+    override var mainUrl = "https://animedekho.tv"
     override var name = "Anime Dekho"
     override val hasMainPage = true
     override var lang = "hi"
