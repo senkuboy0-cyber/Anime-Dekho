@@ -16,7 +16,6 @@ import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.getQualityFromName
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.newExtractorLink
-import com.lagradost.cloudstream3.newSubtitleFile
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
@@ -27,14 +26,14 @@ import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
-// Handles the server utilizing the base extraction logic.
+// Handles the server, utilizing the base extraction logic.
 class Zephyrflick : AWSStream() {
     override val name = "Zephyrflick"
     override val mainUrl = "https://as-cdn28.top"
     override val requiresReferer = true
 }
 
-// Handles the server utilizing the base extraction logic.
+// Handles the server, utilizing the base extraction logic.
 class Ravok : AWSStream() {
     override val name = "Ravok"
     override val mainUrl = "https://ravok.buzz"
@@ -77,7 +76,7 @@ open class AWSStream : ExtractorApi() {
                     val matchResult = matches[i]
                     val subtitleUrl = matchResult.groupValues[1]
                     val subtitleName = if (i == 0) "English" else "Subtitle ${i + 1}"
-                    subtitleCallback.invoke(newSubtitleFile(subtitleName, subtitleUrl))
+                    subtitleCallback.invoke(SubtitleFile(subtitleName, subtitleUrl))
                 }
             }
         }
@@ -94,7 +93,8 @@ open class AWSStream : ExtractorApi() {
     )
 }
 
-// Extractor logic. Uses an external API to decrypt the AES encrypted payload containing video sources.
+// Extractor logic. 
+// Uses an external API to decrypt the AES encrypted payload containing video sources.
 class Abyss : ExtractorApi() {
     override var name = "Abyss"
     override var mainUrl = "https://abyssplayer.com"
@@ -151,7 +151,7 @@ class Abyss : ExtractorApi() {
     )
 }
 
-// Unpacks obfuscated JavaScript to extract URLs and subtitle links.
+// Unpacks obfuscated JavaScript to extract M3U8 URLs and VTT subtitle links.
 class StreamRuby : ExtractorApi() {
     override var name = "StreamRuby"
     override var mainUrl = "https://rubystm.com"
@@ -189,7 +189,7 @@ class StreamRuby : ExtractorApi() {
         val subMatches = Regex("""file\s*:\s*\u0022(https?://[^\u0022]+_([a-z]{2,3})\.vtt[^\u0022]*)\u0022[\s\S]+?kind\s*:\s*\u0022captions\u0022""")
             .findAll(unpacked)
         for (match in subMatches) {
-            subtitleCallback.invoke(newSubtitleFile(match.groupValues[2], match.groupValues[1]))
+            subtitleCallback.invoke(SubtitleFile(match.groupValues[2], match.groupValues[1]))
         }
 
         callback.invoke(
@@ -207,7 +207,7 @@ class Cloudy : UpnsPlayer() {
     override var mainUrl = "https://cloudy.upns.one"
 }
 
-// Fetches AES-encoded JSON from a backend API, decrypts it, and builds the URL from the streaming config.
+// Fetches AES-encoded JSON from a backend API, decrypts it, and builds the HLS URL from the streaming config.
 open class UpnsPlayer : ExtractorApi() {
     override var name = "Upns"
     override var mainUrl = "https://upns.one"
@@ -280,7 +280,7 @@ open class UpnsPlayer : ExtractorApi() {
                 val rawPath = subs.optString(lang).split("#").firstOrNull().orEmpty()
                 if (rawPath.isNotBlank()) {
                     val subUrl = if (rawPath.startsWith("http")) rawPath else "$baseurl$rawPath"
-                    subtitleCallback.invoke(newSubtitleFile(lang.uppercase(), subUrl))
+                    subtitleCallback.invoke(SubtitleFile(lang.uppercase(), subUrl))
                 }
             }
         }
@@ -463,7 +463,7 @@ open class GDMirrorbot : ExtractorApi() {
                     this.mainUrl = getHost(fullUrl)
                 }.getUrl(fullUrl, referer, subtitleCallback, callback)
             } catch (e: Exception) {
-                Log.e(name, "StreamP2P failed: ${e.message}")
+                Log.e(name, "StreamPro failed: ${e.message}")
             }
         }
 
@@ -640,7 +640,7 @@ class VidMolyNet : ExtractorApi() {
         val match = Regex("""file\s*:\s*[\u0022'](https[^\u0022']+\.vtt[^\u0022']*)[\u0022'][\s\S]{0,200}?label\s*:\s*[\u0022']([^\u0022']*)[\u0022']""")
             .find(txt)
         if (match != null) {
-            subtitleCallback.invoke(newSubtitleFile(match.groupValues[2].ifBlank { "English" }, match.groupValues[1]))
+            subtitleCallback.invoke(SubtitleFile(match.groupValues[2].ifBlank { "English" }, match.groupValues[1]))
         }
 
         callback.invoke(
@@ -853,7 +853,7 @@ open class Streamhg : ExtractorApi() {
         // subtitles .vtt
         val subMatches = Regex("""["'](https?://[^"']+\.vtt[^"']*)["']""").findAll(unpacked)
         for (m in subMatches) {
-            subtitleCallback.invoke(newSubtitleFile("English", m.groupValues[1]))
+            subtitleCallback.invoke(SubtitleFile("English", m.groupValues[1]))
         }
 
         callback.invoke(
@@ -872,9 +872,11 @@ class Earnvids : Streamhg() {
 
 /**
  * Flow:
- *  1) GET /api/videos/{code}
- *  2) playback = AES-256-GCM encrypted JSON
- *  3) decrypt → sources[].url (m3u8) + tracks[] (subs)
+ *  1) URL: /e/{code}
+ *  2) GET  /api/videos/{code}
+ *  3) playback = AES-256-GCM encrypted JSON
+ *  4) version N → key_parts[N-1] + key_parts[31-N-1] (1-based indices N and 31-N)
+ *  5) decrypt → sources[].url (m3u8) + tracks[] (subs)
  */
 class Byse : ExtractorApi() {
     override var name = "Byse"
@@ -963,7 +965,7 @@ class Byse : ExtractorApi() {
         emitTracks(decrypted.optJSONArray("tracks"), subtitleCallback)
     }
 
-    private suspend fun emitTracks(
+    private fun emitTracks(
         tracks: org.json.JSONArray?,
         subtitleCallback: (SubtitleFile) -> Unit
     ) {
@@ -978,7 +980,7 @@ class Byse : ExtractorApi() {
                 .ifBlank { t.optString("language") }
                 .ifBlank { t.optString("lang") }
                 .ifBlank { "Unknown" }
-            subtitleCallback.invoke(newSubtitleFile(lang, subUrl))
+            subtitleCallback.invoke(SubtitleFile(lang, subUrl))
         }
     }
 
@@ -999,11 +1001,11 @@ class Byse : ExtractorApi() {
             }
         }
 
-        // 1-based indices: v and 31-v
+        // 1-based indices: v and 31-v (same as JS Qa()/Ea())
         val i1 = v
         val i2 = 31 - v
         if (i1 < 1 || i2 < 1 || i1 > keyParts.size || i2 > keyParts.size) {
-            throw IllegalArgumentException("version indices out of range")
+            throw IllegalArgumentException("version indices out of range: $i1, $i2 size=${keyParts.size}")
         }
 
         val keyBytes = b64UrlDecode(keyParts[i1 - 1]) + b64UrlDecode(keyParts[i2 - 1])
@@ -1139,7 +1141,7 @@ class XerverMirror : ExtractorApi() {
 // 2) GET fetch file?id=XXXX → JSON sources
 class NeoCDN : ExtractorApi() {
     private val domain = "https://animedekho.tv"
-    
+
     override var name = "NeoCDN"
     override var mainUrl = "$domain/aaa/myth"
     override val requiresReferer = true
@@ -1158,7 +1160,7 @@ class NeoCDN : ExtractorApi() {
         val page = try {
             app.get(url, headers = headers).text
         } catch (e: Exception) {
-            Log.e(name, "fetch failed: ${e.message}")
+            Log.e(name, "play failed: ${e.message}")
             return
         }
 
