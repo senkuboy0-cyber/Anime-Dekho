@@ -44,7 +44,7 @@
             "TvSeries",
             "Movie"
         ],
-        "iconUrl": "https://myanimes.in/wp-content/uploads/2026/09/cropped-ChatGPT-Image-Sep-21-2026-08_48_22-AM.png",
+        "iconUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/refs/heads/main/assets/icons/myanimes.png",
         "apiVersion": 1,
         "fileHash": "sha256-6769c352070f67c6f4ef3346c9aece23c351de7ca9ff0bd7b33f7ca71c735688",
         "jarFileSize": 207964,
