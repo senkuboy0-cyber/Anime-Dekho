@@ -1,3 +1,4 @@
+
 package com.anime
 
 import com.fasterxml.jackson.annotation.JsonProperty
@@ -327,7 +328,7 @@ open class AnimeDekhoProvider : MainAPI() {
             val term = Regex("\"term\":\"([^\"]+)\"").find(request.data)?.groupValues?.get(1) ?: ""
             val pagedUrl = if (page > 1) "$mainUrl/category/$term/page/$page/" else "$mainUrl/category/$term/"
             
-            val document = app.get(pagedUrl).document
+            val document = app.get(pagedUrl, timeout = 30).document
             val home = document.select("article").mapNotNull { it.toSearchResult() }
             val hasNextPage = document.selectFirst("a.next.page-numbers") != null
             
@@ -337,12 +338,12 @@ open class AnimeDekhoProvider : MainAPI() {
         val pageUrl = if (isSeries) "$mainUrl/series-hindi/" else "$mainUrl/movie-hindi/"
 
         if (page == 1) {
-            val document = app.get(pageUrl).document
+            val document = app.get(pageUrl, timeout = 30).document
             val home = document.select("article").mapNotNull { it.toSearchResult() }
             return newHomePageResponse(request.name, home, true)
         }
 
-        val pageDoc = app.get(pageUrl).document
+        val pageDoc = app.get(pageUrl, timeout = 30).document
         val nonce = Regex("\"nonce\":\"([^\"]+)\"").find(pageDoc.html())?.groupValues?.get(1) ?: ""
         val filterEl = pageDoc.selectFirst("[data-taxonomy]")
         
@@ -361,7 +362,8 @@ open class AnimeDekhoProvider : MainAPI() {
                 "X-WP-Nonce" to nonce,
                 "X-Requested-With" to "XMLHttpRequest",
                 "Referer" to pageUrl
-            )
+            ),
+            timeout = 30
         ).text
 
         val json = parseJson<AjaxResponse>(response)
