@@ -12,6 +12,6 @@ cloudstream {
         "TvSeries",
         "Movie"
     )
-    iconUrl = "https://myanimes.in/wp-content/uploads/2026/09/cropped-ChatGPT-Image-Sep-21-2026-08_48_22-AM.png"
+    iconUrl = "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/refs/heads/main/assets/icons/myanimes.png"
     isCrossPlatform = true
 }
