@@ -963,7 +963,7 @@ class Byse : ExtractorApi() {
         emitTracks(decrypted.optJSONArray("tracks"), subtitleCallback)
     }
 
-    private fun emitTracks(
+    private suspend fun emitTracks(
         tracks: org.json.JSONArray?,
         subtitleCallback: (SubtitleFile) -> Unit
     ) {
