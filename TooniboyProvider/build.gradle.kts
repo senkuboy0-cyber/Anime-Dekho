@@ -19,7 +19,7 @@ cloudstream {
         "TvSeries"
     )
 
-    iconUrl = "https://tooniboy.co/wp-content/uploads/2024/03/cropped-tooniboy-high-resolution-logo-transparent-7.png"
+    iconUrl = "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/refs/heads/main/assets/icons/tooniboy.png"
 
     isCrossPlatform = true
 }
