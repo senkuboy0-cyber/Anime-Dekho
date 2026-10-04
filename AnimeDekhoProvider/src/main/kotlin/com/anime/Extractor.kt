@@ -825,7 +825,7 @@ class Rpmshare : UpnsPlayer() {
 }
 
 class Streamp2p : UpnsPlayer() {
-    override var name = "StreamPro"
+    override var name = "Streamp2p"
     override var mainUrl = "https://zoro.streamcasthub.store"
 }
 
@@ -1084,12 +1084,11 @@ class XerverMirror : ExtractorApi() {
         for (key in preferredKeys) {
             val entry = results[key] ?: continue
             val streamUrl = entry.url?.takeIf { it.startsWith("http") } ?: continue
-            val serverLabel = entry.label ?: key
             
             callback.invoke(
                 newExtractorLink(
                     source = name,
-                    name = "$name [$serverLabel]",
+                    name = name,
                     url = streamUrl,
                     type = INFER_TYPE
                 ) {
@@ -1105,12 +1104,11 @@ class XerverMirror : ExtractorApi() {
             if (key.contains("gofile", ignoreCase = true)) continue
 
             val streamUrl = entry.url?.takeIf { it.startsWith("http") } ?: continue
-            val serverLabel = entry.label ?: key
             
             callback.invoke(
                 newExtractorLink(
                     source = name,
-                    name = "$name [$serverLabel]",
+                    name = name,
                     url = streamUrl,
                     type = INFER_TYPE
                 ) {
@@ -1147,12 +1145,12 @@ class XerverMirror : ExtractorApi() {
     )
 }
 
-// NeoCDN — animedekho.app/aaa/myth/play.php
+// NeoCDN — animedekho.tv/aaa/myth/play.php
 // 1) GET play.php → regex fetch.php?id=XXXX
 // 2) GET /aaa/myth/fetch.php?id=XXXX → JSON sources (progressive MP4)
 class NeoCDN : ExtractorApi() {
     override var name = "NeoCDN"
-    override var mainUrl = "https://animedekho.app/aaa/myth"
+    override var mainUrl = "https://animedekho.tv/aaa/myth"
     override val requiresReferer = true
 
     override suspend fun getUrl(
@@ -1163,7 +1161,7 @@ class NeoCDN : ExtractorApi() {
     ) {
         val headers = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Referer" to (referer ?: "https://animedekho.app/"),
+            "Referer" to (referer ?: "https://animedekho.tv/"),
         )
 
         val page = try {
@@ -1180,7 +1178,7 @@ class NeoCDN : ExtractorApi() {
                 return
             }
 
-        val apiUrl = "https://animedekho.app/aaa/myth/fetch.php?id=$fetchId"
+        val apiUrl = "https://animedekho.tv/aaa/myth/fetch.php?id=$fetchId"
         val response = try {
             app.get(
                 apiUrl,
@@ -1209,7 +1207,7 @@ class NeoCDN : ExtractorApi() {
                 ) {
                     this.quality = getQualityFromName(source.type ?: "")
                     this.headers = mapOf(
-                        "Referer" to "https://animedekho.app/",
+                        "Referer" to "https://animedekho.tv/",
                         "User-Agent" to headers.getValue("User-Agent")
                     )
                 }
