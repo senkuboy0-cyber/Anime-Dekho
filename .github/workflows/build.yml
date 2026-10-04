@@ -43,7 +43,7 @@ jobs:
           cp MyAnimesProvider/build/*.cs3 build_output/ || true
           cp build/plugins.json build_output/plugins.json
           echo '{
-            "name": "Anime Provider",
+            "name": "Toonify Stream",
             "description": "The ultimate CloudStream repository for high-quality Hindi and multi-language dubbed Anime, Movies, and Cartoons.",
             "manifestVersion": 1,
             "pluginLists": [
