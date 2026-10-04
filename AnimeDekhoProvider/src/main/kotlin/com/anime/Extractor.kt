@@ -16,6 +16,7 @@ import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.getQualityFromName
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import com.lagradost.cloudstream3.newSubtitleFile
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
@@ -26,21 +27,21 @@ import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
-// Handles the Zephyrflick server, utilizing the base AWSStream extraction logic.
+// Handles the server utilizing the base extraction logic.
 class Zephyrflick : AWSStream() {
     override val name = "Zephyrflick"
     override val mainUrl = "https://as-cdn28.top"
     override val requiresReferer = true
 }
 
-// Handles the Ravok server, utilizing the base AWSStream extraction logic.
+// Handles the server utilizing the base extraction logic.
 class Ravok : AWSStream() {
     override val name = "Ravok"
     override val mainUrl = "https://ravok.buzz"
     override val requiresReferer = true
 }
 
-// Base extractor for AWSStream backend.
+// Base extractor backend.
 // Fetches the HLS video source via a POST request and unpacks JavaScript to extract subtitle captions.
 open class AWSStream : ExtractorApi() {
     override val name = "AWSStream"
@@ -76,7 +77,7 @@ open class AWSStream : ExtractorApi() {
                     val matchResult = matches[i]
                     val subtitleUrl = matchResult.groupValues[1]
                     val subtitleName = if (i == 0) "English" else "Subtitle ${i + 1}"
-                    subtitleCallback.invoke(SubtitleFile(subtitleName, subtitleUrl))
+                    subtitleCallback.invoke(newSubtitleFile(subtitleName, subtitleUrl))
                 }
             }
         }
@@ -93,8 +94,7 @@ open class AWSStream : ExtractorApi() {
     )
 }
 
-// Extractor for AbyssPlayer. 
-// Uses an external API to decrypt the AES encrypted payload containing video sources.
+// Extractor logic. Uses an external API to decrypt the AES encrypted payload containing video sources.
 class Abyss : ExtractorApi() {
     override var name = "Abyss"
     override var mainUrl = "https://abyssplayer.com"
@@ -151,8 +151,7 @@ class Abyss : ExtractorApi() {
     )
 }
 
-// Extractor for StreamRuby.
-// Unpacks obfuscated JavaScript to extract M3U8 URLs and VTT subtitle links.
+// Unpacks obfuscated JavaScript to extract URLs and subtitle links.
 class StreamRuby : ExtractorApi() {
     override var name = "StreamRuby"
     override var mainUrl = "https://rubystm.com"
@@ -190,7 +189,7 @@ class StreamRuby : ExtractorApi() {
         val subMatches = Regex("""file\s*:\s*\u0022(https?://[^\u0022]+_([a-z]{2,3})\.vtt[^\u0022]*)\u0022[\s\S]+?kind\s*:\s*\u0022captions\u0022""")
             .findAll(unpacked)
         for (match in subMatches) {
-            subtitleCallback.invoke(SubtitleFile(match.groupValues[2], match.groupValues[1]))
+            subtitleCallback.invoke(newSubtitleFile(match.groupValues[2], match.groupValues[1]))
         }
 
         callback.invoke(
@@ -202,14 +201,13 @@ class StreamRuby : ExtractorApi() {
     }
 }
 
-// Handles the Cloudy domain by leveraging the UpnsPlayer extraction logic.
+// Handles domain by leveraging the extraction logic.
 class Cloudy : UpnsPlayer() {
     override var name = "Cloudy"
     override var mainUrl = "https://cloudy.upns.one"
 }
 
-// Extractor for UpnsPlayer server.
-// Fetches AES-encoded JSON from a backend API, decrypts it, and builds the HLS URL from the streaming config.
+// Fetches AES-encoded JSON from a backend API, decrypts it, and builds the URL from the streaming config.
 open class UpnsPlayer : ExtractorApi() {
     override var name = "Upns"
     override var mainUrl = "https://upns.one"
@@ -282,7 +280,7 @@ open class UpnsPlayer : ExtractorApi() {
                 val rawPath = subs.optString(lang).split("#").firstOrNull().orEmpty()
                 if (rawPath.isNotBlank()) {
                     val subUrl = if (rawPath.startsWith("http")) rawPath else "$baseurl$rawPath"
-                    subtitleCallback.invoke(SubtitleFile(lang.uppercase(), subUrl))
+                    subtitleCallback.invoke(newSubtitleFile(lang.uppercase(), subUrl))
                 }
             }
         }
@@ -368,8 +366,7 @@ open class UpnsPlayer : ExtractorApi() {
         }
 }
 
-// Main Extractor for GDMirrorbot ecosystem.
-// Acts as a router by parsing embedhelper2 responses (Base64/JSON) to delegate to StreamHG, UpnsPlayer, or direct URLs.
+// Acts as a router by parsing responses to delegate to direct URLs.
 open class GDMirrorbot : ExtractorApi() {
     override var name = "StreamHG"
     override var mainUrl = "https://gdmirrorbot.nl"
@@ -570,20 +567,19 @@ open class GDMirrorbot : ExtractorApi() {
     )
 }
 
-// GDMirrorbot FHD Domain configuration subclass.
+// Domain configuration subclass.
 class GDMirrorbotFHD : GDMirrorbot() {
     override var name = "StreamHG"
     override var mainUrl = "https://gdmirrorbot.nl"
 }
 
-// FilesForever Domain configuration utilizing GDMirrorbot logic.
+// Domain configuration utilizing logic.
 class FilesForever : GDMirrorbot() {
     override var name = "StreamHG"
     override var mainUrl = "https://filesforever.link"
 }
 
-// Extractor for EmTurboVid.
-// Simply scrapes the HTML content or embedded script tags for a direct M3U8 string.
+// Simply scrapes the HTML content or embedded script tags for a direct string.
 class EmTurboVid : ExtractorApi() {
     override var name = "EmTurboVid"
     override var mainUrl = "https://emturbovid.com"
@@ -622,8 +618,7 @@ class EmTurboVid : ExtractorApi() {
     }
 }
 
-// Extractor for VidMoly.
-// Parses raw HTML text using Regular Expressions to identify standard HLS file extensions.
+// Parses raw HTML text using Regular Expressions to identify standard extensions.
 class VidMolyNet : ExtractorApi() {
     override var name = "VidMoly"
     override var mainUrl = "https://vidmoly.net"
@@ -645,7 +640,7 @@ class VidMolyNet : ExtractorApi() {
         val match = Regex("""file\s*:\s*[\u0022'](https[^\u0022']+\.vtt[^\u0022']*)[\u0022'][\s\S]{0,200}?label\s*:\s*[\u0022']([^\u0022']*)[\u0022']""")
             .find(txt)
         if (match != null) {
-            subtitleCallback.invoke(SubtitleFile(match.groupValues[2].ifBlank { "English" }, match.groupValues[1]))
+            subtitleCallback.invoke(newSubtitleFile(match.groupValues[2].ifBlank { "English" }, match.groupValues[1]))
         }
 
         callback.invoke(
@@ -657,8 +652,7 @@ class VidMolyNet : ExtractorApi() {
     }
 }
 
-// Extractor for Blakite API framework.
-// Intercepts the API request mapped with TMDB data, building stream CDN links mapped to chunk ranges.
+// Intercepts the API request mapped with data, building stream CDN links mapped to chunk ranges.
 class Blakite : ExtractorApi() {
     override var name = "Blakite"
     override var mainUrl = "https://blakiteapi.xyz"
@@ -795,7 +789,7 @@ class Blakite : ExtractorApi() {
     )
 }
 
-// animeworld.site/mirror/play.php — multi-server router
+// multi-server router
 class WorldMirror : ExtractorApi() {
     override var name = "WorldMirror"
     override var mainUrl = "https://animeworld.site"
@@ -824,12 +818,12 @@ class Rpmshare : UpnsPlayer() {
     override var mainUrl = "https://zoro.rpmhub.site"
 }
 
-class Streamp2p : UpnsPlayer() {
-    override var name = "Streamp2p"
+class StreamPro : UpnsPlayer() {
+    override var name = "StreamPro"
     override var mainUrl = "https://zoro.streamcasthub.store"
 }
 
-// StreamHG-style hosts (hanerix / morencius) — unpack JWPlayer for m3u8
+// Unpack JWPlayer for m3u8
 open class Streamhg : ExtractorApi() {
     override var name = "Streamhg"
     override var mainUrl = "https://hanerix.com"
@@ -859,7 +853,7 @@ open class Streamhg : ExtractorApi() {
         // subtitles .vtt
         val subMatches = Regex("""["'](https?://[^"']+\.vtt[^"']*)["']""").findAll(unpacked)
         for (m in subMatches) {
-            subtitleCallback.invoke(SubtitleFile("English", m.groupValues[1]))
+            subtitleCallback.invoke(newSubtitleFile("English", m.groupValues[1]))
         }
 
         callback.invoke(
@@ -877,14 +871,10 @@ class Earnvids : Streamhg() {
 }
 
 /**
- * Byse (bysetayico.com) — used inside animeworld.site mirror.
- *
  * Flow:
- *  1) URL: https://bysetayico.com/e/{code}
- *  2) GET  https://bysetayico.com/api/videos/{code}
- *  3) playback = AES-256-GCM encrypted JSON
- *  4) version N → key_parts[N-1] + key_parts[31-N-1] (1-based indices N and 31-N)
- *  5) decrypt → sources[].url (m3u8) + tracks[] (subs)
+ *  1) GET /api/videos/{code}
+ *  2) playback = AES-256-GCM encrypted JSON
+ *  3) decrypt → sources[].url (m3u8) + tracks[] (subs)
  */
 class Byse : ExtractorApi() {
     override var name = "Byse"
@@ -925,7 +915,6 @@ class Byse : ExtractorApi() {
             return
         }
 
-        // Top-level tracks (sometimes present outside playback)
         emitTracks(root.optJSONArray("tracks"), subtitleCallback)
 
         val playback = root.optJSONObject("playback") ?: run {
@@ -971,7 +960,6 @@ class Byse : ExtractorApi() {
             )
         }
 
-        // tracks inside decrypted payload
         emitTracks(decrypted.optJSONArray("tracks"), subtitleCallback)
     }
 
@@ -990,7 +978,7 @@ class Byse : ExtractorApi() {
                 .ifBlank { t.optString("language") }
                 .ifBlank { t.optString("lang") }
                 .ifBlank { "Unknown" }
-            subtitleCallback.invoke(SubtitleFile(lang, subUrl))
+            subtitleCallback.invoke(newSubtitleFile(lang, subUrl))
         }
     }
 
@@ -1011,11 +999,11 @@ class Byse : ExtractorApi() {
             }
         }
 
-        // 1-based indices: v and 31-v (same as JS Qa()/Ea())
+        // 1-based indices: v and 31-v
         val i1 = v
         val i2 = 31 - v
         if (i1 < 1 || i2 < 1 || i1 > keyParts.size || i2 > keyParts.size) {
-            throw IllegalArgumentException("version indices out of range: $i1, $i2 size=${keyParts.size}")
+            throw IllegalArgumentException("version indices out of range")
         }
 
         val keyBytes = b64UrlDecode(keyParts[i1 - 1]) + b64UrlDecode(keyParts[i2 - 1])
@@ -1040,7 +1028,7 @@ class Byse : ExtractorApi() {
     }
 }
 
-// VidSrc / mirror.xerver.xyz — play.php?url=...&fetch=1 → progressive file URLs
+// Progressive file URLs
 class XerverMirror : ExtractorApi() {
     override var name = "XerverMirror"
     override var mainUrl = "https://mirror.xerver.xyz"
@@ -1084,11 +1072,12 @@ class XerverMirror : ExtractorApi() {
         for (key in preferredKeys) {
             val entry = results[key] ?: continue
             val streamUrl = entry.url?.takeIf { it.startsWith("http") } ?: continue
+            val serverLabel = entry.label ?: key
             
             callback.invoke(
                 newExtractorLink(
                     source = name,
-                    name = name,
+                    name = "$name [$serverLabel]",
                     url = streamUrl,
                     type = INFER_TYPE
                 ) {
@@ -1104,11 +1093,12 @@ class XerverMirror : ExtractorApi() {
             if (key.contains("gofile", ignoreCase = true)) continue
 
             val streamUrl = entry.url?.takeIf { it.startsWith("http") } ?: continue
+            val serverLabel = entry.label ?: key
             
             callback.invoke(
                 newExtractorLink(
                     source = name,
-                    name = name,
+                    name = "$name [$serverLabel]",
                     url = streamUrl,
                     type = INFER_TYPE
                 ) {
@@ -1145,12 +1135,13 @@ class XerverMirror : ExtractorApi() {
     )
 }
 
-// NeoCDN — animedekho.tv/aaa/myth/play.php
-// 1) GET play.php → regex fetch.php?id=XXXX
-// 2) GET /aaa/myth/fetch.php?id=XXXX → JSON sources (progressive MP4)
+// 1) GET play file → regex fetch file?id=XXXX
+// 2) GET fetch file?id=XXXX → JSON sources
 class NeoCDN : ExtractorApi() {
+    private val domain = "https://animedekho.tv"
+    
     override var name = "NeoCDN"
-    override var mainUrl = "https://animedekho.tv/aaa/myth"
+    override var mainUrl = "$domain/aaa/myth"
     override val requiresReferer = true
 
     override suspend fun getUrl(
@@ -1161,24 +1152,24 @@ class NeoCDN : ExtractorApi() {
     ) {
         val headers = mapOf(
             "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Referer" to (referer ?: "https://animedekho.tv/"),
+            "Referer" to "$domain/",
         )
 
         val page = try {
             app.get(url, headers = headers).text
         } catch (e: Exception) {
-            Log.e(name, "play.php failed: ${e.message}")
+            Log.e(name, "fetch failed: ${e.message}")
             return
         }
 
         val fetchId = Regex("""fetch\.php\?id=([A-Za-z0-9_-]+)""")
             .find(page)?.groupValues?.getOrNull(1)
             ?: run {
-                Log.e(name, "fetch.php id not found")
+                Log.e(name, "fetch id not found")
                 return
             }
 
-        val apiUrl = "https://animedekho.tv/aaa/myth/fetch.php?id=$fetchId"
+        val apiUrl = "$mainUrl/fetch.php?id=$fetchId"
         val response = try {
             app.get(
                 apiUrl,
@@ -1186,7 +1177,7 @@ class NeoCDN : ExtractorApi() {
                 referer = url
             ).parsedSafe<NeoCDNResponse>()
         } catch (e: Exception) {
-            Log.e(name, "fetch.php failed: ${e.message}")
+            Log.e(name, "fetch api failed: ${e.message}")
             return
         } ?: return
 
@@ -1207,7 +1198,7 @@ class NeoCDN : ExtractorApi() {
                 ) {
                     this.quality = getQualityFromName(source.type ?: "")
                     this.headers = mapOf(
-                        "Referer" to "https://animedekho.tv/",
+                        "Referer" to "$domain/",
                         "User-Agent" to headers.getValue("User-Agent")
                     )
                 }
@@ -1223,6 +1214,6 @@ class NeoCDN : ExtractorApi() {
     data class NeoCDNSource(
         val url: String? = null,
         val size: String? = null,
-        val type: String? = null, // "360p", "720p", ...
+        val type: String? = null, 
     )
 }
