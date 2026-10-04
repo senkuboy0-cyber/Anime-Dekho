@@ -1,6 +1,6 @@
 {
   "name": "Toonify Stream",
-  "description": "The ultimate extension bundle for streaming your favorite Anime and Cartoons.",
+  "description": "The ultimate CloudStream repository for high-quality Hindi and multi-language dubbed Anime, Movies, and Cartoons.",
   "manifestVersion": 1,
   "pluginLists": [
     "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/plugins.json"
