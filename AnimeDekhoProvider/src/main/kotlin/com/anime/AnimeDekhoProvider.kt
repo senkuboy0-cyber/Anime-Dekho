@@ -1,4 +1,3 @@
-
 package com.anime
 
 import com.fasterxml.jackson.annotation.JsonProperty
@@ -504,6 +503,35 @@ open class AnimeDekhoProvider : MainAPI() {
         
         val tmdbDetails = fetchTmdbDetails(document, finalCleanTitle, isSeries, year)
 
+        // Process Recommendations for both Series and Movies BEFORE the if(!isSeries) return
+        val recommendations = document.select("div.swiper-wrapper article").mapNotNull { recArticle ->
+            val recName = recArticle.selectFirst("h2")?.text() ?: return@mapNotNull null
+            val recHref = recArticle.selectFirst("a")?.attr("href") ?: return@mapNotNull null
+            val recPoster = recArticle.selectFirst("figure img")?.attr("src")
+            
+            newTvSeriesSearchResponse(recName, Gson().toJson(Media(recHref, recPoster, 0)), TvType.TvSeries) {
+                this.posterUrl = recPoster
+            }
+        }.toMutableList()
+
+        // Fetch recommendations from "Related" aside for Movies
+        recommendations.addAll(
+            document.select("aside.right.cl1 ul.post-lst li article.movies").mapNotNull { recArticle ->
+                val recName = recArticle.selectFirst("h2.entry-title")?.text() ?: return@mapNotNull null
+                val recHref = recArticle.selectFirst("a.lnk-blk")?.attr("href") ?: return@mapNotNull null
+                val recPoster = recArticle.selectFirst("img")?.let { img ->
+                    val src = img.attr("src")
+                    if (src.contains("data:image")) img.attr("data-lazy-src") else src
+                }
+                val recYear = recArticle.selectFirst("span.year")?.text()?.toIntOrNull()
+                
+                newMovieSearchResponse(recName, Gson().toJson(Media(recHref, recPoster, 1)), TvType.Movie) {
+                    this.posterUrl = recPoster
+                    this.year = recYear
+                }
+            }
+        )
+
         if (!isSeries) {
             return newMovieLoadResponse(rawTitle, url, TvType.Movie, Gson().toJson(Media(media.url, mediaType = 1))) {
                 this.posterUrl = poster
@@ -511,6 +539,7 @@ open class AnimeDekhoProvider : MainAPI() {
                 this.plot = plot
                 this.year = year
                 this.logoUrl = tmdbDetails.logo
+                this.recommendations = recommendations
             }
         }
 
@@ -557,16 +586,6 @@ open class AnimeDekhoProvider : MainAPI() {
                 this.posterUrl = ep.finalPoster
                 this.season = ep.season
                 this.episode = ep.calculatedEpNum
-            }
-        }
-
-        val recommendations = document.select("div.swiper-wrapper article").mapNotNull { recArticle ->
-            val recName = recArticle.selectFirst("h2")?.text() ?: return@mapNotNull null
-            val recHref = recArticle.selectFirst("a")?.attr("href") ?: return@mapNotNull null
-            val recPoster = recArticle.selectFirst("figure img")?.attr("src")
-            
-            newTvSeriesSearchResponse(recName, Gson().toJson(Media(recHref, recPoster, 0)), TvType.TvSeries) {
-                this.posterUrl = recPoster
             }
         }
 
