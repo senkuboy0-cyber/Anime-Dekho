@@ -503,19 +503,23 @@ open class AnimeDekhoProvider : MainAPI() {
         
         val tmdbDetails = fetchTmdbDetails(document, finalCleanTitle, isSeries, year)
 
-        // Process Recommendations for both Series and Movies BEFORE the if(!isSeries) return
-        val recommendations = document.select("div.swiper-wrapper article").mapNotNull { recArticle ->
-            val recName = recArticle.selectFirst("h2")?.text() ?: return@mapNotNull null
-            val recHref = recArticle.selectFirst("a")?.attr("href") ?: return@mapNotNull null
-            val recPoster = recArticle.selectFirst("figure img")?.attr("src")
-            
-            newTvSeriesSearchResponse(recName, Gson().toJson(Media(recHref, recPoster, 0)), TvType.TvSeries) {
-                this.posterUrl = recPoster
+        // Process Recommendations for both Series and Movies
+        val loadRecommendations = mutableListOf<SearchResponse>()
+        
+        loadRecommendations.addAll(
+            document.select("div.swiper-wrapper article").mapNotNull { recArticle ->
+                val recName = recArticle.selectFirst("h2")?.text() ?: return@mapNotNull null
+                val recHref = recArticle.selectFirst("a")?.attr("href") ?: return@mapNotNull null
+                val recPoster = recArticle.selectFirst("figure img")?.attr("src")
+                
+                newTvSeriesSearchResponse(recName, Gson().toJson(Media(recHref, recPoster, 0)), TvType.TvSeries) {
+                    this.posterUrl = recPoster
+                }
             }
-        }.toMutableList()
+        )
 
         // Fetch recommendations from "Related" aside for Movies
-        recommendations.addAll(
+        loadRecommendations.addAll(
             document.select("aside.right.cl1 ul.post-lst li article.movies").mapNotNull { recArticle ->
                 val recName = recArticle.selectFirst("h2.entry-title")?.text() ?: return@mapNotNull null
                 val recHref = recArticle.selectFirst("a.lnk-blk")?.attr("href") ?: return@mapNotNull null
@@ -539,7 +543,7 @@ open class AnimeDekhoProvider : MainAPI() {
                 this.plot = plot
                 this.year = year
                 this.logoUrl = tmdbDetails.logo
-                this.recommendations = recommendations
+                this.recommendations = loadRecommendations
             }
         }
 
@@ -595,7 +599,7 @@ open class AnimeDekhoProvider : MainAPI() {
             this.plot = plot
             this.year = year
             this.logoUrl = tmdbDetails.logo
-            this.recommendations = recommendations
+            this.recommendations = loadRecommendations
         }
     }
 
