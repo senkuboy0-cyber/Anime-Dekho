@@ -1,4 +1,3 @@
-
 package com.anime
 
 import com.fasterxml.jackson.annotation.JsonProperty
@@ -627,7 +626,7 @@ open class AnimeDekhoProvider : MainAPI() {
                         async {
                             var localSuccess = false
                             try {
-                                val iframeDoc = app.get("$mainUrl/?trdekho=$i&trid=$term&trtype=${media.mediaType}").document
+                                val iframeDoc = app.get("$mainUrl/?trembed=$i&trid=$term&trtype=${media.mediaType}").document
                                 val iframeUrl = iframeDoc.selectFirst("iframe")?.attr("src")
                                 
                                 if (!iframeUrl.isNullOrEmpty()) {
@@ -682,11 +681,11 @@ open class AnimeDekhoProvider : MainAPI() {
                 }
             }
 
-            // 2. Process trdekho next
+            // 2. Process trembed next
             if (!term.isNullOrEmpty()) {
                 (0..10).forEach { i ->
                     try {
-                        val iframeDoc = app.get("$mainUrl/?trdekho=$i&trid=$term&trtype=${media.mediaType}").document
+                        val iframeDoc = app.get("$mainUrl/?trembed=$i&trid=$term&trtype=${media.mediaType}").document
                         val iframeUrl = iframeDoc.selectFirst("iframe")?.attr("src")
                         
                         if (!iframeUrl.isNullOrEmpty()) {
