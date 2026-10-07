@@ -1031,7 +1031,7 @@ class Byse : ExtractorApi() {
 }
 
 // Progressive file URLs
-class XerverMirror : ExtractorApi() {
+open class XerverMirror : ExtractorApi() {
     override var name = "XerverMirror"
     override var mainUrl = "https://mirror.xerver.xyz"
     override val requiresReferer = true
