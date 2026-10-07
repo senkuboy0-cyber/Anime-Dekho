@@ -1137,6 +1137,11 @@ class XerverMirror : ExtractorApi() {
     )
 }
 
+class VidSrcGet : XerverMirror() {
+    override var name = "VidSrcGet"
+    override var mainUrl = "https://animedekho.tv/aaa/get"
+}
+
 // 1) GET play file → regex fetch file?id=XXXX
 // 2) GET fetch file?id=XXXX → JSON sources
 class NeoCDN : ExtractorApi() {
