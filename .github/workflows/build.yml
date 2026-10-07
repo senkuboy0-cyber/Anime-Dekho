@@ -12,7 +12,59 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2 
+
+      - name: Auto-increment version in changed specific KTS files
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Define the specific plugin directories that are allowed to be auto-incremented
+          ALLOWED_DIRS=("AnimeDekhoProvider" "Toonstream" "TooniboyProvider" "MyAnimesProvider")
+
+          # Get the list of changed files from the latest commit
+          if git rev-parse HEAD~1 >/dev/null 2>&1; then
+            changed_files=$(git diff --name-only HEAD~1 HEAD)
+          else
+            changed_files=$(git ls-files)
+          fi
+
+          changed_kts=0
+
+          # Loop through only the allowed directories
+          for dir in "${ALLOWED_DIRS[@]}"; do
+            # Check if any file inside this specific directory was changed
+            if echo "$changed_files" | grep -q "^$dir/"; then
+              kts_file="$dir/build.gradle.kts"
+              
+              if [ -f "$kts_file" ]; then
+                # Extract the current version number
+                current_version=$(grep -oP 'version\s*=\s*\K\d+' "$kts_file")
+                
+                if [ -n "$current_version" ]; then
+                  new_version=$((current_version + 1))
+                  
+                  # Replace the old version with the new version in the file
+                  sed -i "s/version = $current_version/version = $new_version/" "$kts_file"
+                  echo "Updated $kts_file: $current_version -> $new_version"
+                  
+                  git add "$kts_file"
+                  changed_kts=1
+                fi
+              fi
+            fi
+          done
+
+          # Commit and push only if any build.gradle.kts file was modified
+          if [ $changed_kts -eq 1 ]; then
+            git commit -m "chore: auto-increment plugin versions [skip ci]"
+            git push
+          else
+            echo "No changes detected in allowed plugin directories. Skipping version increment."
+          fi
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -36,12 +88,14 @@ jobs:
           ./gradlew TooniboyProvider:make
           ./gradlew MyAnimesProvider:make
           ./gradlew makePluginsJson
+          
           mkdir -p build_output
           cp AnimeDekhoProvider/build/*.cs3 build_output/ || true
           cp Toonstream/build/*.cs3 build_output/ || true
           cp TooniboyProvider/build/*.cs3 build_output/ || true
           cp MyAnimesProvider/build/*.cs3 build_output/ || true
           cp build/plugins.json build_output/plugins.json
+          
           echo '{
             "name": "Toonify Stream",
             "description": "The ultimate CloudStream repository for high-quality Hindi and multi-language dubbed Anime, Movies, and Cartoons.",
@@ -58,3 +112,4 @@ jobs:
           folder: build_output
           clean: false
           token: ${{ secrets.GITHUB_TOKEN }}
+          
