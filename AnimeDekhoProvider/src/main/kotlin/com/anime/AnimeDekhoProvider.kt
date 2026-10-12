@@ -17,10 +17,8 @@ import kotlin.math.abs
 
 // --- TMDB Data Classes ---
 data class TmdbImages(
-    @JsonProperty("id") val id: Int? = null,
     @JsonProperty("logos") val logos: List<TmdbImage>? = null,
-    @JsonProperty("backdrops") val backdrops: List<TmdbImage>? = null,
-    @JsonProperty("posters") val posters: List<TmdbImage>? = null
+    @JsonProperty("backdrops") val backdrops: List<TmdbImage>? = null
 )
 
 data class TmdbImage(
@@ -262,10 +260,7 @@ open class AnimeDekhoProvider : MainAPI() {
 
                     if (htmlId != null) {
                         val fetchedImages = app.get("$TMDB_API/$htmlType/$htmlId/images?api_key=$TMDB_KEY").parsedSafe<TmdbImages>()
-                        val hasValidResults = fetchedImages?.id != null &&
-                            (!fetchedImages.logos.isNullOrEmpty() || !fetchedImages.backdrops.isNullOrEmpty() || !fetchedImages.posters.isNullOrEmpty())
-
-                        if (hasValidResults) {
+                        if (!fetchedImages?.logos.isNullOrEmpty() || !fetchedImages?.backdrops.isNullOrEmpty()) {
                             tmdbId = htmlId
                             actualMediaType = htmlType
                             images = fetchedImages
