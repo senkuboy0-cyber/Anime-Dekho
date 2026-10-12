@@ -17,8 +17,10 @@ import kotlin.math.abs
 
 // --- TMDB Data Classes ---
 data class TmdbImages(
+    @JsonProperty("id") val id: Int? = null,
     @JsonProperty("logos") val logos: List<TmdbImage>? = null,
-    @JsonProperty("backdrops") val backdrops: List<TmdbImage>? = null
+    @JsonProperty("backdrops") val backdrops: List<TmdbImage>? = null,
+    @JsonProperty("posters") val posters: List<TmdbImage>? = null
 )
 
 data class TmdbImage(
@@ -244,45 +246,79 @@ open class AnimeDekhoProvider : MainAPI() {
 
     private suspend fun fetchTmdbDetails(document: Document, title: String, isSeries: Boolean, year: Int?): TmdbDetails {
         return try {
-            val safeTitle = encodeUri(title)
-            val searchRes = app.get("$TMDB_API/search/multi?api_key=$TMDB_KEY&query=$safeTitle").parsedSafe<TmdbSearch>()
-            
-            val validResults = searchRes?.results?.filter { it.mediaType == "movie" || it.mediaType == "tv" } ?: emptyList()
-            val normTitle = normalizeTitle(title)
+            var tmdbId: Int? = null
+            var actualMediaType: String = if (isSeries) "tv" else "movie"
+            var images: TmdbImages? = null
 
-            var bestMatch = pickBestResult(validResults.filter { normalizeTitle(it.title ?: it.name) == normTitle }, year)
+            // Check direct TMDB URL inside HTML only for Series
+            if (isSeries) {
+                val tmdbMatch = document.select("a[href*='themoviedb.org/']").firstNotNullOfOrNull { link ->
+                    Regex("themoviedb\\.org/(tv|movie)/(\\d+)").find(link.attr("href"))
+                }
 
-            if (bestMatch == null && normTitle.length >= 6) {
-                bestMatch = pickBestResult(validResults.filter {
-                    val tn = normalizeTitle(it.title ?: it.name)
-                    tn.isNotEmpty() && tn.startsWith(normTitle)
-                }, year)
+                if (tmdbMatch != null) {
+                    val htmlType = tmdbMatch.groupValues[1]
+                    val htmlId = tmdbMatch.groupValues[2].toIntOrNull()
+
+                    if (htmlId != null) {
+                        val fetchedImages = app.get("$TMDB_API/$htmlType/$htmlId/images?api_key=$TMDB_KEY").parsedSafe<TmdbImages>()
+                        val hasValidResults = fetchedImages?.id != null &&
+                            (!fetchedImages.logos.isNullOrEmpty() || !fetchedImages.backdrops.isNullOrEmpty() || !fetchedImages.posters.isNullOrEmpty())
+
+                        if (hasValidResults) {
+                            tmdbId = htmlId
+                            actualMediaType = htmlType
+                            images = fetchedImages
+                        }
+                    }
+                }
             }
 
-            var tmdbId = bestMatch?.id
-            var actualMediaType = bestMatch?.mediaType ?: if (isSeries) "tv" else "movie"
-
+            // Fallback to existing search logic if no valid TMDB URL or result was found in HTML
             if (tmdbId == null) {
-                val imdbId = document.select("a[href*='imdb.com/title']").mapNotNull { link ->
-                    val possibleId = link.attr("href").substringAfter("title/").substringBefore("/")
-                    if (possibleId.startsWith("tt")) possibleId else null
-                }.firstOrNull()
+                val safeTitle = encodeUri(title)
+                val searchRes = app.get("$TMDB_API/search/multi?api_key=$TMDB_KEY&query=$safeTitle").parsedSafe<TmdbSearch>()
+                
+                val validResults = searchRes?.results?.filter { it.mediaType == "movie" || it.mediaType == "tv" } ?: emptyList()
+                val normTitle = normalizeTitle(title)
 
-                if (imdbId != null) {
-                    val findRes = app.get("$TMDB_API/find/$imdbId?api_key=$TMDB_KEY&external_source=imdb_id").parsedSafe<TmdbFind>()
-                    val match = if (isSeries) findRes?.tvShows?.firstOrNull() ?: findRes?.movies?.firstOrNull()
-                                else findRes?.movies?.firstOrNull() ?: findRes?.tvShows?.firstOrNull()
-                    
-                    if (match != null) {
-                        tmdbId = match.id
-                        actualMediaType = match.mediaType ?: actualMediaType
+                var bestMatch = pickBestResult(validResults.filter { normalizeTitle(it.title ?: it.name) == normTitle }, year)
+
+                if (bestMatch == null && normTitle.length >= 6) {
+                    bestMatch = pickBestResult(validResults.filter {
+                        val tn = normalizeTitle(it.title ?: it.name)
+                        tn.isNotEmpty() && tn.startsWith(normTitle)
+                    }, year)
+                }
+
+                tmdbId = bestMatch?.id
+                actualMediaType = bestMatch?.mediaType ?: if (isSeries) "tv" else "movie"
+
+                if (tmdbId == null) {
+                    val imdbId = document.select("a[href*='imdb.com/title']").mapNotNull { link ->
+                        val possibleId = link.attr("href").substringAfter("title/").substringBefore("/")
+                        if (possibleId.startsWith("tt")) possibleId else null
+                    }.firstOrNull()
+
+                    if (imdbId != null) {
+                        val findRes = app.get("$TMDB_API/find/$imdbId?api_key=$TMDB_KEY&external_source=imdb_id").parsedSafe<TmdbFind>()
+                        val match = if (isSeries) findRes?.tvShows?.firstOrNull() ?: findRes?.movies?.firstOrNull()
+                                    else findRes?.movies?.firstOrNull() ?: findRes?.tvShows?.firstOrNull()
+                        
+                        if (match != null) {
+                            tmdbId = match.id
+                            actualMediaType = match.mediaType ?: actualMediaType
+                        }
                     }
                 }
             }
 
             if (tmdbId == null) return TmdbDetails(null, null, null, null)
 
-            val images = app.get("$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY").parsedSafe<TmdbImages>()
+            if (images == null) {
+                images = app.get("$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY").parsedSafe<TmdbImages>()
+            }
+
             var logoUrl: String? = null
             var backdropUrl: String? = null
 
