@@ -656,41 +656,33 @@ open class AnimeDekhoProvider : MainAPI() {
             ep.calculatedEpNum = count
         }
 
-        // New Continuous Episode Mapping Logic with "/" check
         if (tmdbDetails.id != null && tmdbDetails.type == "tv") {
-            try {
-                // Fetch basic show details to discover valid seasons
-                val showRes = app.get("$TMDB_API/tv/${tmdbDetails.id}?api_key=$TMDB_KEY").parsedSafe<TmdbShowResponse>()
-                val validSeasons = showRes?.seasons?.mapNotNull { it.seasonNumber }?.filter { it > 0 } ?: emptyList()
-                
-                val allTmdbEpisodes = mutableListOf<TmdbEpisode>()
-                
-                // Concurrently fetch metadata for all valid seasons
-                coroutineScope {
-                    validSeasons.map { sNum ->
-                        async {
-                            app.get("$TMDB_API/tv/${tmdbDetails.id}/season/$sNum?api_key=$TMDB_KEY").parsedSafe<TmdbSeason>()
-                        }
-                    }.awaitAll().forEach { season ->
-                        if (season?.episodes != null) {
-                            allTmdbEpisodes.addAll(season.episodes)
+            val skipTmdbEpisodes = rawEpisodes.any { it.rawName.contains("/") }
+            if (!skipTmdbEpisodes) {
+                try {
+                    val showRes = app.get("$TMDB_API/tv/${tmdbDetails.id}?api_key=$TMDB_KEY").parsedSafe<TmdbShowResponse>()
+                    val validSeasons = showRes?.seasons?.mapNotNull { it.seasonNumber }?.filter { it > 0 } ?: emptyList()
+                    
+                    val allTmdbEpisodes = mutableListOf<TmdbEpisode>()
+                    coroutineScope {
+                        validSeasons.map { sNum ->
+                            async {
+                                app.get("$TMDB_API/tv/${tmdbDetails.id}/season/$sNum?api_key=$TMDB_KEY").parsedSafe<TmdbSeason>()
+                            }
+                        }.awaitAll().forEach { season ->
+                            if (season?.episodes != null) {
+                                allTmdbEpisodes.addAll(season.episodes)
+                            }
                         }
                     }
-                }
-                
-                // Sort TMDB episodes chronologically
-                allTmdbEpisodes.sortWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
-                
-                // Sort Site episodes chronologically to calculate absolute episode index
-                val chronoEpisodes = rawEpisodes.sortedWith(compareBy({ it.season ?: 1 }, { it.calculatedEpNum }))
-                
-                chronoEpisodes.forEachIndexed { index, ep ->
-                    // এখানে চেক করা হচ্ছে: এপিসোডের নামে "/" না থাকলেই কেবল TMDB থেকে ডেটা আনবে
-                    if (!ep.rawName.contains("/")) {
-                        // 1. Try exact match by season and episode
+                    
+                    allTmdbEpisodes.sortWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
+                    
+                    val validSiteEpisodes = rawEpisodes.filter { (it.season ?: 1) > 0 }
+                    val chronoEpisodes = validSiteEpisodes.sortedWith(compareBy({ it.season ?: 1 }, { it.calculatedEpNum }))
+                    
+                    chronoEpisodes.forEachIndexed { index, ep ->
                         var tmdbEp = allTmdbEpisodes.find { it.seasonNumber == ep.season && it.episodeNumber == ep.calculatedEpNum }
-                        
-                        // 2. Fallback to continuous absolute episode mapping
                         if (tmdbEp == null) {
                             tmdbEp = allTmdbEpisodes.getOrNull(index)
                         }
@@ -700,9 +692,9 @@ open class AnimeDekhoProvider : MainAPI() {
                             tmdbEp.stillPath?.takeIf { it.isNotEmpty() }?.let { ep.finalPoster = "$TMDB_IMG$it" }
                         }
                     }
+                } catch (e: Exception) {
+                    Log.e("AnimeDekho", "TMDB complete episode mapping failed: ${e.message}")
                 }
-            } catch (e: Exception) {
-                Log.e("AnimeDekho", "TMDB complete episode mapping failed: ${e.message}")
             }
         }
 
