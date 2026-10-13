@@ -656,7 +656,7 @@ open class AnimeDekhoProvider : MainAPI() {
             ep.calculatedEpNum = count
         }
 
-        // New Continuous Episode Mapping Logic
+        // New Continuous Episode Mapping Logic with "/" check
         if (tmdbDetails.id != null && tmdbDetails.type == "tv") {
             try {
                 // Fetch basic show details to discover valid seasons
@@ -685,17 +685,20 @@ open class AnimeDekhoProvider : MainAPI() {
                 val chronoEpisodes = rawEpisodes.sortedWith(compareBy({ it.season ?: 1 }, { it.calculatedEpNum }))
                 
                 chronoEpisodes.forEachIndexed { index, ep ->
-                    // 1. Try exact match by season and episode
-                    var tmdbEp = allTmdbEpisodes.find { it.seasonNumber == ep.season && it.episodeNumber == ep.calculatedEpNum }
-                    
-                    // 2. Fallback to continuous absolute episode mapping
-                    if (tmdbEp == null) {
-                        tmdbEp = allTmdbEpisodes.getOrNull(index)
-                    }
-                    
-                    if (tmdbEp != null) {
-                        tmdbEp.name?.takeIf { it.isNotEmpty() }?.let { ep.finalName = it }
-                        tmdbEp.stillPath?.takeIf { it.isNotEmpty() }?.let { ep.finalPoster = "$TMDB_IMG$it" }
+                    // এখানে চেক করা হচ্ছে: এপিসোডের নামে "/" না থাকলেই কেবল TMDB থেকে ডেটা আনবে
+                    if (!ep.rawName.contains("/")) {
+                        // 1. Try exact match by season and episode
+                        var tmdbEp = allTmdbEpisodes.find { it.seasonNumber == ep.season && it.episodeNumber == ep.calculatedEpNum }
+                        
+                        // 2. Fallback to continuous absolute episode mapping
+                        if (tmdbEp == null) {
+                            tmdbEp = allTmdbEpisodes.getOrNull(index)
+                        }
+                        
+                        if (tmdbEp != null) {
+                            tmdbEp.name?.takeIf { it.isNotEmpty() }?.let { ep.finalName = it }
+                            tmdbEp.stillPath?.takeIf { it.isNotEmpty() }?.let { ep.finalPoster = "$TMDB_IMG$it" }
+                        }
                     }
                 }
             } catch (e: Exception) {
