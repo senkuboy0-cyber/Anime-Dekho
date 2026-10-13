@@ -36,9 +36,29 @@ data class TmdbResult(
     @JsonProperty("media_type") val mediaType: String? = null,
     @JsonProperty("title") val title: String? = null,
     @JsonProperty("name") val name: String? = null,
+    @JsonProperty("original_title") val originalTitle: String? = null,
+    @JsonProperty("original_name") val originalName: String? = null,
     @JsonProperty("release_date") val releaseDate: String? = null,
     @JsonProperty("first_air_date") val firstAirDate: String? = null,
     @JsonProperty("genre_ids") val genreIds: List<Int>? = null
+)
+
+data class TmdbAltTitle(
+    @JsonProperty("title") val title: String? = null
+)
+
+data class TmdbAltTitlesWrapper(
+    @JsonProperty("results") val results: List<TmdbAltTitle>? = null,
+    @JsonProperty("titles") val titles: List<TmdbAltTitle>? = null
+)
+
+data class TmdbShowResponse(
+    @JsonProperty("id") val id: Int? = null,
+    @JsonProperty("name") val name: String? = null,
+    @JsonProperty("title") val title: String? = null,
+    @JsonProperty("original_name") val originalName: String? = null,
+    @JsonProperty("original_title") val originalTitle: String? = null,
+    @JsonProperty("alternative_titles") val alternativeTitles: TmdbAltTitlesWrapper? = null
 )
 
 data class TmdbSearch(
@@ -181,8 +201,41 @@ open class AnimeDekhoProvider : MainAPI() {
         }
     }
 
+    /**
+     * Normalizes titles by converting to lowercase, replacing "uu" with "u" (e.g., Haikyuu -> Haikyu),
+     * and stripping non-alphanumeric characters.
+     */
     private fun normalizeTitle(s: String?): String {
-        return s?.replace(normalizeRegex, "")?.lowercase() ?: ""
+        return s?.lowercase()?.replace("uu", "u")?.replace(normalizeRegex, "") ?: ""
+    }
+
+    /**
+     * Checks if the site title matches any of the candidate TMDB titles.
+     * Matches exact normalized title first, or if the site title contains a colon (":"),
+     * checks the base title before the colon (e.g., "Bleach: Thousand Year Of Blood War" -> "Bleach").
+     */
+    private fun isTitleMatching(siteTitle: String, candidateTitles: List<String?>): Boolean {
+        val normSiteFull = normalizeTitle(siteTitle)
+        if (normSiteFull.isEmpty()) return false
+
+        val hasColon = siteTitle.contains(":")
+        val normSiteBase = if (hasColon) normalizeTitle(siteTitle.substringBefore(":")) else ""
+
+        for (rawCandidate in candidateTitles) {
+            if (rawCandidate.isNullOrBlank()) continue
+            val normCandFull = normalizeTitle(rawCandidate)
+            if (normCandFull.isEmpty()) continue
+
+            // 1. Exact match (with "uu" -> "u" normalization)
+            if (normSiteFull == normCandFull) return true
+
+            // 2. Colon base-title match only when ":" is present in siteTitle
+            if (hasColon && normSiteBase.length >= 3) {
+                val normCandBase = normalizeTitle(rawCandidate.substringBefore(":"))
+                if (normSiteBase == normCandFull || normSiteBase == normCandBase) return true
+            }
+        }
+        return false
     }
 
     private fun extractRawTitle(title: String): String? {
@@ -248,7 +301,7 @@ open class AnimeDekhoProvider : MainAPI() {
             var actualMediaType: String = if (isSeries) "tv" else "movie"
             var images: TmdbImages? = null
 
-            // Check direct TMDB URL inside HTML only for Series
+            // 1. Check direct TMDB URL inside HTML only for Series and verify title match
             if (isSeries) {
                 val tmdbMatch = document.select("a[href*='themoviedb.org/']").firstNotNullOfOrNull { link ->
                     Regex("themoviedb\\.org/(tv|movie)/(\\d+)").find(link.attr("href"))
@@ -259,27 +312,63 @@ open class AnimeDekhoProvider : MainAPI() {
                     val htmlId = tmdbMatch.groupValues[2].toIntOrNull()
 
                     if (htmlId != null) {
-                        val fetchedImages = app.get("$TMDB_API/$htmlType/$htmlId/images?api_key=$TMDB_KEY").parsedSafe<TmdbImages>()
-                        if (!fetchedImages?.logos.isNullOrEmpty() || !fetchedImages?.backdrops.isNullOrEmpty()) {
-                            tmdbId = htmlId
-                            actualMediaType = htmlType
-                            images = fetchedImages
+                        val showRes = app.get("$TMDB_API/$htmlType/$htmlId?api_key=$TMDB_KEY&append_to_response=alternative_titles").parsedSafe<TmdbShowResponse>()
+                        if (showRes?.id != null) {
+                            val candidateTitles = mutableListOf(
+                                showRes.name,
+                                showRes.title,
+                                showRes.originalName,
+                                showRes.originalTitle
+                            )
+                            showRes.alternativeTitles?.results?.mapNotNullTo(candidateTitles) { it.title }
+                            showRes.alternativeTitles?.titles?.mapNotNullTo(candidateTitles) { it.title }
+
+                            if (isTitleMatching(title, candidateTitles)) {
+                                val fetchedImages = app.get("$TMDB_API/$htmlType/$htmlId/images?api_key=$TMDB_KEY").parsedSafe<TmdbImages>()
+                                if (!fetchedImages?.logos.isNullOrEmpty() || !fetchedImages?.backdrops.isNullOrEmpty()) {
+                                    tmdbId = htmlId
+                                    actualMediaType = htmlType
+                                    images = fetchedImages
+                                }
+                            }
                         }
                     }
                 }
             }
 
-            // Fallback to existing search logic if no valid TMDB URL or result was found in HTML
+            // 2. Fallback to section-specific TMDB search (tv for series, movie for movies)
             if (tmdbId == null) {
+                val searchEndpoint = if (isSeries) "tv" else "movie"
                 val safeTitle = encodeUri(title)
-                val searchRes = app.get("$TMDB_API/search/multi?api_key=$TMDB_KEY&query=$safeTitle").parsedSafe<TmdbSearch>()
+                val searchRes = app.get("$TMDB_API/search/$searchEndpoint?api_key=$TMDB_KEY&query=$safeTitle").parsedSafe<TmdbSearch>()
                 
-                val validResults = searchRes?.results?.filter { it.mediaType == "movie" || it.mediaType == "tv" } ?: emptyList()
+                var validResults = searchRes?.results ?: emptyList()
+
+                // If full title with colon returns nothing, try searching with base title before ':'
+                if (validResults.isEmpty() && title.contains(":")) {
+                    val baseTitle = title.substringBefore(":").trim()
+                    if (baseTitle.length >= 3) {
+                        val baseSearchRes = app.get("$TMDB_API/search/$searchEndpoint?api_key=$TMDB_KEY&query=${encodeUri(baseTitle)}").parsedSafe<TmdbSearch>()
+                        validResults = baseSearchRes?.results ?: emptyList()
+                    }
+                }
+
                 val normTitle = normalizeTitle(title)
 
-                var bestMatch = pickBestResult(validResults.filter { normalizeTitle(it.title ?: it.name) == normTitle }, year)
+                // Prefer exact full title match first
+                var bestMatch = pickBestResult(validResults.filter {
+                    normalizeTitle(it.title ?: it.name) == normTitle ||
+                    normalizeTitle(it.originalTitle ?: it.originalName) == normTitle
+                }, year)
 
-                if (bestMatch == null && normTitle.length >= 6) {
+                // If no exact full match and title contains ':', allow matching base title before ':'
+                if (bestMatch == null && title.contains(":")) {
+                    bestMatch = pickBestResult(validResults.filter {
+                        isTitleMatching(title, listOf(it.title, it.name, it.originalTitle, it.originalName))
+                    }, year)
+                }
+
+                if (bestMatch == null && normTitle.length >= 6 && !title.contains(":")) {
                     bestMatch = pickBestResult(validResults.filter {
                         val tn = normalizeTitle(it.title ?: it.name)
                         tn.isNotEmpty() && tn.startsWith(normTitle)
@@ -287,7 +376,7 @@ open class AnimeDekhoProvider : MainAPI() {
                 }
 
                 tmdbId = bestMatch?.id
-                actualMediaType = bestMatch?.mediaType ?: if (isSeries) "tv" else "movie"
+                actualMediaType = searchEndpoint
 
                 if (tmdbId == null) {
                     val imdbId = document.select("a[href*='imdb.com/title']").mapNotNull { link ->
