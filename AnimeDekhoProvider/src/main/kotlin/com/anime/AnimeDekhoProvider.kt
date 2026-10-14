@@ -312,40 +312,6 @@ open class AnimeDekhoProvider : MainAPI() {
     }
 
     /**
-     * Normalizes fractions (such as ½ to 1/2) and spacing so anime titles inside episode names
-     * can be reliably stripped before checking for combined episode slashes.
-     */
-    private fun normalizeFractionText(text: String): String {
-        return text.replace("½", " 1/2 ")
-            .replace(Regex("(\\S)1/2"), "$1 1/2")
-            .replace(Regex("1/2(\\S)"), "1/2 $1")
-            .replace(Regex("\\s+"), " ")
-            .lowercase()
-            .trim()
-    }
-
-    /**
-     * Strips the anime title from each episode title first, then checks if a "/" still remains.
-     * This ensures anime titles like "Ranma 1/2 Season 3 Episode 1" still fetch TMDB metadata,
-     * while combined episodes like "Ranma 1/2 Season 3 Episode 1/2" or "Title A / Title B" skip TMDB.
-     */
-    private fun shouldSkipTmdbEpisodes(
-        rawEpisodes: List<SiteEpisode>,
-        cleanTitle: String,
-        rawTitle: String
-    ): Boolean {
-        val normClean = normalizeFractionText(cleanTitle)
-        val normRaw = normalizeFractionText(rawTitle)
-
-        return rawEpisodes.any { ep ->
-            var remainingEpText = normalizeFractionText(ep.rawName)
-            if (normRaw.isNotEmpty()) remainingEpText = remainingEpText.replace(normRaw, "").trim()
-            if (normClean.isNotEmpty()) remainingEpText = remainingEpText.replace(normClean, "").trim()
-            remainingEpText.contains("/")
-        }
-    }
-
-    /**
      * Searches TMDB directly by title and release year to retrieve artwork and series metadata.
      */
     private suspend fun fetchTmdbDetails(title: String, isSeries: Boolean, year: Int?): TmdbDetails {
@@ -644,18 +610,24 @@ open class AnimeDekhoProvider : MainAPI() {
             }
         } else null
 
+        val seasonCounters = mutableMapOf<Int, Int>()
         val rawEpisodes = epRes?.episodes.orEmpty().map { ep ->
+            val sNum = ep.season ?: 1
+            val nextCount = (seasonCounters[sNum] ?: 0) + 1
+            seasonCounters[sNum] = nextCount
+            val epNum = ep.episode ?: nextCount
+
             val epTitle = ep.name?.takeIf { it.isNotBlank() }
                 ?: ep.label?.takeIf { it.isNotBlank() }
-                ?: "Episode ${ep.episode ?: 1}"
+                ?: "Episode $epNum"
 
             SiteEpisode(
                 episodeId = ep.id ?: 0,
                 href = ep.url ?: pageUrl,
                 rawName = epTitle,
                 poster = ep.still,
-                season = ep.season ?: 1,
-                calculatedEpNum = ep.episode ?: 1,
+                season = sNum,
+                calculatedEpNum = epNum,
                 finalName = epTitle,
                 finalPoster = ep.still
             )
@@ -663,30 +635,41 @@ open class AnimeDekhoProvider : MainAPI() {
 
         // Enrich episode titles and thumbnails from TMDB when available
         if (tmdbDetails.id != null && tmdbDetails.type == "tv" && rawEpisodes.isNotEmpty()) {
-            val skipTmdbEpisodes = shouldSkipTmdbEpisodes(rawEpisodes, cleanTitle, rawTitle)
-            if (!skipTmdbEpisodes) {
-                try {
-                    val showRes = app.get("$TMDB_API/tv/${tmdbDetails.id}?api_key=$TMDB_KEY").parsedSafe<TmdbShowResponse>()
-                    val validSeasons = showRes?.seasons?.mapNotNull { it.seasonNumber }?.filter { it > 0 } ?: emptyList()
+            try {
+                val showRes = app.get("$TMDB_API/tv/${tmdbDetails.id}?api_key=$TMDB_KEY").parsedSafe<TmdbShowResponse>()
+                val validSeasons = showRes?.seasons?.mapNotNull { it.seasonNumber }?.filter { it > 0 } ?: emptyList()
 
-                    val allTmdbEpisodes = mutableListOf<TmdbEpisode>()
-                    coroutineScope {
-                        validSeasons.map { sNum ->
-                            async {
-                                app.get("$TMDB_API/tv/${tmdbDetails.id}/season/$sNum?api_key=$TMDB_KEY").parsedSafe<TmdbSeason>()
-                            }
-                        }.awaitAll().forEach { season ->
-                            if (season?.episodes != null) {
-                                allTmdbEpisodes.addAll(season.episodes)
-                            }
+                val allTmdbEpisodes = mutableListOf<TmdbEpisode>()
+                coroutineScope {
+                    validSeasons.map { sNum ->
+                        async {
+                            app.get("$TMDB_API/tv/${tmdbDetails.id}/season/$sNum?api_key=$TMDB_KEY").parsedSafe<TmdbSeason>()
+                        }
+                    }.awaitAll().forEach { season ->
+                        if (season?.episodes != null) {
+                            allTmdbEpisodes.addAll(season.episodes)
                         }
                     }
+                }
 
-                    allTmdbEpisodes.sortWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
+                allTmdbEpisodes.sortWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
 
-                    val validSiteEpisodes = rawEpisodes.filter { (it.season ?: 1) > 0 }
-                    val chronoEpisodes = validSiteEpisodes.sortedWith(compareBy({ it.season ?: 1 }, { it.calculatedEpNum }))
+                val validSiteEpisodes = rawEpisodes.filter { (it.season ?: 1) > 0 }
+                val chronoEpisodes = validSiteEpisodes.sortedWith(compareBy({ it.season ?: 1 }, { it.calculatedEpNum }))
 
+                if (tmdbDetails.id == 0x10196) {
+                    // Leave Season 1 untouched and map Season 2+ sequentially starting from the 26th TMDB episode
+                    val s2PlusSiteEpisodes = chronoEpisodes.filter { (it.season ?: 1) >= 2 }
+                    val s2PlusTmdbEpisodes = allTmdbEpisodes.drop(25)
+
+                    s2PlusSiteEpisodes.forEachIndexed { index, ep ->
+                        val tmdbEp = s2PlusTmdbEpisodes.getOrNull(index)
+                        if (tmdbEp != null) {
+                            tmdbEp.name?.takeIf { it.isNotEmpty() }?.let { ep.finalName = it }
+                            tmdbEp.stillPath?.takeIf { it.isNotEmpty() }?.let { ep.finalPoster = "$TMDB_IMG$it" }
+                        }
+                    }
+                } else {
                     chronoEpisodes.forEachIndexed { index, ep ->
                         var tmdbEp = allTmdbEpisodes.find { it.seasonNumber == ep.season && it.episodeNumber == ep.calculatedEpNum }
                         if (tmdbEp == null) {
@@ -698,9 +681,9 @@ open class AnimeDekhoProvider : MainAPI() {
                             tmdbEp.stillPath?.takeIf { it.isNotEmpty() }?.let { ep.finalPoster = "$TMDB_IMG$it" }
                         }
                     }
-                } catch (e: Exception) {
-                    Log.e("AnimeDekho", "TMDB complete episode mapping failed: ${e.message}")
                 }
+            } catch (e: Exception) {
+                Log.e("AnimeDekho", "TMDB complete episode mapping failed: ${e.message}")
             }
         }
 
