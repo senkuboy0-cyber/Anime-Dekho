@@ -9,7 +9,6 @@ import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
@@ -26,11 +25,6 @@ data class TmdbImage(
     @JsonProperty("iso_639_1") val lang: String? = null
 )
 
-data class TmdbFind(
-    @JsonProperty("movie_results") val movies: List<TmdbResult>? = null,
-    @JsonProperty("tv_results") val tvShows: List<TmdbResult>? = null
-)
-
 data class TmdbResult(
     @JsonProperty("id") val id: Int? = null,
     @JsonProperty("media_type") val mediaType: String? = null,
@@ -43,15 +37,6 @@ data class TmdbResult(
     @JsonProperty("genre_ids") val genreIds: List<Int>? = null
 )
 
-data class TmdbAltTitle(
-    @JsonProperty("title") val title: String? = null
-)
-
-data class TmdbAltTitlesWrapper(
-    @JsonProperty("results") val results: List<TmdbAltTitle>? = null,
-    @JsonProperty("titles") val titles: List<TmdbAltTitle>? = null
-)
-
 data class TmdbSeasonBase(
     @JsonProperty("season_number") val seasonNumber: Int? = null
 )
@@ -62,7 +47,6 @@ data class TmdbShowResponse(
     @JsonProperty("title") val title: String? = null,
     @JsonProperty("original_name") val originalName: String? = null,
     @JsonProperty("original_title") val originalTitle: String? = null,
-    @JsonProperty("alternative_titles") val alternativeTitles: TmdbAltTitlesWrapper? = null,
     @JsonProperty("seasons") val seasons: List<TmdbSeasonBase>? = null
 )
 
@@ -88,7 +72,67 @@ data class TmdbDetails(
     val backdrop: String?
 )
 
+// --- Site API & Snapshot Data Classes ---
+data class DgtSnapshot(
+    @JsonProperty("id") val id: Int? = null,
+    @JsonProperty("type") val type: String? = null,
+    @JsonProperty("title") val title: String? = null,
+    @JsonProperty("url") val url: String? = null,
+    @JsonProperty("poster") val poster: String? = null,
+    @JsonProperty("backdrop") val backdrop: String? = null,
+    @JsonProperty("year") val year: Int? = null,
+    @JsonProperty("rating") val rating: Double? = null,
+    @JsonProperty("audio") val audio: String? = null,
+    @JsonProperty("runtime") val runtime: Int? = null,
+    @JsonProperty("genres") val genres: List<String>? = null,
+    @JsonProperty("total") val total: Int? = null
+)
+
+data class DgtEpisodesResponse(
+    @JsonProperty("series_id") val seriesId: Int? = null,
+    @JsonProperty("season") val season: Int? = null,
+    @JsonProperty("episodes") val episodes: List<DgtEpisode>? = null
+)
+
+data class DgtEpisode(
+    @JsonProperty("id") val id: Int? = null,
+    @JsonProperty("series_id") val seriesId: Int? = null,
+    @JsonProperty("season") val season: Int? = null,
+    @JsonProperty("episode") val episode: Int? = null,
+    @JsonProperty("label") val label: String? = null,
+    @JsonProperty("name") val name: String? = null,
+    @JsonProperty("still") val still: String? = null,
+    @JsonProperty("url") val url: String? = null,
+    @JsonProperty("special") val special: Boolean? = null
+)
+
+data class DgtSuggestResponse(
+    @JsonProperty("items") val items: List<DgtSuggestItem>? = null
+)
+
+data class DgtSuggestItem(
+    @JsonProperty("id") val id: Int? = null,
+    @JsonProperty("title") val title: String? = null,
+    @JsonProperty("year") val year: Int? = null,
+    @JsonProperty("type") val type: String? = null,
+    @JsonProperty("url") val url: String? = null,
+    @JsonProperty("poster") val poster: String? = null
+)
+
+data class DgtWatchResponse(
+    @JsonProperty("gated") val gated: Boolean? = null,
+    @JsonProperty("sources") val sources: List<DgtSource>? = null
+)
+
+data class DgtSource(
+    @JsonProperty("server") val server: String? = null,
+    @JsonProperty("embed") val embed: String? = null,
+    @JsonProperty("show_embed") val showEmbed: Boolean? = null,
+    @JsonProperty("kind") val kind: String? = null
+)
+
 data class SiteEpisode(
+    val episodeId: Int,
     val href: String,
     val rawName: String,
     val poster: String?,
@@ -110,6 +154,7 @@ open class AnimeDekhoProvider : MainAPI() {
         TvType.Anime,
         TvType.AnimeMovie,
         TvType.Movie,
+        TvType.TvSeries
     )
 
     // --- TMDB API Constants ---
@@ -262,152 +307,50 @@ open class AnimeDekhoProvider : MainAPI() {
         return processed.takeIf { it.length > 2 && !it.equals("AnimeDekho", ignoreCase = true) && !it.startsWith("|") }
     }
 
-    private suspend fun fetchAjaxData(movieUrl: String, pageHtml: String): Pair<String?, Int?> {
+    /**
+     * Searches TMDB directly by title and release year to retrieve artwork and series metadata.
+     */
+    private suspend fun fetchTmdbDetails(title: String, isSeries: Boolean, year: Int?): TmdbDetails {
         return try {
-            val nonce = Regex("\"nonce\"\\s*:\\s*\"([^\"]+)\"").find(pageHtml)?.groupValues?.get(1) ?: return Pair(null, null)
-            val slug = movieUrl.trimEnd('/').substringAfterLast("/")
-            
-            val searchTerm = slug.replace(Regex("-(hin|hindi|dubbed|dub|sub)$", RegexOption.IGNORE_CASE), "")
-                .replace("-", " ")
-                .trim()
-            
-            val type = if (movieUrl.contains("series")) "series" else "movies"
-            val vars = "{\"_wpsearch\":\"$nonce\",\"search\":\"$searchTerm\",\"type\":\"$type\",\"genres\":[],\"years\":[],\"sort\":1,\"page\":1}"
+            val searchEndpoint = if (isSeries) "tv" else "movie"
+            val safeTitle = encodeUri(title)
+            val searchRes = app.get("$TMDB_API/search/$searchEndpoint?api_key=$TMDB_KEY&query=$safeTitle").parsedSafe<TmdbSearch>()
 
-            val response = app.post(
-                "$mainUrl/wp-admin/admin-ajax.php",
-                data = mapOf("action" to "action_search", "vars" to vars),
-                headers = mapOf(
-                    "Content-Type" to "application/x-www-form-urlencoded",
-                    "X-WP-Nonce" to nonce,
-                    "X-Requested-With" to "XMLHttpRequest",
-                    "Referer" to movieUrl
-                )
-            ).text
+            var validResults = searchRes?.results ?: emptyList()
 
-            val json = parseJson<AjaxResponse>(response)
-            val doc = Jsoup.parse(json.html)
-            
-            val title = doc.selectFirst("h2.entry-title")?.text()?.trim()
-                ?: doc.selectFirst(".post.info .entry-title")?.text()?.trim()
-                ?: doc.selectFirst("img[alt]")?.attr("alt")?.trim()
-
-            val year = Regex("<span class=\"year\">(\\d{4})</span>").find(json.html)?.groupValues?.get(1)?.toIntOrNull()
-                ?: doc.selectFirst("span.year")?.text()?.trim()?.toIntOrNull()
-
-            Pair(title, year)
-        } catch (e: Exception) {
-            Pair(null, null)
-        }
-    }
-
-    private suspend fun fetchTmdbDetails(document: Document, title: String, isSeries: Boolean, year: Int?): TmdbDetails {
-        return try {
-            var tmdbId: Int? = null
-            var actualMediaType: String = if (isSeries) "tv" else "movie"
-            var images: TmdbImages? = null
-
-            // 1. Check direct TMDB URL inside HTML only for Series and verify title match
-            if (isSeries) {
-                val tmdbMatch = document.select("a[href*='themoviedb.org/']").firstNotNullOfOrNull { link ->
-                    Regex("themoviedb\\.org/(tv|movie)/(\\d+)").find(link.attr("href"))
-                }
-
-                if (tmdbMatch != null) {
-                    val htmlType = tmdbMatch.groupValues[1]
-                    val htmlId = tmdbMatch.groupValues[2].toIntOrNull()
-
-                    if (htmlId != null) {
-                        val showRes = app.get("$TMDB_API/$htmlType/$htmlId?api_key=$TMDB_KEY&append_to_response=alternative_titles").parsedSafe<TmdbShowResponse>()
-                        if (showRes?.id != null) {
-                            val candidateTitles = mutableListOf(
-                                showRes.name,
-                                showRes.title,
-                                showRes.originalName,
-                                showRes.originalTitle
-                            )
-                            showRes.alternativeTitles?.results?.mapNotNullTo(candidateTitles) { it.title }
-                            showRes.alternativeTitles?.titles?.mapNotNullTo(candidateTitles) { it.title }
-
-                            if (isTitleMatching(title, candidateTitles)) {
-                                val fetchedImages = app.get("$TMDB_API/$htmlType/$htmlId/images?api_key=$TMDB_KEY").parsedSafe<TmdbImages>()
-                                if (!fetchedImages?.logos.isNullOrEmpty() || !fetchedImages?.backdrops.isNullOrEmpty()) {
-                                    tmdbId = htmlId
-                                    actualMediaType = htmlType
-                                    images = fetchedImages
-                                }
-                            }
-                        }
-                    }
+            // If full title with colon returns nothing, try searching with base title before ':'
+            if (validResults.isEmpty() && title.contains(":")) {
+                val baseTitle = title.substringBefore(":").trim()
+                if (baseTitle.length >= 3) {
+                    val baseSearchRes = app.get("$TMDB_API/search/$searchEndpoint?api_key=$TMDB_KEY&query=${encodeUri(baseTitle)}").parsedSafe<TmdbSearch>()
+                    validResults = baseSearchRes?.results ?: emptyList()
                 }
             }
 
-            // 2. Fallback to section-specific TMDB search (tv for series, movie for movies)
-            if (tmdbId == null) {
-                val searchEndpoint = if (isSeries) "tv" else "movie"
-                val safeTitle = encodeUri(title)
-                val searchRes = app.get("$TMDB_API/search/$searchEndpoint?api_key=$TMDB_KEY&query=$safeTitle").parsedSafe<TmdbSearch>()
-                
-                var validResults = searchRes?.results ?: emptyList()
+            val normTitle = normalizeTitle(title)
 
-                // If full title with colon returns nothing, try searching with base title before ':'
-                if (validResults.isEmpty() && title.contains(":")) {
-                    val baseTitle = title.substringBefore(":").trim()
-                    if (baseTitle.length >= 3) {
-                        val baseSearchRes = app.get("$TMDB_API/search/$searchEndpoint?api_key=$TMDB_KEY&query=${encodeUri(baseTitle)}").parsedSafe<TmdbSearch>()
-                        validResults = baseSearchRes?.results ?: emptyList()
-                    }
-                }
+            // Prefer exact full title match first
+            var bestMatch = pickBestResult(validResults.filter {
+                normalizeTitle(it.title ?: it.name) == normTitle ||
+                normalizeTitle(it.originalTitle ?: it.originalName) == normTitle
+            }, year)
 
-                val normTitle = normalizeTitle(title)
-
-                // Prefer exact full title match first
-                var bestMatch = pickBestResult(validResults.filter {
-                    normalizeTitle(it.title ?: it.name) == normTitle ||
-                    normalizeTitle(it.originalTitle ?: it.originalName) == normTitle
+            // If no exact full match and title contains ':', allow matching base title before ':'
+            if (bestMatch == null && title.contains(":")) {
+                bestMatch = pickBestResult(validResults.filter {
+                    isTitleMatching(title, listOf(it.title, it.name, it.originalTitle, it.originalName))
                 }, year)
-
-                // If no exact full match and title contains ':', allow matching base title before ':'
-                if (bestMatch == null && title.contains(":")) {
-                    bestMatch = pickBestResult(validResults.filter {
-                        isTitleMatching(title, listOf(it.title, it.name, it.originalTitle, it.originalName))
-                    }, year)
-                }
-
-                if (bestMatch == null && normTitle.length >= 6 && !title.contains(":")) {
-                    bestMatch = pickBestResult(validResults.filter {
-                        val tn = normalizeTitle(it.title ?: it.name)
-                        tn.isNotEmpty() && tn.startsWith(normTitle)
-                    }, year)
-                }
-
-                tmdbId = bestMatch?.id
-                actualMediaType = searchEndpoint
-
-                if (tmdbId == null) {
-                    val imdbId = document.select("a[href*='imdb.com/title']").mapNotNull { link ->
-                        val possibleId = link.attr("href").substringAfter("title/").substringBefore("/")
-                        if (possibleId.startsWith("tt")) possibleId else null
-                    }.firstOrNull()
-
-                    if (imdbId != null) {
-                        val findRes = app.get("$TMDB_API/find/$imdbId?api_key=$TMDB_KEY&external_source=imdb_id").parsedSafe<TmdbFind>()
-                        val match = if (isSeries) findRes?.tvShows?.firstOrNull() ?: findRes?.movies?.firstOrNull()
-                                    else findRes?.movies?.firstOrNull() ?: findRes?.tvShows?.firstOrNull()
-                        
-                        if (match != null) {
-                            tmdbId = match.id
-                            actualMediaType = match.mediaType ?: actualMediaType
-                        }
-                    }
-                }
             }
 
-            if (tmdbId == null) return TmdbDetails(null, null, null, null)
-
-            if (images == null) {
-                images = app.get("$TMDB_API/$actualMediaType/$tmdbId/images?api_key=$TMDB_KEY").parsedSafe<TmdbImages>()
+            if (bestMatch == null && normTitle.length >= 6 && !title.contains(":")) {
+                bestMatch = pickBestResult(validResults.filter {
+                    val tn = normalizeTitle(it.title ?: it.name)
+                    tn.isNotEmpty() && tn.startsWith(normTitle)
+                }, year)
             }
+
+            val tmdbId = bestMatch?.id ?: return TmdbDetails(null, null, null, null)
+            val images = app.get("$TMDB_API/$searchEndpoint/$tmdbId/images?api_key=$TMDB_KEY").parsedSafe<TmdbImages>()
 
             var logoUrl: String? = null
             var backdropUrl: String? = null
@@ -427,242 +370,266 @@ open class AnimeDekhoProvider : MainAPI() {
                 bestBackdrop?.filePath?.let { backdropUrl = "$TMDB_IMG$it" }
             }
 
-            TmdbDetails(tmdbId, actualMediaType, logoUrl, backdropUrl)
+            TmdbDetails(tmdbId, searchEndpoint, logoUrl, backdropUrl)
         } catch (e: Exception) {
             TmdbDetails(null, null, null, null)
         }
     }
 
-    private fun mainPageJson(taxonomy: String, search: String, term: String, type: String): String {
-        return "{\"taxonomy\":\"$taxonomy\",\"search\":\"$search\",\"term\":\"$term\",\"type\":\"$type\"}"
-    }
-
     override val mainPage = mainPageOf(
-        mainPageJson("none", "none", "none", "series")        to "Series",
-        mainPageJson("none", "none", "none", "movie")         to "Movies",
-        mainPageJson("category", "none", "anime", "none")     to "Anime",
-        mainPageJson("category", "none", "cartoon", "none")   to "Cartoon"
+        "$mainUrl/browse/?type=series" to "Series",
+        "$mainUrl/browse/?type=movies" to "Movies",
+        "$mainUrl/category/anime/"     to "Anime",
+        "$mainUrl/category/cartoon/"   to "Cartoon"
     )
 
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val isSeries = request.data.contains("type\":\"series")
-        val isMovie = request.data.contains("type\":\"movie")
-        val isCategory = !isSeries && !isMovie
-
-        if (isCategory) {
-            val term = Regex("\"term\":\"([^\"]+)\"").find(request.data)?.groupValues?.get(1) ?: ""
-            val pagedUrl = if (page > 1) "$mainUrl/category/$term/page/$page/" else "$mainUrl/category/$term/"
-            
-            val document = app.get(pagedUrl, timeout = 30).document
-            val home = document.select("article").mapNotNull { it.toSearchResult() }
-            val hasNextPage = document.selectFirst("a.next.page-numbers") != null
-            
-            return newHomePageResponse(request.name, home, hasNextPage)
+    /**
+     * Builds the paginated URL for both browse and category sections.
+     */
+    private fun buildSectionUrl(baseUrl: String, page: Int): String {
+        if (page <= 1) return baseUrl
+        return if (baseUrl.contains("?")) {
+            "$baseUrl&pg=$page"
+        } else {
+            "${baseUrl.trimEnd('/')}/page/$page/"
         }
-
-        val pageUrl = if (isSeries) "$mainUrl/series-hindi/" else "$mainUrl/movie-hindi/"
-
-        if (page == 1) {
-            val document = app.get(pageUrl, timeout = 30).document
-            val home = document.select("article").mapNotNull { it.toSearchResult() }
-            return newHomePageResponse(request.name, home, true)
-        }
-
-        val pageDoc = app.get(pageUrl, timeout = 30).document
-        val nonce = Regex("\"nonce\":\"([^\"]+)\"").find(pageDoc.html())?.groupValues?.get(1) ?: ""
-        val filterEl = pageDoc.selectFirst("[data-taxonomy]")
-        
-        val taxonomy = filterEl?.attr("data-taxonomy") ?: "none"
-        val termVal = filterEl?.attr("data-term") ?: "none"
-        val searchVal = filterEl?.attr("data-search") ?: "none"
-        val typeVal = filterEl?.attr("data-type") ?: "none"
-
-        val vars = "{\"_wpsearch\":\"$nonce\",\"taxonomy\":\"$taxonomy\",\"search\":\"$searchVal\",\"term\":\"$termVal\",\"type\":\"$typeVal\",\"genres\":[],\"years\":[],\"sort\":1,\"page\":$page}"
-
-        val response = app.post(
-            "$mainUrl/wp-admin/admin-ajax.php",
-            data = mapOf("action" to "action_search", "vars" to vars),
-            headers = mapOf(
-                "Content-Type" to "application/x-www-form-urlencoded",
-                "X-WP-Nonce" to nonce,
-                "X-Requested-With" to "XMLHttpRequest",
-                "Referer" to pageUrl
-            ),
-            timeout = 30
-        ).text
-
-        val json = parseJson<AjaxResponse>(response)
-        val htmlDoc = Jsoup.parse(json.html)
-        val home = htmlDoc.select("article").mapNotNull { it.toSearchResult() }
-
-        return newHomePageResponse(request.name, home, json.next)
     }
 
-    private fun Element.toSearchResult(): AnimeSearchResponse? {
-        val href = this.selectFirst("a.lnk-blk")?.attr("href") ?: return null
-        val imgEl = this.selectFirst("div figure img")
-        
+    /**
+     * Parses media cards from the updated site layout, with a fallback for legacy article blocks.
+     */
+    private fun parseBrowseCards(doc: Document): List<SearchResponse> {
+        val cards = doc.select("a.dgt-card")
+        if (cards.isNotEmpty()) {
+            return cards.mapNotNull { card ->
+                val href = card.attr("href").ifBlank { return@mapNotNull null }
+                val url = if (href.startsWith("http")) href else "$mainUrl$href"
+                val title = card.selectFirst(".dgt-card__title")?.text()?.trim().orEmpty()
+                if (title.isBlank()) return@mapNotNull null
+
+                val img = card.selectFirst("img")
+                val poster = img?.attr("data-src")?.takeIf { it.startsWith("http") }
+                    ?: img?.attr("data-lazy-src")?.takeIf { it.startsWith("http") }
+                    ?: img?.attr("src")?.takeIf { it.startsWith("http") && !it.startsWith("data:") }
+
+                val isMovie = url.contains("/movie-hindi/") || url.contains("/movie/")
+                if (isMovie) {
+                    newMovieSearchResponse(title, url, TvType.Movie) {
+                        this.posterUrl = poster
+                    }
+                } else {
+                    newTvSeriesSearchResponse(title, url, TvType.TvSeries) {
+                        this.posterUrl = poster
+                    }
+                }
+            }
+        }
+
+        return doc.select("article").mapNotNull { it.toLegacySearchResult() }
+    }
+
+    private fun Element.toLegacySearchResult(): SearchResponse? {
+        val href = this.selectFirst("a.lnk-blk, a")?.attr("href")?.takeIf { it.isNotBlank() } ?: return null
+        val url = if (href.startsWith("http")) href else "$mainUrl$href"
+        val imgEl = this.selectFirst("figure img, img")
+
         val posterUrl = imgEl?.let {
-            val src = it.attr("src")
-            if (src.contains("data:image")) it.attr("data-lazy-src") else src
+            it.attr("data-src").takeIf { s -> s.startsWith("http") }
+                ?: it.attr("data-lazy-src").takeIf { s -> s.startsWith("http") }
+                ?: it.attr("src").takeIf { s -> s.startsWith("http") && !s.startsWith("data:") }
         }
-        
+
         val imgAlt = imgEl?.attr("alt")?.trim()
-        val h2Text = this.selectFirst("header h2")?.text()?.trim()
-        
+        val h2Text = this.selectFirst("header h2, h2.entry-title, .dgt-card__title")?.text()?.trim()
+
         val title = when {
-            !imgAlt.isNullOrEmpty() && !imgAlt.contains("anime", true) && imgAlt.length > 2 -> imgAlt
             !h2Text.isNullOrEmpty() && !h2Text.contains("AnimeDekho", true) && h2Text.length > 2 -> h2Text
-            else -> href.trimEnd('/').substringAfterLast("/").replace("-", " ").replaceFirstChar { it.uppercase() }
+            !imgAlt.isNullOrEmpty() && !imgAlt.contains("anime", true) && imgAlt.length > 2 -> imgAlt
+            else -> url.trimEnd('/').substringAfterLast("/").replace("-", " ").replaceFirstChar { it.uppercase() }
         }
-        
-        return newAnimeSearchResponse(title, Gson().toJson(Media(href, posterUrl)), TvType.Anime, false) {
-            this.posterUrl = posterUrl
+
+        val isMovie = url.contains("/movie-hindi/") || url.contains("/movie/")
+        return if (isMovie) {
+            newMovieSearchResponse(title, url, TvType.Movie) {
+                this.posterUrl = posterUrl
+            }
+        } else {
+            newTvSeriesSearchResponse(title, url, TvType.TvSeries) {
+                this.posterUrl = posterUrl
+            }
         }
+    }
+
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        val targetUrl = buildSectionUrl(request.data, page)
+        var doc = app.get(targetUrl, timeout = 30).document
+        var items = parseBrowseCards(doc)
+
+        // Fallback to ?pg= parameter if standard category pagination returns empty
+        if (items.isEmpty() && page > 1 && !request.data.contains("?")) {
+            val altUrl = "${request.data.trimEnd('/')}/?pg=$page"
+            doc = app.get(altUrl, timeout = 30).document
+            items = parseBrowseCards(doc)
+        }
+
+        val hasNext = items.size >= 24 || doc.selectFirst("a.next.page-numbers, a.next") != null
+        return newHomePageResponse(request.name, items, hasNext)
     }
 
     override suspend fun search(query: String, page: Int): SearchResponseList {
-        val searchUrl = "$mainUrl/?s=$query"
-        val html = app.get(searchUrl).document.html()
-        
-        val nonce = Regex("\"nonce\"\\s*:\\s*\"([^\"]+)\"").find(html)?.groupValues?.get(1)
-            ?: Regex("\"_wpsearch\"\\s*:\\s*\"([^\"]+)\"").find(html)?.groupValues?.get(1) ?: ""
+        val encodedQuery = encodeUri(query)
 
         if (page == 1) {
-            val document = Jsoup.parse(html)
-            var elements = document.select("ul[data-results] li article")
-            if (elements.isEmpty()) elements = document.select("article")
-            
-            val results = elements.mapNotNull { it.toSearchResult() }
-            return newSearchResponseList(results, results.isNotEmpty())
-        } else {
-            if (nonce.isNotEmpty()) {
-                val vars = "{\"_wpsearch\":\"$nonce\",\"taxonomy\":\"none\",\"search\":\"$query\",\"season\":\"none\",\"type\":\"mixed\",\"genres\":[],\"years\":[],\"sort\":\"1\",\"page\":$page}"
-                
-                val response = app.post(
-                    url = "$mainUrl/wp-admin/admin-ajax.php",
-                    data = mapOf("action" to "action_search", "vars" to vars),
-                    headers = mapOf(
-                        "Content-Type" to "application/x-www-form-urlencoded",
-                        "X-WP-Nonce" to nonce,
-                        "X-Requested-With" to "XMLHttpRequest",
-                        "Referer" to searchUrl
-                    )
-                ).text
+            val suggestRes = try {
+                app.get(
+                    "$mainUrl/wp-json/dgt/v1/suggest?q=$encodedQuery",
+                    headers = mapOf("Accept" to "application/json")
+                ).parsedSafe<DgtSuggestResponse>()
+            } catch (_: Exception) {
+                null
+            }
 
-                val json = parseJson<AjaxResponse>(response)
-                val results = Jsoup.parse(json.html).select("article").mapNotNull { it.toSearchResult() }
-                return newSearchResponseList(results, json.next)
+            val apiResults = suggestRes?.items.orEmpty().mapNotNull { item ->
+                val title = item.title?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                val url = item.url?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+
+                if (item.type == "movie") {
+                    newMovieSearchResponse(title, url, TvType.Movie) {
+                        this.posterUrl = item.poster
+                        this.year = item.year
+                    }
+                } else {
+                    newTvSeriesSearchResponse(title, url, TvType.TvSeries) {
+                        this.posterUrl = item.poster
+                        this.year = item.year
+                    }
+                }
+            }
+
+            if (apiResults.isNotEmpty()) {
+                return newSearchResponseList(apiResults, true)
             }
         }
-        return newSearchResponseList(emptyList(), false)
+
+        val browseSearchUrl = if (page <= 1) {
+            "$mainUrl/browse/?q=$encodedQuery"
+        } else {
+            "$mainUrl/browse/?q=$encodedQuery&pg=$page"
+        }
+
+        val doc = app.get(browseSearchUrl, timeout = 30).document
+        val htmlResults = parseBrowseCards(doc)
+        return newSearchResponseList(htmlResults, htmlResults.size >= 24)
+    }
+
+    /**
+     * Parses the embedded JSON snapshot attribute from the media page.
+     */
+    private fun parseSnapshot(doc: Document): DgtSnapshot? {
+        val raw = doc.selectFirst("[data-snapshot]")?.attr("data-snapshot") ?: return null
+        return try {
+            parseJson<DgtSnapshot>(raw)
+        } catch (_: Exception) {
+            null
+        }
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val media = try {
-            Gson().fromJson(url, Media::class.java)
-        } catch (e: Exception) {
-            return newMovieLoadResponse("Error", url, TvType.Movie, url)
-        } ?: return newMovieLoadResponse("Error", url, TvType.Movie, url)
+        // Support both direct URLs and legacy serialized Media JSON objects
+        val pageUrl = if (url.trim().startsWith("{")) {
+            try {
+                Gson().fromJson(url, Media::class.java)?.url ?: url
+            } catch (_: Exception) {
+                url
+            }
+        } else {
+            url
+        }
 
         val document = try {
             app.get(
-                media.url,
+                pageUrl,
                 headers = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "Referer" to mainUrl,
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Referer" to mainUrl
                 ),
                 timeout = 30
             ).document
         } catch (e: Exception) {
-            return newMovieLoadResponse("Error", url, TvType.Movie, url) { this.posterUrl = media.poster }
-        }
-        
-        val lst = document.select("ul.seasons-lst li")
-        val isSeries = lst.isNotEmpty()
-        var year = document.selectFirst("span.year")?.text()?.trim()?.toIntOrNull()
-
-        var ajaxTitle: String? = null
-        if (!isSeries || year == null) {
-            val ajaxData = fetchAjaxData(media.url, document.html())
-            if (!isSeries && !ajaxData.first.isNullOrEmpty()) {
-                ajaxTitle = extractRawTitle(ajaxData.first!!)
-            }
-            if (year == null) {
-                year = ajaxData.second
-            }
+            return newMovieLoadResponse("Error", pageUrl, TvType.Movie, pageUrl)
         }
 
-        val rawTitle: String = if (isSeries) {
-            extractRawTitle(document.selectFirst("h1.entry-title")?.text().orEmpty())
-                ?: extractRawTitle(document.selectFirst("h1")?.text().orEmpty())
-                ?: extractRawTitle(document.selectFirst("meta[property=og:title]")?.attr("content").orEmpty())
-                ?: extractRawTitle(document.selectFirst("meta[name=twitter:title]")?.attr("content").orEmpty())
-                ?: extractRawTitle(document.selectFirst("title")?.text().orEmpty())
-                ?: media.url.trimEnd('/').substringAfterLast("/").replace("-", " ").replaceFirstChar { it.uppercase() }
-        } else {
-            val fallbackTitle = listOf(
-                document.select("meta[name=twitter:title]").mapNotNull { it.attr("content") }
-                    .firstOrNull { it.isNotBlank() && !it.contains("Watch Online", true) && !it.contains("AnimeDekho", true) },
-                document.selectFirst("meta[name=twitter:title]")?.attr("content"),
-                document.selectFirst("meta[property=og:title]")?.attr("content"),
-                document.selectFirst("title")?.text()
-            ).firstNotNullOfOrNull { text ->
-                text?.let { extractRawTitle(it) ?: it }
-                    ?.takeIf { 
-                        it.length > 2 && 
-                        !it.contains("SCHEDULE", true) && 
-                        !it.contains("TIMING", true) &&
-                        !it.equals("AnimeDekho", true)
-                    }
-            } ?: media.url.trimEnd('/').substringAfterLast("/")
-                .replace("-", " ")
-                .replaceFirstChar { it.uppercase() }
+        val snap = parseSnapshot(document)
+        val isMovie = snap?.type == "movie" || pageUrl.contains("/movie-hindi/") || pageUrl.contains("/movie/")
+        val isSeries = !isMovie
 
-            ajaxTitle ?: fallbackTitle
-        }
+        val rawTitle = snap?.title?.takeIf { it.isNotBlank() }
+            ?: document.selectFirst("h1.dgt-h1, h1.entry-title, h1")?.text()?.trim()
+            ?: extractRawTitle(document.selectFirst("meta[property=og:title]")?.attr("content").orEmpty())
+            ?: pageUrl.trimEnd('/').substringAfterLast("/").replace("-", " ").replaceFirstChar { it.uppercase() }
 
-        val finalCleanTitle = cleanTitleText(rawTitle)
-        val poster = fixUrlNull(document.selectFirst("div.post-thumbnail figure img")?.attr("src")) ?: media.poster
-        val plot = document.selectFirst("div.entry-content p")?.text()?.trim() 
-            ?: document.selectFirst("meta[name=twitter:description]")?.attr("content")
-        
-        val tmdbDetails = fetchTmdbDetails(document, finalCleanTitle, isSeries, year)
+        val cleanTitle = cleanTitleText(extractRawTitle(rawTitle) ?: rawTitle)
+        val year = snap?.year ?: document.selectFirst("span.year")?.text()?.trim()?.toIntOrNull()
+        val plot = document.selectFirst("p.dgt-overview, div.entry-content p")?.text()?.trim()
+            ?: document.selectFirst("meta[name=twitter:description], meta[property=og:description]")?.attr("content")
 
-        if (!isSeries) {
-            return newMovieLoadResponse(rawTitle, url, TvType.Movie, Gson().toJson(Media(media.url, mediaType = 1))) {
+        val poster = snap?.poster
+            ?: fixUrlNull(document.selectFirst("div.post-thumbnail figure img")?.attr("src"))
+        val postId = snap?.id ?: 0
+        val genres = snap?.genres
+
+        val tmdbDetails = fetchTmdbDetails(cleanTitle, isSeries, year)
+        val backdrop = tmdbDetails.backdrop ?: snap?.backdrop ?: poster
+        val recommendations = parseBrowseCards(document)
+
+        if (isMovie) {
+            return newMovieLoadResponse(rawTitle, pageUrl, TvType.Movie, "$postId|0|$pageUrl") {
                 this.posterUrl = poster
-                this.backgroundPosterUrl = tmdbDetails.backdrop ?: poster
+                this.backgroundPosterUrl = backdrop
                 this.plot = plot
                 this.year = year
+                this.tags = genres
                 this.logoUrl = tmdbDetails.logo
+                this.recommendations = recommendations
             }
         }
 
-        val rawEpisodes = lst.mapNotNull { li ->
-            val aEl = li.selectFirst("a") ?: return@mapNotNull null
-            val name = li.selectFirst("h3.title")?.ownText() ?: "null"
-            val href = aEl.attr("href")
-            val epPoster = li.selectFirst("div > div > figure > img")?.attr("src")
-            val season = li.selectFirst("h3.title > span")?.text()?.substringAfter("S")?.substringBefore("-")?.toIntOrNull()
-            
-            SiteEpisode(href, name, epPoster, season)
+        val epRes = if (postId > 0) {
+            try {
+                app.get(
+                    "$mainUrl/wp-json/dgt/v1/episodes?series=$postId",
+                    headers = mapOf("Accept" to "application/json")
+                ).parsedSafe<DgtEpisodesResponse>()
+            } catch (_: Exception) {
+                null
+            }
+        } else null
+
+        val rawEpisodes = epRes?.episodes.orEmpty().map { ep ->
+            val epTitle = ep.name?.takeIf { it.isNotBlank() }
+                ?: ep.label?.takeIf { it.isNotBlank() }
+                ?: "Episode ${ep.episode ?: 1}"
+
+            SiteEpisode(
+                episodeId = ep.id ?: 0,
+                href = ep.url ?: pageUrl,
+                rawName = epTitle,
+                poster = ep.still,
+                season = ep.season ?: 1,
+                calculatedEpNum = ep.episode ?: 1,
+                finalName = epTitle,
+                finalPoster = ep.still
+            )
         }
 
-        val seasonCounters = mutableMapOf<Int?, Int>()
-        rawEpisodes.forEach { ep ->
-            val count = (seasonCounters[ep.season] ?: 0) + 1
-            seasonCounters[ep.season] = count
-            ep.calculatedEpNum = count
-        }
-
-        if (tmdbDetails.id != null && tmdbDetails.type == "tv") {
+        // Enrich episode titles and thumbnails from TMDB when available
+        if (tmdbDetails.id != null && tmdbDetails.type == "tv" && rawEpisodes.isNotEmpty()) {
             val skipTmdbEpisodes = rawEpisodes.any { it.rawName.contains("/") }
             if (!skipTmdbEpisodes) {
                 try {
                     val showRes = app.get("$TMDB_API/tv/${tmdbDetails.id}?api_key=$TMDB_KEY").parsedSafe<TmdbShowResponse>()
                     val validSeasons = showRes?.seasons?.mapNotNull { it.seasonNumber }?.filter { it > 0 } ?: emptyList()
-                    
+
                     val allTmdbEpisodes = mutableListOf<TmdbEpisode>()
                     coroutineScope {
                         validSeasons.map { sNum ->
@@ -675,18 +642,18 @@ open class AnimeDekhoProvider : MainAPI() {
                             }
                         }
                     }
-                    
+
                     allTmdbEpisodes.sortWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
-                    
+
                     val validSiteEpisodes = rawEpisodes.filter { (it.season ?: 1) > 0 }
                     val chronoEpisodes = validSiteEpisodes.sortedWith(compareBy({ it.season ?: 1 }, { it.calculatedEpNum }))
-                    
+
                     chronoEpisodes.forEachIndexed { index, ep ->
                         var tmdbEp = allTmdbEpisodes.find { it.seasonNumber == ep.season && it.episodeNumber == ep.calculatedEpNum }
                         if (tmdbEp == null) {
                             tmdbEp = allTmdbEpisodes.getOrNull(index)
                         }
-                        
+
                         if (tmdbEp != null) {
                             tmdbEp.name?.takeIf { it.isNotEmpty() }?.let { ep.finalName = it }
                             tmdbEp.stillPath?.takeIf { it.isNotEmpty() }?.let { ep.finalPoster = "$TMDB_IMG$it" }
@@ -699,29 +666,20 @@ open class AnimeDekhoProvider : MainAPI() {
         }
 
         val episodes = rawEpisodes.map { ep ->
-            newEpisode(Gson().toJson(Media(ep.href, mediaType = 2))) {
+            newEpisode("$postId|${ep.episodeId}|${ep.href}") {
                 this.name = ep.finalName
-                this.posterUrl = ep.finalPoster
                 this.season = ep.season
                 this.episode = ep.calculatedEpNum
+                this.posterUrl = ep.finalPoster
             }
         }
 
-        val recommendations = document.select("div.swiper-wrapper article").mapNotNull { recArticle ->
-            val recName = recArticle.selectFirst("h2")?.text() ?: return@mapNotNull null
-            val recHref = recArticle.selectFirst("a")?.attr("href") ?: return@mapNotNull null
-            val recPoster = recArticle.selectFirst("figure img")?.attr("src")
-            
-            newTvSeriesSearchResponse(recName, Gson().toJson(Media(recHref, recPoster, 0)), TvType.TvSeries) {
-                this.posterUrl = recPoster
-            }
-        }
-
-        return newTvSeriesLoadResponse(rawTitle, url, TvType.TvSeries, episodes) {
+        return newTvSeriesLoadResponse(rawTitle, pageUrl, TvType.TvSeries, episodes) {
             this.posterUrl = poster
-            this.backgroundPosterUrl = tmdbDetails.backdrop ?: poster
+            this.backgroundPosterUrl = backdrop
             this.plot = plot
             this.year = year
+            this.tags = genres
             this.logoUrl = tmdbDetails.logo
             this.recommendations = recommendations
         }
@@ -733,141 +691,112 @@ open class AnimeDekhoProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
-        val media = try {
-            Gson().fromJson(data, Media::class.java)
+        val parts = data.split("|")
+        val postId = parts.getOrNull(0)?.toIntOrNull() ?: return false
+        val episodeId = parts.getOrNull(1)?.toIntOrNull() ?: 0
+        val referer = parts.getOrNull(2)?.takeIf { it.isNotBlank() } ?: mainUrl
+
+        val watch = try {
+            app.post(
+                "$mainUrl/wp-json/dgt/v1/watch",
+                headers = mapOf(
+                    "Content-Type" to "application/json",
+                    "Accept" to "application/json",
+                    "Referer" to referer,
+                    "Origin" to mainUrl,
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                ),
+                json = mapOf("post_id" to postId, "episode_id" to episodeId)
+            ).parsedSafe<DgtWatchResponse>()
         } catch (e: Exception) {
+            Log.e("AnimeDekho", "Watch API request failed: ${e.message}")
             return false
         } ?: return false
 
-        val isMovie = media.mediaType == 1
+        val embeds = watch.sources.orEmpty()
+            .filter { it.showEmbed != false && !it.embed.isNullOrBlank() }
 
-        val headers = mapOf("Cookie" to "toronites_server=vidstream")
-        val doc = app.get(media.url, headers = headers).document
-
-        val bodyClass = try {
-            app.get(media.url).document.selectFirst("body")?.attr("class")
-        } catch (e: Exception) { null }
-
-        val term = bodyClass?.let { Regex("(?:term|postid)-(\\d+)").find(it)?.groupValues?.get(1) }
         var success = false
-
-        if (isMovie) {
-            coroutineScope {
-                val serverUrls = doc.select("iframe.serversel[src]").map { it.attr("src") }.filter { it.isNotEmpty() }
-                
-                val jobs1 = serverUrls.map { serverUrl ->
-                    async {
-                        try {
-                            val innerDoc = app.get(serverUrl).document
-                            val innerIframeUrl = innerDoc.selectFirst("iframe[src]")?.attr("src")
-                            if (!innerIframeUrl.isNullOrEmpty()) {
-                                invokeExtractor(innerIframeUrl, media.url, subtitleCallback, callback)
-                            }
-                        } catch (e: Exception) {
-                            // Ignore failure for individual server
-                        }
-                    }
-                }
-
-                val jobs2 = if (!term.isNullOrEmpty()) {
-                    (0..10).map { i ->
-                        async {
-                            var localSuccess = false
-                            try {
-                                val iframeDoc = app.get("$mainUrl/?trembed=$i&trid=$term&trtype=${media.mediaType}").document
-                                val iframeUrl = iframeDoc.selectFirst("iframe")?.attr("src")
-                                
-                                if (!iframeUrl.isNullOrEmpty()) {
-                                    if (invokeExtractor(iframeUrl, media.url, subtitleCallback, callback)) {
-                                        localSuccess = true
-                                    }
-                                }
-                            } catch (e: Exception) {
-                                // Ignore
-                            }
-                            localSuccess
-                        }
-                    }
-                } else emptyList()
-
-                // NeoCDN is processed last
-                val neoCdnJobs = doc.select("div.player aside.bx.options ul.bx-lst.aa-tbs li a[data-src]").map { a ->
-                    async {
-                        val b64 = a.attr("data-src").trim()
-                        if (b64.isNotBlank()) {
-                            try {
-                                val decoded = base64Decode(b64)
-                                if (decoded.contains("/aaa/myth/play.php")) {
-                                    invokeExtractor(decoded, media.url, subtitleCallback, callback)
-                                }
-                            } catch (e: Exception) { }
-                        }
-                    }
-                }
-
-                jobs1.awaitAll()
-                val results2 = jobs2.awaitAll()
-                neoCdnJobs.awaitAll()
-                
-                if (results2.any { it }) {
+        for (src in embeds) {
+            val wrapperUrl = src.embed ?: continue
+            try {
+                val realUrl = resolveRealIframe(wrapperUrl, referer) ?: continue
+                if (invokeExtractor(realUrl, referer, subtitleCallback, callback)) {
                     success = true
                 }
-            }
-        } else {
-            // Sequential block for Series
-            
-            // 1. Process standard servers first
-            doc.select("iframe.serversel[src]").map { it.attr("src") }.filter { it.isNotEmpty() }.forEach { serverUrl ->
-                try {
-                    val innerDoc = app.get(serverUrl).document
-                    val innerIframeUrl = innerDoc.selectFirst("iframe[src]")?.attr("src")
-                    if (!innerIframeUrl.isNullOrEmpty()) {
-                        invokeExtractor(innerIframeUrl, media.url, subtitleCallback, callback)
-                    }
-                } catch (e: Exception) {
-                    // Ignore failure for individual server
-                }
-            }
-
-            // 2. Process trembed next
-            if (!term.isNullOrEmpty()) {
-                (0..10).forEach { i ->
-                    try {
-                        val iframeDoc = app.get("$mainUrl/?trembed=$i&trid=$term&trtype=${media.mediaType}").document
-                        val iframeUrl = iframeDoc.selectFirst("iframe")?.attr("src")
-                        
-                        if (!iframeUrl.isNullOrEmpty()) {
-                            if (invokeExtractor(iframeUrl, media.url, subtitleCallback, callback)) {
-                                success = true
-                            }
-                        }
-                    } catch (e: Exception) {
-                        // Ignore
-                    }
-                }
-            }
-
-            // 3. Process NeoCDN at the very end
-            doc.select("div.player aside.bx.options ul.bx-lst.aa-tbs li a[data-src]").forEach { a ->
-                val b64 = a.attr("data-src").trim()
-                if (b64.isNotBlank()) {
-                    try {
-                        val decoded = base64Decode(b64)
-                        if (decoded.contains("/aaa/myth/play.php")) {
-                            invokeExtractor(decoded, media.url, subtitleCallback, callback)
-                        }
-                    } catch (e: Exception) { }
-                }
+            } catch (e: Exception) {
+                Log.e("AnimeDekho", "${src.server}: ${e.message}")
             }
         }
 
         return success
     }
 
-    data class Media(val url: String, val poster: String? = null, val mediaType: Int? = null)
+    /**
+     * Unwraps internal player wrapper pages to extract the underlying third-party embed URL.
+     */
+    private suspend fun resolveRealIframe(url: String, referer: String): String? {
+        var current = url.trim()
+        if (current.isEmpty()) return null
 
-    data class AjaxResponse(
-        val next: Boolean,
-        val html: String
+        // Check if NeoCDN wrapper contains a base64-encoded external URL parameter
+        if (current.contains("/aaa/myth/play2.php") || current.contains("/aaa/myth/play.php")) {
+            val id = current.substringAfter("id=", "").substringBefore("&")
+            if (id.isNotBlank()) {
+                try {
+                    val decoded = base64Decode(id)
+                    if (decoded.startsWith("http")) {
+                        if (!decoded.contains("animedekho.tv")) return decoded
+                        current = decoded
+                    }
+                } catch (_: Exception) { }
+            }
+        }
+
+        repeat(3) {
+            if (!isAnimedekhoWrapper(current)) return current
+
+            val doc = try {
+                app.get(
+                    current,
+                    headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        "Referer" to referer
+                    ),
+                    referer = referer
+                ).document
+            } catch (_: Exception) {
+                return current.takeIf { !isAnimedekhoWrapper(it) }
+            }
+
+            val iframe = doc.selectFirst("iframe[src]")?.attr("src")?.trim().orEmpty()
+            if (iframe.isNotBlank() && !iframe.contains("challenge-platform")) {
+                current = when {
+                    iframe.startsWith("http") -> iframe
+                    iframe.startsWith("//") -> "https:$iframe"
+                    iframe.startsWith("/") -> mainUrl.trimEnd('/') + iframe
+                    else -> iframe
+                }
+                if (!isAnimedekhoWrapper(current)) return current
+                return@repeat
+            }
+            return current.takeIf { it.startsWith("http") }
+        }
+        return current.takeIf { it.startsWith("http") }
+    }
+
+    /**
+     * Checks whether the URL is an intermediate wrapper hosted on the main domain.
+     */
+    private fun isAnimedekhoWrapper(u: String): Boolean {
+        if (!u.contains("animedekho.tv", true)) return false
+        return u.contains("player.php") || u.contains("/embed/") ||
+            u.contains("/aaa/myth/play") || u.contains("/aaa/get/play.php")
+    }
+
+    data class Media(
+        @JsonProperty("url") val url: String,
+        @JsonProperty("poster") val poster: String? = null,
+        @JsonProperty("mediaType") val mediaType: Int? = null
     )
 }
