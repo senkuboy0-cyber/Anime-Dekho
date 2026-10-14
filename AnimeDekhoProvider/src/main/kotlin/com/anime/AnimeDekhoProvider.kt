@@ -89,14 +89,14 @@ data class DgtSnapshot(
 )
 
 data class DgtEpisodesResponse(
-    @JsonProperty("series_id") val seriesId: Int? = null,
+    @JsonProperty("series_id") val series_id: Int? = null,
     @JsonProperty("season") val season: Int? = null,
     @JsonProperty("episodes") val episodes: List<DgtEpisode>? = null
 )
 
 data class DgtEpisode(
     @JsonProperty("id") val id: Int? = null,
-    @JsonProperty("series_id") val seriesId: Int? = null,
+    @JsonProperty("series_id") val series_id: Int? = null,
     @JsonProperty("season") val season: Int? = null,
     @JsonProperty("episode") val episode: Int? = null,
     @JsonProperty("label") val label: String? = null,
@@ -127,7 +127,7 @@ data class DgtWatchResponse(
 data class DgtSource(
     @JsonProperty("server") val server: String? = null,
     @JsonProperty("embed") val embed: String? = null,
-    @JsonProperty("show_embed") val showEmbed: Boolean? = null,
+    @JsonProperty("show_embed") val show_embed: Boolean? = null,
     @JsonProperty("kind") val kind: String? = null
 )
 
@@ -575,8 +575,10 @@ open class AnimeDekhoProvider : MainAPI() {
 
         val poster = snap?.poster
             ?: fixUrlNull(document.selectFirst("div.post-thumbnail figure img")?.attr("src"))
-        val postId = snap?.id ?: 0
-        val genres = snap?.genres
+        val postId = snap?.id
+            ?: document.selectFirst("[data-series]")?.attr("data-series")?.toIntOrNull()
+            ?: document.selectFirst("[data-title]")?.attr("data-title")?.toIntOrNull()
+            ?: 0
 
         val tmdbDetails = fetchTmdbDetails(cleanTitle, isSeries, year)
         val backdrop = tmdbDetails.backdrop ?: snap?.backdrop ?: poster
@@ -588,7 +590,6 @@ open class AnimeDekhoProvider : MainAPI() {
                 this.backgroundPosterUrl = backdrop
                 this.plot = plot
                 this.year = year
-                this.tags = genres
                 this.logoUrl = tmdbDetails.logo
                 this.recommendations = recommendations
             }
@@ -679,7 +680,6 @@ open class AnimeDekhoProvider : MainAPI() {
             this.backgroundPosterUrl = backdrop
             this.plot = plot
             this.year = year
-            this.tags = genres
             this.logoUrl = tmdbDetails.logo
             this.recommendations = recommendations
         }
@@ -691,10 +691,62 @@ open class AnimeDekhoProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
-        val parts = data.split("|")
-        val postId = parts.getOrNull(0)?.toIntOrNull() ?: return false
-        val episodeId = parts.getOrNull(1)?.toIntOrNull() ?: 0
-        val referer = parts.getOrNull(2)?.takeIf { it.isNotBlank() } ?: mainUrl
+        var postId = 0
+        var episodeId = 0
+        var referer = mainUrl
+
+        // Strip mainUrl prefix automatically added by CloudStream's fixUrl() inside newEpisode()
+        val cleanData = data.removePrefix("$mainUrl/").removePrefix(mainUrl).trim()
+
+        if (cleanData.contains("|")) {
+            val parts = cleanData.split("|", limit = 3)
+            postId = parts.getOrNull(0)?.substringAfterLast("/")?.toIntOrNull() ?: 0
+            episodeId = parts.getOrNull(1)?.toIntOrNull() ?: 0
+            val rawRef = parts.getOrNull(2)?.trim().orEmpty()
+            referer = when {
+                rawRef.startsWith("http") -> rawRef
+                rawRef.isNotBlank() -> "$mainUrl/${rawRef.trimStart('/')}"
+                else -> mainUrl
+            }
+        } else if (data.startsWith("http")) {
+            referer = data
+        }
+
+        val isMoviePage = referer.contains("/movie-hindi/") || referer.contains("/movie/")
+
+        // Fallback: Fetch page HTML if postId is missing or if a series episode is missing episodeId
+        if (postId <= 0 || (!isMoviePage && episodeId <= 0 && referer.startsWith("http"))) {
+            try {
+                val doc = app.get(referer).document
+                if (postId <= 0) {
+                    postId = doc.selectFirst("[data-title]")?.attr("data-title")?.toIntOrNull()
+                        ?: doc.selectFirst("[data-series]")?.attr("data-series")?.toIntOrNull()
+                        ?: parseSnapshot(doc)?.id
+                        ?: 0
+                }
+                if (episodeId <= 0) {
+                    episodeId = doc.selectFirst("[data-term]")?.attr("data-term")?.toIntOrNull()
+                        ?: run {
+                            val epRaw = doc.selectFirst("[data-episode]")?.attr("data-episode")
+                            if (!epRaw.isNullOrBlank()) {
+                                try {
+                                    parseJson<DgtEpisode>(epRaw).id
+                                } catch (_: Exception) {
+                                    null
+                                }
+                            } else null
+                        }
+                        ?: 0
+                }
+            } catch (e: Exception) {
+                Log.e("AnimeDekho", "Fallback HTML parse failed for $referer: ${e.message}")
+            }
+        }
+
+        if (postId <= 0) {
+            Log.e("AnimeDekho", "loadLinks: postId missing, data=$data")
+            return false
+        }
 
         val watch = try {
             app.post(
@@ -706,7 +758,10 @@ open class AnimeDekhoProvider : MainAPI() {
                     "Origin" to mainUrl,
                     "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 ),
-                json = mapOf("post_id" to postId, "episode_id" to episodeId)
+                json = mapOf(
+                    "post_id" to postId,
+                    "episode_id" to episodeId
+                )
             ).parsedSafe<DgtWatchResponse>()
         } catch (e: Exception) {
             Log.e("AnimeDekho", "Watch API request failed: ${e.message}")
@@ -714,7 +769,12 @@ open class AnimeDekhoProvider : MainAPI() {
         } ?: return false
 
         val embeds = watch.sources.orEmpty()
-            .filter { it.showEmbed != false && !it.embed.isNullOrBlank() }
+            .filter { it.show_embed != false && !it.embed.isNullOrBlank() }
+
+        if (embeds.isEmpty()) {
+            Log.e("AnimeDekho", "No embeds found for post=$postId ep=$episodeId")
+            return false
+        }
 
         var success = false
         for (src in embeds) {
