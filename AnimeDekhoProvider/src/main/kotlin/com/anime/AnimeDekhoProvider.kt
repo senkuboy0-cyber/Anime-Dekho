@@ -157,6 +157,10 @@ open class AnimeDekhoProvider : MainAPI() {
         TvType.TvSeries
     )
 
+    // Dynamically extracts the domain name from mainUrl so domain changes only require updating mainUrl
+    private val mainHost: String
+        get() = mainUrl.substringAfter("://").substringBefore("/")
+
     // --- TMDB API Constants ---
     private val TMDB_API = "https://api.themoviedb.org/3"
     private val TMDB_KEY = "1865f43a0549ca50d341dd9ab8b29f49"
@@ -305,6 +309,40 @@ open class AnimeDekhoProvider : MainAPI() {
             .trim()
 
         return processed.takeIf { it.length > 2 && !it.equals("AnimeDekho", ignoreCase = true) && !it.startsWith("|") }
+    }
+
+    /**
+     * Normalizes fractions (such as ½ to 1/2) and spacing so anime titles inside episode names
+     * can be reliably stripped before checking for combined episode slashes.
+     */
+    private fun normalizeFractionText(text: String): String {
+        return text.replace("½", " 1/2 ")
+            .replace(Regex("(\\S)1/2"), "$1 1/2")
+            .replace(Regex("1/2(\\S)"), "1/2 $1")
+            .replace(Regex("\\s+"), " ")
+            .lowercase()
+            .trim()
+    }
+
+    /**
+     * Strips the anime title from each episode title first, then checks if a "/" still remains.
+     * This ensures anime titles like "Ranma 1/2 Season 3 Episode 1" still fetch TMDB metadata,
+     * while combined episodes like "Ranma 1/2 Season 3 Episode 1/2" or "Title A / Title B" skip TMDB.
+     */
+    private fun shouldSkipTmdbEpisodes(
+        rawEpisodes: List<SiteEpisode>,
+        cleanTitle: String,
+        rawTitle: String
+    ): Boolean {
+        val normClean = normalizeFractionText(cleanTitle)
+        val normRaw = normalizeFractionText(rawTitle)
+
+        return rawEpisodes.any { ep ->
+            var remainingEpText = normalizeFractionText(ep.rawName)
+            if (normRaw.isNotEmpty()) remainingEpText = remainingEpText.replace(normRaw, "").trim()
+            if (normClean.isNotEmpty()) remainingEpText = remainingEpText.replace(normClean, "").trim()
+            remainingEpText.contains("/")
+        }
     }
 
     /**
@@ -625,7 +663,7 @@ open class AnimeDekhoProvider : MainAPI() {
 
         // Enrich episode titles and thumbnails from TMDB when available
         if (tmdbDetails.id != null && tmdbDetails.type == "tv" && rawEpisodes.isNotEmpty()) {
-            val skipTmdbEpisodes = rawEpisodes.any { it.rawName.contains("/") }
+            val skipTmdbEpisodes = shouldSkipTmdbEpisodes(rawEpisodes, cleanTitle, rawTitle)
             if (!skipTmdbEpisodes) {
                 try {
                     val showRes = app.get("$TMDB_API/tv/${tmdbDetails.id}?api_key=$TMDB_KEY").parsedSafe<TmdbShowResponse>()
@@ -768,8 +806,17 @@ open class AnimeDekhoProvider : MainAPI() {
             return false
         } ?: return false
 
+        // Prioritize Vidstream first, then Vidmoly, followed by all other available servers
         val embeds = watch.sources.orEmpty()
             .filter { it.show_embed != false && !it.embed.isNullOrBlank() }
+            .sortedBy { src ->
+                val serverName = src.server.orEmpty()
+                when {
+                    serverName.contains("vidstream", ignoreCase = true) -> 0
+                    serverName.contains("vidmoly", ignoreCase = true) -> 1
+                    else -> 2
+                }
+            }
 
         if (embeds.isEmpty()) {
             Log.e("AnimeDekho", "No embeds found for post=$postId ep=$episodeId")
@@ -806,7 +853,7 @@ open class AnimeDekhoProvider : MainAPI() {
                 try {
                     val decoded = base64Decode(id)
                     if (decoded.startsWith("http")) {
-                        if (!decoded.contains("animedekho.tv")) return decoded
+                        if (!decoded.contains(mainHost, ignoreCase = true)) return decoded
                         current = decoded
                     }
                 } catch (_: Exception) { }
@@ -849,7 +896,7 @@ open class AnimeDekhoProvider : MainAPI() {
      * Checks whether the URL is an intermediate wrapper hosted on the main domain.
      */
     private fun isAnimedekhoWrapper(u: String): Boolean {
-        if (!u.contains("animedekho.tv", true)) return false
+        if (!u.contains(mainHost, ignoreCase = true)) return false
         return u.contains("player.php") || u.contains("/embed/") ||
             u.contains("/aaa/myth/play") || u.contains("/aaa/get/play.php")
     }
