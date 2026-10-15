@@ -8,7 +8,9 @@ import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import org.jsoup.nodes.Document
+import java.net.URLDecoder
 import java.net.URLEncoder
 import kotlin.math.abs
 
@@ -30,6 +32,14 @@ open class AnimeDekhoProvider : MainAPI() {
     private val mainHost: String
         get() = mainUrl.substringAfter("://").substringBefore("/")
 
+    private val jsonHeaders: Map<String, String>
+        get() = mapOf(
+            "Content-Type" to "application/json",
+            "Accept" to "application/json",
+            "Origin" to mainUrl,
+            "User-Agent" to USER_AGENT
+        )
+
     private val TMDB_API = "https://api.themoviedb.org/3"
     private val TMDB_KEY = "1865f43a0549ca50d341dd9ab8b29f49"
     private val TMDB_IMG = "https://image.tmdb.org/t/p/original"
@@ -49,6 +59,12 @@ open class AnimeDekhoProvider : MainAPI() {
     private val vidMolyNet   = VidMolyNet()
     private val blakite      = Blakite()
     private val neoCdn       = NeoCDN()
+
+    companion object {
+        private const val USER_AGENT =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        private const val GATE_WAIT_MS = 10_000L
+    }
 
     // =========================================================================
     // Main CloudStream Overrides
@@ -127,7 +143,7 @@ open class AnimeDekhoProvider : MainAPI() {
             app.get(
                 url,
                 headers = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "User-Agent" to USER_AGENT,
                     "Referer" to mainUrl
                 ),
                 timeout = 30
@@ -280,22 +296,20 @@ open class AnimeDekhoProvider : MainAPI() {
             return false
         }
 
-        val watch = try {
-            app.post(
-                "$mainUrl/wp-json/dgt/v1/watch",
-                headers = mapOf(
-                    "Content-Type" to "application/json",
-                    "Accept" to "application/json",
-                    "Referer" to referer,
-                    "Origin" to mainUrl,
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                ),
-                json = mapOf("post_id" to postId, "episode_id" to episodeId)
-            ).parsedSafe<DgtWatchResponse>()
-        } catch (e: Exception) {
-            Log.e("AnimeDekho", "Watch API request failed: ${e.message}")
+        // 1. Initial Watch API request
+        var watch = postWatch(postId, episodeId, referer)
+
+        // 2. Only if gated == true, unlock the 24h IP gate and call Watch API a second time
+        if (watch?.gated == true) {
+            val unlocked = unlockGate(watch.gate, referer)
+            if (unlocked) {
+                watch = postWatch(postId, episodeId, referer)
+            }
+        }
+
+        if (watch == null || watch.gated == true) {
             return false
-        } ?: return false
+        }
 
         // Prioritize Vidstream first, then Vidmoly, followed by all other available servers
         val embeds = watch.sources.orEmpty()
@@ -326,8 +340,63 @@ open class AnimeDekhoProvider : MainAPI() {
     }
 
     // =========================================================================
-    // Site Parsing & Player Resolution Helpers
+    // Watch API, Gate Unlock & Player Resolution Helpers
     // =========================================================================
+
+    private suspend fun postWatch(postId: Int, episodeId: Int, referer: String): DgtWatchResponse? {
+        return try {
+            app.post(
+                "$mainUrl/wp-json/dgt/v1/watch",
+                headers = jsonHeaders + mapOf("Referer" to referer),
+                json = mapOf(
+                    "post_id" to postId,
+                    "episode_id" to episodeId
+                )
+            ).parsedSafe<DgtWatchResponse>()
+        } catch (e: Exception) {
+            Log.e("AnimeDekho", "Watch API request failed: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * Unlocks the 24-hour IP-based verification gate when watch response returns gated = true.
+     */
+    private suspend fun unlockGate(gateUrl: String?, referer: String): Boolean {
+        if (gateUrl.isNullOrBlank()) return false
+        return try {
+            val gateDoc = app.get(
+                gateUrl,
+                headers = mapOf("User-Agent" to USER_AGENT, "Referer" to referer)
+            ).document
+
+            val verifyUrl = gateDoc.selectFirst("input[name=shortlink]")
+                ?.attr("value")
+                ?.replace("&amp;", "&")
+                ?.trim()
+                .orEmpty()
+
+            if (verifyUrl.isBlank() || !verifyUrl.contains("dgt_verify")) {
+                Log.e("AnimeDekho", "Verification shortlink not found on gate page")
+                return false
+            }
+
+            delay(GATE_WAIT_MS)
+
+            val resp = app.get(
+                verifyUrl,
+                headers = mapOf(
+                    "User-Agent" to USER_AGENT,
+                    "Referer" to mainUrl,
+                    "Accept" to "text/html,*/*"
+                )
+            )
+            resp.code in 200..299
+        } catch (e: Exception) {
+            Log.e("AnimeDekho", "Gate unlock failed: ${e.message}")
+            false
+        }
+    }
 
     private fun buildSectionUrl(baseUrl: String, page: Int): String {
         if (page <= 1) return baseUrl
@@ -398,6 +467,7 @@ open class AnimeDekhoProvider : MainAPI() {
 
         if (current.contains("/aaa/myth/play2.php") || current.contains("/aaa/myth/play.php")) {
             val id = current.substringAfter("id=", "").substringBefore("&")
+                .let { try { URLDecoder.decode(it, "UTF-8") } catch (_: Exception) { it } }
             if (id.isNotBlank()) {
                 try {
                     val decoded = base64Decode(id)
@@ -416,7 +486,7 @@ open class AnimeDekhoProvider : MainAPI() {
                 app.get(
                     current,
                     headers = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        "User-Agent" to USER_AGENT,
                         "Referer" to referer
                     ),
                     referer = referer
@@ -426,17 +496,17 @@ open class AnimeDekhoProvider : MainAPI() {
             }
 
             val iframe = doc.selectFirst("iframe[src]")?.attr("src")?.trim().orEmpty()
-            if (iframe.isNotBlank() && !iframe.contains("challenge-platform")) {
-                current = when {
-                    iframe.startsWith("http") -> iframe
-                    iframe.startsWith("//") -> "https:$iframe"
-                    iframe.startsWith("/") -> mainUrl.trimEnd('/') + iframe
-                    else -> iframe
-                }
-                if (!isAnimedekhoWrapper(current)) return current
-                return@repeat
+            if (iframe.isBlank() || iframe.contains("challenge-platform")) {
+                return current.takeIf { it.startsWith("http") }
             }
-            return current.takeIf { it.startsWith("http") }
+
+            current = when {
+                iframe.startsWith("http") -> iframe
+                iframe.startsWith("//") -> "https:$iframe"
+                iframe.startsWith("/") -> mainUrl.trimEnd('/') + iframe
+                else -> iframe
+            }
+            if (!isAnimedekhoWrapper(current)) return current
         }
         return current.takeIf { it.startsWith("http") }
     }
@@ -705,6 +775,8 @@ data class DgtSuggestItem(
 
 data class DgtWatchResponse(
     @JsonProperty("gated") val gated: Boolean? = null,
+    @JsonProperty("gate") val gate: String? = null,
+    @JsonProperty("hours") val hours: Int? = null,
     @JsonProperty("sources") val sources: List<DgtSource>? = null
 )
 
@@ -712,7 +784,8 @@ data class DgtSource(
     @JsonProperty("server") val server: String? = null,
     @JsonProperty("embed") val embed: String? = null,
     @JsonProperty("show_embed") val show_embed: Boolean? = null,
-    @JsonProperty("kind") val kind: String? = null
+    @JsonProperty("kind") val kind: String? = null,
+    @JsonProperty("quality") val quality: String? = null
 )
 
 data class SiteEpisode(
