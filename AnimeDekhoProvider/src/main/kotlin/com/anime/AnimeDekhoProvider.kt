@@ -64,6 +64,12 @@ open class AnimeDekhoProvider : MainAPI() {
         private const val USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         private const val GATE_WAIT_MS = 10_000L
+
+        private val IGNORED_EXT_REFS = setOf(
+            0xC19AL, 0x1E281L, 0x3177F27C7L, 0xEDC0L, 0xA45D9L,
+            0x100CBL, 0x22E3FL, 0x4DE86L, 0x45993L, 0x4BA53L,
+            0x5AD51L, 0x5B01FL, 0x119F2FL, 0x8D2F2L
+        )
     }
 
     // =========================================================================
@@ -613,23 +619,22 @@ open class AnimeDekhoProvider : MainAPI() {
             var tmdbId: Int? = null
             var images: TmdbImages? = null
 
-            // 1. For Movies only: extract TMDB ID from .dgt-ext and verify that valid images exist on TMDB
-            if (!isSeries) {
-                val tmdbHref = document.selectFirst("div.dgt-ext a.dgt-ext__btn--tmdb, a.dgt-ext__btn--tmdb")
-                    ?.attr("href")
-                    .orEmpty()
-                val htmlId = Regex("themoviedb\\.org/movie/(\\d+)").find(tmdbHref)?.groupValues?.get(1)?.toIntOrNull()
+            // 1. Extract TMDB reference from .dgt-ext external button if valid and not in ignored list
+            val tmdbHref = document.selectFirst("div.dgt-ext a.dgt-ext__btn--tmdb, a.dgt-ext__btn--tmdb")
+                ?.attr("href")
+                .orEmpty()
+            val rawHtmlId = Regex("themoviedb\\.org/(?:tv|movie)/(\\d+)").find(tmdbHref)?.groupValues?.get(1)?.toLongOrNull()
 
-                if (htmlId != null) {
-                    val fetchedImages = app.get("$TMDB_API/movie/$htmlId/images?api_key=$TMDB_KEY").parsedSafe<TmdbImages>()
-                    if (!fetchedImages?.logos.isNullOrEmpty() || !fetchedImages?.backdrops.isNullOrEmpty()) {
-                        tmdbId = htmlId
-                        images = fetchedImages
-                    }
+            if (rawHtmlId != null && rawHtmlId !in IGNORED_EXT_REFS && rawHtmlId <= Int.MAX_VALUE) {
+                val candidateId = rawHtmlId.toInt()
+                val fetchedImages = app.get("$TMDB_API/$searchEndpoint/$candidateId/images?api_key=$TMDB_KEY").parsedSafe<TmdbImages>()
+                if (!fetchedImages?.logos.isNullOrEmpty() || !fetchedImages?.backdrops.isNullOrEmpty()) {
+                    tmdbId = candidateId
+                    images = fetchedImages
                 }
             }
 
-            // 2. Fallback to TMDB Search API by title and year if HTML ID was missing or invalid on TMDB
+            // 2. Fallback to TMDB Search API by title and year if HTML ID was missing, rejected, or invalid
             if (tmdbId == null) {
                 val safeTitle = encodeUri(title)
                 val searchRes = app.get("$TMDB_API/search/$searchEndpoint?api_key=$TMDB_KEY&query=$safeTitle").parsedSafe<TmdbSearch>()
