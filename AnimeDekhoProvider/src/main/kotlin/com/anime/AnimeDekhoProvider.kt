@@ -611,16 +611,25 @@ open class AnimeDekhoProvider : MainAPI() {
         return try {
             val searchEndpoint = if (isSeries) "tv" else "movie"
             var tmdbId: Int? = null
+            var images: TmdbImages? = null
 
-            // 1. For Movies only: extract TMDB ID directly from the .dgt-ext external link button if present
+            // 1. For Movies only: extract TMDB ID from .dgt-ext and verify that valid images exist on TMDB
             if (!isSeries) {
                 val tmdbHref = document.selectFirst("div.dgt-ext a.dgt-ext__btn--tmdb, a.dgt-ext__btn--tmdb")
                     ?.attr("href")
                     .orEmpty()
-                tmdbId = Regex("themoviedb\\.org/movie/(\\d+)").find(tmdbHref)?.groupValues?.get(1)?.toIntOrNull()
+                val htmlId = Regex("themoviedb\\.org/movie/(\\d+)").find(tmdbHref)?.groupValues?.get(1)?.toIntOrNull()
+
+                if (htmlId != null) {
+                    val fetchedImages = app.get("$TMDB_API/movie/$htmlId/images?api_key=$TMDB_KEY").parsedSafe<TmdbImages>()
+                    if (!fetchedImages?.logos.isNullOrEmpty() || !fetchedImages?.backdrops.isNullOrEmpty()) {
+                        tmdbId = htmlId
+                        images = fetchedImages
+                    }
+                }
             }
 
-            // 2. Fallback to TMDB Search API by title and year
+            // 2. Fallback to TMDB Search API by title and year if HTML ID was missing or invalid on TMDB
             if (tmdbId == null) {
                 val safeTitle = encodeUri(title)
                 val searchRes = app.get("$TMDB_API/search/$searchEndpoint?api_key=$TMDB_KEY&query=$safeTitle").parsedSafe<TmdbSearch>()
@@ -660,7 +669,9 @@ open class AnimeDekhoProvider : MainAPI() {
 
             if (tmdbId == null) return TmdbDetails(null, null, null, null)
 
-            val images = app.get("$TMDB_API/$searchEndpoint/$tmdbId/images?api_key=$TMDB_KEY").parsedSafe<TmdbImages>()
+            if (images == null) {
+                images = app.get("$TMDB_API/$searchEndpoint/$tmdbId/images?api_key=$TMDB_KEY").parsedSafe<TmdbImages>()
+            }
 
             var logoUrl: String? = null
             var backdropUrl: String? = null
