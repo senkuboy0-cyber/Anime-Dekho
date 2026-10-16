@@ -1,13 +1,10 @@
 package com.anime
 
-import android.widget.Toast
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.CommonActivity.showToast
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
-import com.lagradost.cloudstream3.utils.Coroutines.main
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -175,7 +172,7 @@ open class AnimeDekhoProvider : MainAPI() {
             ?: document.selectFirst("[data-title]")?.attr("data-title")?.toIntOrNull()
             ?: 0
 
-        val tmdbDetails = fetchTmdbDetails(cleanTitle, isSeries, year)
+        val tmdbDetails = fetchTmdbDetails(document, cleanTitle, isSeries, year)
         val backdrop = tmdbDetails.backdrop ?: snap?.backdrop ?: poster
         val recommendations = parseBrowseCards(document)
 
@@ -363,7 +360,7 @@ open class AnimeDekhoProvider : MainAPI() {
     }
 
     /**
-     * Unlocks the 24-hour IP-based verification gate with periodic countdown toast notifications.
+     * Unlocks the 24-hour IP-based verification gate when watch response returns gated = true.
      */
     private suspend fun unlockGate(gateUrl: String?, referer: String): Boolean {
         if (gateUrl.isNullOrBlank()) return false
@@ -384,17 +381,7 @@ open class AnimeDekhoProvider : MainAPI() {
                 return false
             }
 
-            // Display countdown notifications every 3 seconds without overlapping Android toast queue
-            var remainingSec = (GATE_WAIT_MS / 1000).toInt()
-            while (remainingSec > 0) {
-                val displaySec = remainingSec
-                main {
-                    showToast("Unlocking in ${displaySec}s...", Toast.LENGTH_SHORT)
-                }
-                val stepSec = if (remainingSec > 4) 3 else remainingSec
-                delay(stepSec * 1000L)
-                remainingSec -= stepSec
-            }
+            delay(GATE_WAIT_MS)
 
             val resp = app.get(
                 verifyUrl,
@@ -404,14 +391,7 @@ open class AnimeDekhoProvider : MainAPI() {
                     "Accept" to "text/html,*/*"
                 )
             )
-
-            val unlocked = resp.code in 200..299
-            if (unlocked) {
-                main {
-                    showToast("Unlocked successfully for 24 hours!", Toast.LENGTH_SHORT)
-                }
-            }
-            unlocked
+            resp.code in 200..299
         } catch (e: Exception) {
             Log.e("AnimeDekho", "Gate unlock failed: ${e.message}")
             false
@@ -627,43 +607,59 @@ open class AnimeDekhoProvider : MainAPI() {
         return false
     }
 
-    private suspend fun fetchTmdbDetails(title: String, isSeries: Boolean, year: Int?): TmdbDetails {
+    private suspend fun fetchTmdbDetails(document: Document, title: String, isSeries: Boolean, year: Int?): TmdbDetails {
         return try {
             val searchEndpoint = if (isSeries) "tv" else "movie"
-            val safeTitle = encodeUri(title)
-            val searchRes = app.get("$TMDB_API/search/$searchEndpoint?api_key=$TMDB_KEY&query=$safeTitle").parsedSafe<TmdbSearch>()
+            var tmdbId: Int? = null
 
-            var validResults = searchRes?.results ?: emptyList()
+            // 1. For Movies only: extract TMDB ID directly from the .dgt-ext external link button if present
+            if (!isSeries) {
+                val tmdbHref = document.selectFirst("div.dgt-ext a.dgt-ext__btn--tmdb, a.dgt-ext__btn--tmdb")
+                    ?.attr("href")
+                    .orEmpty()
+                tmdbId = Regex("themoviedb\\.org/movie/(\\d+)").find(tmdbHref)?.groupValues?.get(1)?.toIntOrNull()
+            }
 
-            if (validResults.isEmpty() && title.contains(":")) {
-                val baseTitle = title.substringBefore(":").trim()
-                if (baseTitle.length >= 3) {
-                    val baseSearchRes = app.get("$TMDB_API/search/$searchEndpoint?api_key=$TMDB_KEY&query=${encodeUri(baseTitle)}").parsedSafe<TmdbSearch>()
-                    validResults = baseSearchRes?.results ?: emptyList()
+            // 2. Fallback to TMDB Search API by title and year
+            if (tmdbId == null) {
+                val safeTitle = encodeUri(title)
+                val searchRes = app.get("$TMDB_API/search/$searchEndpoint?api_key=$TMDB_KEY&query=$safeTitle").parsedSafe<TmdbSearch>()
+
+                var validResults = searchRes?.results ?: emptyList()
+
+                if (validResults.isEmpty() && title.contains(":")) {
+                    val baseTitle = title.substringBefore(":").trim()
+                    if (baseTitle.length >= 3) {
+                        val baseSearchRes = app.get("$TMDB_API/search/$searchEndpoint?api_key=$TMDB_KEY&query=${encodeUri(baseTitle)}").parsedSafe<TmdbSearch>()
+                        validResults = baseSearchRes?.results ?: emptyList()
+                    }
                 }
-            }
 
-            val normTitle = normalizeTitle(title)
+                val normTitle = normalizeTitle(title)
 
-            var bestMatch = pickBestResult(validResults.filter {
-                normalizeTitle(it.title ?: it.name) == normTitle ||
-                normalizeTitle(it.originalTitle ?: it.originalName) == normTitle
-            }, year)
-
-            if (bestMatch == null && title.contains(":")) {
-                bestMatch = pickBestResult(validResults.filter {
-                    isTitleMatching(title, listOf(it.title, it.name, it.originalTitle, it.originalName))
+                var bestMatch = pickBestResult(validResults.filter {
+                    normalizeTitle(it.title ?: it.name) == normTitle ||
+                    normalizeTitle(it.originalTitle ?: it.originalName) == normTitle
                 }, year)
+
+                if (bestMatch == null && title.contains(":")) {
+                    bestMatch = pickBestResult(validResults.filter {
+                        isTitleMatching(title, listOf(it.title, it.name, it.originalTitle, it.originalName))
+                    }, year)
+                }
+
+                if (bestMatch == null && normTitle.length >= 6 && !title.contains(":")) {
+                    bestMatch = pickBestResult(validResults.filter {
+                        val tn = normalizeTitle(it.title ?: it.name)
+                        tn.isNotEmpty() && tn.startsWith(normTitle)
+                    }, year)
+                }
+
+                tmdbId = bestMatch?.id
             }
 
-            if (bestMatch == null && normTitle.length >= 6 && !title.contains(":")) {
-                bestMatch = pickBestResult(validResults.filter {
-                    val tn = normalizeTitle(it.title ?: it.name)
-                    tn.isNotEmpty() && tn.startsWith(normTitle)
-                }, year)
-            }
+            if (tmdbId == null) return TmdbDetails(null, null, null, null)
 
-            val tmdbId = bestMatch?.id ?: return TmdbDetails(null, null, null, null)
             val images = app.get("$TMDB_API/$searchEndpoint/$tmdbId/images?api_key=$TMDB_KEY").parsedSafe<TmdbImages>()
 
             var logoUrl: String? = null
