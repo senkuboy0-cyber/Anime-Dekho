@@ -1,10 +1,13 @@
 package com.anime
 
+import android.widget.Toast
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.CommonActivity.showToast
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
+import com.lagradost.cloudstream3.utils.Coroutines.main
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -360,7 +363,7 @@ open class AnimeDekhoProvider : MainAPI() {
     }
 
     /**
-     * Unlocks the 24-hour IP-based verification gate when watch response returns gated = true.
+     * Unlocks the 24-hour IP-based verification gate with periodic countdown toast notifications.
      */
     private suspend fun unlockGate(gateUrl: String?, referer: String): Boolean {
         if (gateUrl.isNullOrBlank()) return false
@@ -381,7 +384,17 @@ open class AnimeDekhoProvider : MainAPI() {
                 return false
             }
 
-            delay(GATE_WAIT_MS)
+            // Display countdown notifications every 3 seconds without overlapping Android toast queue
+            var remainingSec = (GATE_WAIT_MS / 1000).toInt()
+            while (remainingSec > 0) {
+                val displaySec = remainingSec
+                main {
+                    showToast("Unlocking in ${displaySec}s...", Toast.LENGTH_SHORT)
+                }
+                val stepSec = if (remainingSec > 4) 3 else remainingSec
+                delay(stepSec * 1000L)
+                remainingSec -= stepSec
+            }
 
             val resp = app.get(
                 verifyUrl,
@@ -391,7 +404,14 @@ open class AnimeDekhoProvider : MainAPI() {
                     "Accept" to "text/html,*/*"
                 )
             )
-            resp.code in 200..299
+
+            val unlocked = resp.code in 200..299
+            if (unlocked) {
+                main {
+                    showToast("Unlocked successfully for 24 hours!", Toast.LENGTH_SHORT)
+                }
+            }
+            unlocked
         } catch (e: Exception) {
             Log.e("AnimeDekho", "Gate unlock failed: ${e.message}")
             false
