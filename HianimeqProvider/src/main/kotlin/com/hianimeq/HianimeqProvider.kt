@@ -29,12 +29,11 @@ class HianimeqProvider : MainAPI() {
     override val mainPage = mainPageOf(
         "recently-updated" to "Recently Updated",
         "genre/action" to "Action",
-        "genre/adventure" to "Adventure",
-        "genre/comedy" to "Comedy",
-        "genre/fantasy" to "Fantasy",
-        "genre/romance" to "Romance",
-        "genre/sci-fi" to "Sci-Fi",
-        "genre/supernatural" to "Supernatural"
+        "dubbed-anime" to "Dubbed Anime",
+        "genre/ecchi" to "Ecchi",
+        "genre/harem" to "Harem",
+        "genre/isekai" to "Isekai",
+        "genre/romance" to "Romance"
     )
 
     private fun encodeUri(text: String): String {
@@ -166,11 +165,6 @@ class HianimeqProvider : MainAPI() {
                     .find(detailDoc.text())?.groupValues?.get(1)?.toIntOrNull()
         }
 
-        val tags = detailDoc.select(".anisc-info a[href*='/genre/']")
-            .map { it.text().trim() }
-            .filter { it.isNotBlank() }
-            .distinct()
-
         val recommendations = (detailDoc.select("section.block_area_home div.flw-item")
             .ifEmpty { playDoc.select("section.block_area_home div.flw-item") })
             .mapNotNull { it.toSearchResult() }
@@ -197,7 +191,8 @@ class HianimeqProvider : MainAPI() {
                 this.backgroundPosterUrl = background
                 this.plot = plot
                 this.year = year
-                this.tags = tags
+                this.tags = emptyList()
+                this.actors = emptyList()
                 this.recommendations = recommendations
             }
         }
@@ -259,7 +254,8 @@ class HianimeqProvider : MainAPI() {
             this.backgroundPosterUrl = background
             this.plot = plot
             this.year = year
-            this.tags = tags
+            this.tags = emptyList()
+            this.actors = emptyList()
             this.recommendations = recommendations
             addEpisodes(DubStatus.Subbed, episodes)
         }
