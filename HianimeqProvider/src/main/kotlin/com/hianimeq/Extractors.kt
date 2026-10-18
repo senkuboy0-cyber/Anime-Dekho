@@ -37,6 +37,7 @@ class ZokoAnime : ExtractorApi() {
 
         val json = JSONObject(deobfuscate(encoded))
         val masterUrl = json.optString("src").ifBlank { return }
+        val langTag = langFromUrl(url)
 
         val subs = json.optJSONArray("subtitles")
         if (subs != null) {
@@ -58,7 +59,7 @@ class ZokoAnime : ExtractorApi() {
         callback.invoke(
             newExtractorLink(
                 source = name,
-                name = "$name [Auto]",
+                name = "$name $langTag",
                 url = masterUrl,
                 type = ExtractorLinkType.M3U8
             ) {
@@ -76,7 +77,7 @@ class ZokoAnime : ExtractorApi() {
             callback.invoke(
                 newExtractorLink(
                     source = name,
-                    name = "$name [$qualityName]",
+                    name = "$name $langTag",
                     url = variantUrl,
                     type = ExtractorLinkType.M3U8
                 ) {
@@ -122,6 +123,8 @@ class MegaPlay : ExtractorApi() {
         val fileId = Regex("""data-id=["'](\d+)["']""")
             .find(html)?.groupValues?.get(1) ?: return
 
+        val langTag = langFromUrl(url)
+
         val apiHeaders = mapOf(
             "User-Agent" to USER_AGENT,
             "Referer" to url,
@@ -138,7 +141,10 @@ class MegaPlay : ExtractorApi() {
             for (i in 0 until tracks.length()) {
                 val track = tracks.optJSONObject(i) ?: continue
                 val kind = track.optString("kind")
-                if (kind.isNotBlank() && !kind.equals("captions", true) && !kind.equals("subtitles", true)) {
+                if (kind.isNotBlank()
+                    && !kind.equals("captions", true)
+                    && !kind.equals("subtitles", true)
+                ) {
                     continue
                 }
                 val label = track.optString("label").ifBlank { "Unknown" }
@@ -166,7 +172,7 @@ class MegaPlay : ExtractorApi() {
         callback.invoke(
             newExtractorLink(
                 source = name,
-                name = "$name [Auto]",
+                name = "$name $langTag",
                 url = masterUrl,
                 type = ExtractorLinkType.M3U8
             ) {
@@ -184,7 +190,7 @@ class MegaPlay : ExtractorApi() {
             callback.invoke(
                 newExtractorLink(
                     source = name,
-                    name = "$name [$qualityName]",
+                    name = "$name $langTag",
                     url = variantUrl,
                     type = ExtractorLinkType.M3U8
                 ) {
@@ -219,6 +225,15 @@ class MegaPlay : ExtractorApi() {
     }
 }
 
+private fun langFromUrl(url: String): String {
+    val path = url.trimEnd('/').lowercase()
+    return when {
+        path.endsWith("/dub") || path.contains("/dub/") -> "Dub"
+        path.endsWith("/sub") || path.contains("/sub/") -> "Sub"
+        else -> "Sub"
+    }
+}
+
 private fun parseHlsVariants(masterUrl: String, body: String): List<Pair<String, String>> {
     val result = mutableListOf<Pair<String, String>>()
     val lines = body.lines()
@@ -242,7 +257,7 @@ private fun parseHlsVariants(masterUrl: String, body: String): List<Pair<String,
                     val qualityName = when {
                         !nameAttr.isNullOrBlank() -> nameAttr
                         !resolution.isNullOrBlank() -> "${resolution}p"
-                        else -> "Unknown"
+                        else -> ""
                     }
                     result.add(qualityName to absolute)
                 }
