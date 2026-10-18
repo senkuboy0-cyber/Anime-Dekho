@@ -37,6 +37,14 @@ class HianimeqProvider : MainAPI() {
         "genre/supernatural" to "Supernatural"
     )
 
+    private fun encodeUri(text: String): String {
+        return try {
+            URLEncoder.encode(text, "UTF-8")
+        } catch (_: Exception) {
+            text
+        }
+    }
+
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val path = request.data.trim('/')
         val url = if (page <= 1) {
@@ -46,23 +54,31 @@ class HianimeqProvider : MainAPI() {
         }
 
         val document = app.get(url).document
-        val items = document.select("div.flw-item").mapNotNull { it.toSearchResult() }
+        val home = document.select("div.flw-item").mapNotNull { it.toSearchResult() }
         val hasNext = document.select("ul.pagination a.page-link[href*=anime-page]").any {
-            it.text().trim().toIntOrNull()?.let { n -> n > page } == true
+            val n = it.text().trim().toIntOrNull()
+            n != null && n > page
                     || it.attr("title").equals("Next", true)
                     || it.attr("title").equals("Last", true)
         }
 
-        return newHomePageResponse(
-            listOf(HomePageList(request.name, items, isPaging = true)),
-            hasNext = hasNext || items.isNotEmpty()
-        )
+        return newHomePageResponse(request.name, home, hasNext)
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {
-        val url = "\( mainUrl/?s= \){URLEncoder.encode(query, "UTF-8")}"
+    override suspend fun search(query: String, page: Int): SearchResponseList {
+        val encoded = encodeUri(query)
+        val url = if (page <= 1) {
+            "$mainUrl/?s=$encoded"
+        } else {
+            "$mainUrl/?s=$encoded&anime-page=$page"
+        }
         val document = app.get(url).document
-        return document.select("div.flw-item").mapNotNull { it.toSearchResult() }
+        val results = document.select("div.flw-item").mapNotNull { it.toSearchResult() }
+        val hasNext = document.select("ul.pagination a.page-link[href*=anime-page]").any {
+            it.attr("title").equals("Next", true)
+                    || (it.text().trim().toIntOrNull()?.let { n -> n > page } == true)
+        }
+        return newSearchResponseList(results, hasNext)
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
@@ -100,8 +116,11 @@ class HianimeqProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse {
         val media = try {
-            if (url.trim().startsWith("{")) Gson().fromJson(url, HianimeqMedia::class.java)
-            else HianimeqMedia(url)
+            if (url.trim().startsWith("{")) {
+                Gson().fromJson(url, HianimeqMedia::class.java)
+            } else {
+                HianimeqMedia(url)
+            }
         } catch (_: Exception) {
             HianimeqMedia(url)
         }
@@ -125,8 +144,10 @@ class HianimeqProvider : MainAPI() {
             ?: "Unknown"
 
         val poster = media.poster
-            ?: playDoc.selectFirst(".anisc-poster img.film-poster-img")?.attr("src")?.replace("&#038;", "&")
-            ?: detailDoc.selectFirst(".film-poster-img, .anisc-poster img")?.attr("src")?.replace("&#038;", "&")
+            ?: playDoc.selectFirst(".anisc-poster img.film-poster-img")?.attr("src")
+                ?.replace("&#038;", "&")
+            ?: detailDoc.selectFirst(".film-poster-img, .anisc-poster img")?.attr("src")
+                ?.replace("&#038;", "&")
 
         val background = playDoc.selectFirst(".anis-cover")?.attr("style")
             ?.let { Regex("""url\(([^)]+)\)""").find(it)?.groupValues?.get(1) }
@@ -134,19 +155,15 @@ class HianimeqProvider : MainAPI() {
             ?.trim('"', '\'')
             ?: poster
 
-        val plot = detailDoc.selectFirst(".film-description .text, .anisc-info-wrap")
-            ?.ownText()
-            ?.ifBlank {
-                detailDoc.selectFirst(".film-description .text")?.text()
-            }
+        val plot = detailDoc.selectFirst(".film-description .text")?.text()?.trim()
             ?: playDoc.selectFirst(".film-description .text")?.text()?.trim()
 
-        val year = detailDoc.text().let { text ->
-            Regex("""Aired:\s*[A-Za-z]+\s+\d{1,2},\s*((?:19|20)\d{2})""")
-                .find(text)?.groupValues?.get(1)?.toIntOrNull()
-                ?: Regex("""\b((?:19|20)\d{2})\b""").find(
-                    detailDoc.selectFirst(".item:contains(Aired), .anisc-info")?.text().orEmpty()
-                )?.groupValues?.get(1)?.toIntOrNull()
+        val year = run {
+            val airedText = detailDoc.selectFirst(".item:has(.item-title:contains(Aired)), .anisc-info")
+                ?.text().orEmpty()
+            Regex("""((?:19|20)\d{2})""").find(airedText)?.groupValues?.get(1)?.toIntOrNull()
+                ?: Regex("""Aired:\s*[A-Za-z]+\s+\d{1,2},\s*((?:19|20)\d{2})""")
+                    .find(detailDoc.text())?.groupValues?.get(1)?.toIntOrNull()
         }
 
         val tags = detailDoc.select(".anisc-info a[href*='/genre/']")
@@ -165,7 +182,6 @@ class HianimeqProvider : MainAPI() {
             ?.text()?.trim().orEmpty()
         val isMovie = typeText.contains("Movie", true)
                 || playUrl.contains("-movie", true)
-                || (animeId == null && !playUrl.contains("-episode-", true))
 
         if (isMovie) {
             val episodeId = playDoc.selectFirst("#ani_detail")?.attr("data-id")
@@ -301,7 +317,7 @@ class HianimeqProvider : MainAPI() {
     private fun String.toAnimeDetailUrl(): String {
         val path = substringAfter(mainUrl).trim('/')
         val slug = path
-            .replace(Regex("""-episode-\d+/?$"""), "")
+            .replace(Regex("-episode-\\d+/?" + "$"), "")
             .trim('/')
         return if (slug.isNotBlank()) "$mainUrl/anime/$slug/" else this
     }
