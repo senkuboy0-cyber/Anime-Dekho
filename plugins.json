@@ -2,7 +2,7 @@
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/AnimeDekhoProvider.cs3",
         "status": 1,
-        "version": 52,
+        "version": 58,
         "name": "AnimeDekhoProvider",
         "internalName": "AnimeDekhoProvider",
         "authors": [
@@ -19,7 +19,7 @@
         ],
         "iconUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/refs/heads/main/assets/icons/AnimeDekho.png",
         "apiVersion": 1,
-        "fileHash": "sha256-d23eb3463afd9e9aa074350a82f0a33aaf335e2204d896e0ebf2d019ee3a9ffb",
+        "fileHash": "sha256-20bc7a2f675165642ff5eec4f7e0f24f326c428b356ef98f8759962575afa5c8",
         "jarFileSize": 575570,
         "jarUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/AnimeDekhoProvider.jar",
         "jarHash": "sha256-8a897a9be140975181fe5444b417567eac0c8c6cd8fabf96e2769cc61e9a55ab"
@@ -27,7 +27,7 @@
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/HianimeqProvider.cs3",
         "status": 1,
-        "version": 4,
+        "version": 10,
         "name": "HianimeqProvider",
         "internalName": "HianimeqProvider",
         "authors": [
@@ -43,7 +43,7 @@
         ],
         "iconUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/refs/heads/main/assets/icons/Hianimeq.png",
         "apiVersion": 1,
-        "fileHash": "sha256-c0bdcfc0f74916a71cae0f18a72346fd21fdacf0f1e0526626f50786578ae308",
+        "fileHash": "sha256-6e5d8ec7832c1072f4aa0e4ed2d43bf450924f157c8bca054557822b180c0115",
         "jarFileSize": 121678,
         "jarUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/HianimeqProvider.jar",
         "jarHash": "sha256-8ec6f3347e54a2291ceacc7a72136b45e995a888417a810413854ef7e01c5445"
@@ -51,14 +51,14 @@
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/MyAnimesProvider.cs3",
         "status": 1,
-        "version": 10,
+        "version": 16,
         "name": "MyAnimesProvider",
         "internalName": "MyAnimesProvider",
         "authors": [
             "senkuboy0-cyber"
         ],
         "description": "MyAnimes: Hindi, Tamil, Telugu, English multi-audio anime, series and movies.",
-        "fileSize": 55939,
+        "fileSize": 55940,
         "repositoryUrl": "https://github.com/senkuboy0-cyber/Anime-Dekho",
         "language": "hi",
         "tvTypes": [
@@ -70,22 +70,46 @@
         ],
         "iconUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/refs/heads/main/assets/icons/myanimes.png",
         "apiVersion": 1,
-        "fileHash": "sha256-6769c352070f67c6f4ef3346c9aece23c351de7ca9ff0bd7b33f7ca71c735688",
+        "fileHash": "sha256-3ad38ac25e2a084517857ce45f1de30c2b1ed7c8fbe04b8cf11151746259215e",
         "jarFileSize": 207964,
         "jarUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/MyAnimesProvider.jar",
         "jarHash": "sha256-3b39eda05cc3dbd933a4afa50decbeda4dbfce864b491347abcdceb3038472d3"
     },
     {
+        "url": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/OtanoxProvider.cs3",
+        "status": 1,
+        "version": 7,
+        "name": "OtanoxProvider",
+        "internalName": "OtanoxProvider",
+        "authors": [
+            "senkuboy0-cyber"
+        ],
+        "description": "OtaNox: Stream anime \u2014 fast, cinematic.",
+        "fileSize": 41985,
+        "repositoryUrl": "https://github.com/senkuboy0-cyber/Anime-Dekho",
+        "language": "en",
+        "tvTypes": [
+            "AnimeMovie",
+            "Anime"
+        ],
+        "iconUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/refs/heads/main/assets/icons/otanox.png",
+        "apiVersion": 1,
+        "fileHash": "sha256-f1fe8c7f2ceef93da9476be0cccc55251500cf8e2aa6d453ac3edec49b9708b6",
+        "jarFileSize": 152712,
+        "jarUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/OtanoxProvider.jar",
+        "jarHash": "sha256-8f202386b7179bb94118c885987cd66f722cda37ac33e0610d3214256ed277ab"
+    },
+    {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/TooniboyProvider.cs3",
         "status": 1,
-        "version": 15,
+        "version": 21,
         "name": "TooniboyProvider",
         "internalName": "TooniboyProvider",
         "authors": [
             "senkuboy0-cyber"
         ],
         "description": "Tooniboy: The best place for Hindi & Multi-language Anime, Cartoons and Movies.",
-        "fileSize": 82951,
+        "fileSize": 82950,
         "repositoryUrl": "https://github.com/senkuboy0-cyber/Anime-Dekho",
         "language": "hi",
         "tvTypes": [
@@ -96,7 +120,7 @@
         ],
         "iconUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/refs/heads/main/assets/icons/tooniboy.png",
         "apiVersion": 1,
-        "fileHash": "sha256-701939b56945f870f43d36b97c2aa241d0c80bd694a9f041e9f8485d5cfbd469",
+        "fileHash": "sha256-58301b003cbcee0f58f99bf2bee2bdcb181b974d0b4dcc9fffb13789c26a336d",
         "jarFileSize": 355884,
         "jarUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/TooniboyProvider.jar",
         "jarHash": "sha256-e893e0cdab6883b684e1bafe9e7b34bb75e3393e00ae86bc275e16f6c1a7fb31"
@@ -104,7 +128,7 @@
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/Toonstream.cs3",
         "status": 1,
-        "version": 28,
+        "version": 34,
         "name": "Toonstream",
         "internalName": "Toonstream",
         "authors": [
@@ -121,7 +145,7 @@
         ],
         "iconUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/refs/heads/main/assets/icons/toonstream.png",
         "apiVersion": 1,
-        "fileHash": "sha256-bf90051688f1735d03c5ebe4c614331ec7e3990bf99ccffafacda7c59687d20f",
+        "fileHash": "sha256-4fcaa918f228f917b99809b6ae3954676579ddf4d0e02ad780562f205422e080",
         "jarFileSize": 383783,
         "jarUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/Toonstream.jar",
         "jarHash": "sha256-ae2b351ef03e9b2a4efebe1bddf489f0e9576e8085586a69f783f6dc4ea85d85"
