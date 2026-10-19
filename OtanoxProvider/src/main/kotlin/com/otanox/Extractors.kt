@@ -1,6 +1,5 @@
 package com.otanox
 
-import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
@@ -14,7 +13,6 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.getQualityFromName
 import com.lagradost.cloudstream3.utils.newExtractorLink
-import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Base64
 import javax.crypto.Cipher
@@ -41,7 +39,7 @@ class MegaPlay : ExtractorApi() {
         )
 
         val html = app.get(url, headers = pageHeaders).text
-        val fileId = Regex("""data-id=["'](\d+)["']""")
+        val fileId = Regex("data-id=[\"'](\\d+)[\"']")
             .find(html)?.groupValues?.get(1) ?: return
 
         val langTag = langFromUrl(url)
@@ -168,14 +166,13 @@ class Flixcloud : ExtractorApi() {
 
         val html = app.get(url, headers = pageHeaders).text
         val rawData = Regex(
-            """type:\s*"data",\s*data:\s*(\{.*?\})\s*,\s*uses:""",
+            "type:\\s*\"data\",\\s*data:\\s*(\\{.*?\})\\s*,\\s*uses:",
             RegexOption.DOT_MATCHES_ALL
         ).find(html)?.groupValues?.get(1) ?: return
 
         val dataJson = jsObjectToJson(rawData)
         val dataObj = JSONObject(dataJson)
 
-        // Subtitles are plain in page data (no decrypt needed)
         val subs = dataObj.optJSONArray("subtitles")
         if (subs != null) {
             for (i in 0 until subs.length()) {
@@ -192,7 +189,6 @@ class Flixcloud : ExtractorApi() {
 
         val langTag = langFromUrl(url)
 
-        // Step 1: resolve one-time token
         val tokenBody = mapOf("data" to mapper.readValue<Map<String, Any?>>(dataJson))
         val tokenRes = app.post(
             "$decApi/dec-flixcloud?type=token",
@@ -204,7 +200,6 @@ class Flixcloud : ExtractorApi() {
         val token = tokenResult.optString("token").ifBlank { return }
         val context = tokenResult.optJSONObject("context") ?: return
 
-        // Step 2: encrypted stream payload
         val streamHeaders = mapOf(
             "User-Agent" to USER_AGENT,
             "Referer" to mainUrl
@@ -215,7 +210,6 @@ class Flixcloud : ExtractorApi() {
         ).text
         val encStream = JSONObject(encStreamText)
 
-        // Step 3: decrypt → master.m3u8
         val streamPayload = mapOf(
             "data" to mapOf(
                 "context" to mapper.readValue<Map<String, Any?>>(context.toString()),
@@ -270,13 +264,14 @@ class Flixcloud : ExtractorApi() {
         }
     }
 
-    /** Convert JS object literal (unquoted keys) to valid JSON string. */
     private fun jsObjectToJson(raw: String): String {
         var s = raw
-        s = Regex("""([{\[,]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:""")
-            .replace(s) { "\( {it.groupValues[1]}\" \){it.groupValues[2]}\":" }
-        s = Regex(""",\s*}""").replace(s, "}")
-        s = Regex(""",\s*]""").replace(s, "]")
+        s = Regex("([{\\[,]\\s*)([A-Za-z_][A-Za-z0-9_]*)\\s*:")
+            .replace(s) { mr ->
+                mr.groupValues[1] + "\"" + mr.groupValues[2] + "\":"
+            }
+        s = Regex(",\\s*}").replace(s, "}")
+        s = Regex(",\\s*]").replace(s, "]")
         return s
     }
 }
@@ -286,7 +281,6 @@ private fun langFromUrl(url: String): String {
     return when {
         path.endsWith("/dub") || path.contains("/dub/") || path.contains("type=dub") -> "Dub"
         path.endsWith("/sub") || path.contains("/sub/") || path.contains("type=sub") -> "Sub"
-        // reanime flixcloud links share same embed for sub/dub; provider should pass name
         else -> "Sub"
     }
 }
@@ -298,9 +292,9 @@ private fun parseHlsVariants(masterUrl: String, body: String): List<Pair<String,
     while (i < lines.size) {
         val line = lines[i].trim()
         if (line.startsWith("#EXT-X-STREAM-INF", ignoreCase = true)) {
-            val resolution = Regex("""RESOLUTION=(\d+)x(\d+)""")
+            val resolution = Regex("RESOLUTION=(\\d+)x(\\d+)")
                 .find(line)?.groupValues?.get(2)
-            val nameAttr = Regex("""NAME="([^"]+)"""")
+            val nameAttr = Regex("NAME=\"([^\"]+)\"")
                 .find(line)?.groupValues?.get(1)
 
             var j = i + 1
@@ -330,7 +324,7 @@ private fun resolveUrl(base: String, path: String): String {
     if (path.startsWith("http://") || path.startsWith("https://")) return path
     val baseTrim = base.substringBeforeLast("/")
     return if (path.startsWith("/")) {
-        val origin = Regex("""^(https?://[^/]+)""").find(base)?.groupValues?.get(1) ?: baseTrim
+        val origin = Regex("^(https?://[^/]+)").find(base)?.groupValues?.get(1) ?: baseTrim
         origin + path
     } else {
         "$baseTrim/$path"
