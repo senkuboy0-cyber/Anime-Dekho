@@ -1,12 +1,8 @@
 package com.otanox
 
-import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
-import com.lagradost.cloudstream3.utils.newExtractorLink
-import com.lagradost.cloudstream3.utils.ExtractorLinkType
-import com.lagradost.cloudstream3.utils.Qualities
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
@@ -30,12 +26,13 @@ class OtanoxProvider : MainAPI() {
         "$consumet/recent-episodes?perPage=24" to "Recent Episodes"
     )
 
-    private fun enc(text: String): String =
-        try {
+    private fun enc(text: String): String {
+        return try {
             URLEncoder.encode(text, "UTF-8")
         } catch (_: Exception) {
             text
         }
+    }
 
     private fun JSONObject.titleText(): String {
         val t = optJSONObject("title")
@@ -47,7 +44,9 @@ class OtanoxProvider : MainAPI() {
     }
 
     private fun JSONObject.toSearchResponse(): SearchResponse? {
-        val id = optString("id").ifBlank { opt("id")?.toString() }.orEmpty()
+        val id = optString("id").ifBlank {
+            opt("id")?.toString().orEmpty()
+        }
         if (id.isBlank() || id.startsWith("ak_")) return null
 
         val title = titleText()
@@ -124,18 +123,6 @@ class OtanoxProvider : MainAPI() {
         val typeStr = info.optString("type").uppercase()
         val isMovie = typeStr == "MOVIE"
 
-        // Logo (optional)
-        val logo = runCatching {
-            val logoJson = JSONObject(app.get("$mainUrl/api/logo/$id").text)
-            val path = logoJson.optString("url")
-            when {
-                path.startsWith("http") -> path
-                path.startsWith("/") -> mainUrl + path
-                else -> null
-            }
-        }.getOrNull()
-
-        // Recommendations + relations
         val recommendations = mutableListOf<SearchResponse>()
         runCatching {
             val details = JSONObject(app.get("$mainUrl/api/anilist/details/$id").text)
@@ -173,16 +160,15 @@ class OtanoxProvider : MainAPI() {
             }
         }
 
-        // Episode titles + thumbs from ani.zip (optional)
         val epMeta = mutableMapOf<Int, Pair<String?, String?>>()
         runCatching {
             val zip = JSONObject(app.get("https://api.ani.zip/mappings?anilist_id=$id").text)
-            val episodes = zip.optJSONObject("episodes") ?: return@runCatching
-            val keys = episodes.keys()
+            val episodesObj = zip.optJSONObject("episodes") ?: return@runCatching
+            val keys = episodesObj.keys()
             while (keys.hasNext()) {
                 val key = keys.next()
                 val num = key.toIntOrNull() ?: continue
-                val ep = episodes.optJSONObject(key) ?: continue
+                val ep = episodesObj.optJSONObject(key) ?: continue
                 val epTitle = ep.optJSONObject("title")?.optString("en")
                     ?.ifBlank { ep.optJSONObject("title")?.optString("ja") }
                 val thumb = ep.optString("image").ifBlank { null }
@@ -190,7 +176,6 @@ class OtanoxProvider : MainAPI() {
             }
         }
 
-        // Episodes + serverIds from anikoto2
         val epBody = app.get("$mainUrl/api/provider/anikoto2/episodes?anilistId=$id").text
         val epRoot = JSONObject(epBody)
         val epArr = epRoot.optJSONArray("episodes") ?: JSONArray()
@@ -225,6 +210,8 @@ class OtanoxProvider : MainAPI() {
             )
         }
 
+        val recs = recommendations.distinctBy { it.url }
+
         if (isMovie || episodes.size <= 1) {
             val data = if (episodes.isNotEmpty()) {
                 episodes.first().data
@@ -243,23 +230,12 @@ class OtanoxProvider : MainAPI() {
                 this.plot = plot
                 this.year = year
                 this.tags = genres
-                this.recommendations = recommendations.distinctBy { it.url }
-                // logoUrl may not exist on all CS versions; safe via runCatching style field if available
-                try {
-                    val field = this::class.java.methods.find { it.name == "setLogo" || it.name == "setLogoUrl" }
-                    // keep simple: some builds expose logoUrl
-                } catch (_: Exception) {
-                }
-            }.also { resp ->
-                // Optional logo if API supports it
-                if (!logo.isNullOrBlank()) {
-                    runCatching {
-                        val f = resp.javaClass.getDeclaredField("logo")
-                        f.isAccessible = true
-                        f.set(resp, logo)
-                    }
-                }
+                this.recommendations = recs
             }
+        }
+
+        val hasAnyDub = episodes.any {
+            runCatching { JSONObject(it.data).optBoolean("hasDub") }.getOrDefault(false)
         }
 
         return newAnimeLoadResponse(title, id, TvType.Anime) {
@@ -268,22 +244,10 @@ class OtanoxProvider : MainAPI() {
             this.plot = plot
             this.year = year
             this.tags = genres
-            this.recommendations = recommendations.distinctBy { it.url }
+            this.recommendations = recs
             addEpisodes(DubStatus.Subbed, episodes)
-            if (episodes.any {
-                    runCatching {
-                        JSONObject(it.data).optBoolean("hasDub")
-                    }.getOrDefault(false)
-                }) {
+            if (hasAnyDub) {
                 addEpisodes(DubStatus.Dubbed, episodes)
-            }
-        }.also { resp ->
-            if (!logo.isNullOrBlank()) {
-                runCatching {
-                    val f = resp.javaClass.getDeclaredField("logo")
-                    f.isAccessible = true
-                    f.set(resp, logo)
-                }
             }
         }
     }
@@ -306,7 +270,6 @@ class OtanoxProvider : MainAPI() {
         suspend fun sourcesFromAnikoto(type: String) {
             if (serverIds.isBlank()) return
             val servers = listOf("HD-1", "HD-2", "Vidstream-2", "Vidstream-1 beta")
-            // default call (no server param) + named servers
             val urls = mutableListOf(
                 "\( mainUrl/api/provider/anikoto2/sources?serverIds= \){enc(serverIds)}&type=$type"
             )
@@ -319,7 +282,8 @@ class OtanoxProvider : MainAPI() {
             for (api in urls) {
                 val body = runCatching { app.get(api).text }.getOrNull() ?: continue
                 val obj = runCatching { JSONObject(body) }.getOrNull() ?: continue
-                val embed = obj.optString("url").ifBlank { continue }
+                val embed = obj.optString("url")
+                if (embed.isBlank()) continue
                 if (!seen.add(embed)) continue
                 if (loadExtractor(embed, mainUrl, subtitleCallback, callback)) {
                     found = true
@@ -330,7 +294,6 @@ class OtanoxProvider : MainAPI() {
         if (hasSub) sourcesFromAnikoto("sub")
         if (hasDub) sourcesFromAnikoto("dub")
 
-        // Reanime / Flixcloud
         if (id.isNotBlank()) {
             val reBody = runCatching {
                 app.get("$mainUrl/api/provider/reanime/servers?id=$id&ep=$ep").text
@@ -341,7 +304,8 @@ class OtanoxProvider : MainAPI() {
                     val arr = re?.optJSONArray(key) ?: return@forEach
                     for (i in 0 until arr.length()) {
                         val item = arr.optJSONObject(i) ?: continue
-                        val link = item.optString("dataLink").ifBlank { continue }
+                        val link = item.optString("dataLink")
+                        if (link.isBlank()) continue
                         if (loadExtractor(link, mainUrl, subtitleCallback, callback)) {
                             found = true
                         }
