@@ -34,6 +34,29 @@ class OtanoxProvider : MainAPI() {
         }
     }
 
+    private fun stripHtml(text: String): String {
+        val noTags = buildString {
+            var i = 0
+            while (i < text.length) {
+                if (text[i] == '<') {
+                    while (i < text.length && text[i] != '>') i++
+                    if (i < text.length) i++
+                    append(' ')
+                } else {
+                    append(text[i])
+                    i++
+                }
+            }
+        }
+        return noTags
+            .replace("&quot;", "\"")
+            .replace("&amp;", "&")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace(Regex("""[ \t\n\r]+"""), " ")
+            .trim()
+    }
+
     private fun JSONObject.titleText(): String {
         val t = optJSONObject("title")
         return t?.optString("english")?.takeIf { it.isNotBlank() }
@@ -81,7 +104,7 @@ class OtanoxProvider : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val base = request.data
         val sep = if (base.contains("?")) "&" else "?"
-        val url = "\( base \){sep}page=$page"
+        val url = base + sep + "page=" + page
         val body = app.get(url).text
         val home = parseResults(body)
         val hasNext = home.size >= 20
@@ -104,13 +127,7 @@ class OtanoxProvider : MainAPI() {
         val title = info.titleText()
         val poster = info.optString("image").ifBlank { null }
         val background = info.optString("cover").ifBlank { poster }
-        val plot = info.optString("description")
-            .replace(Regex("<[^>]+>"), " ")
-            .replace("&quot;", "\"")
-            .replace("&amp;", "&")
-            .replace(Regex("\\s+"), " ")
-            .trim()
-            .ifBlank { null }
+        val plot = stripHtml(info.optString("description")).ifBlank { null }
         val year = info.optJSONObject("startDate")?.optInt("year")
             ?.takeIf { it > 0 }
             ?: info.optInt("releaseDate").takeIf { it > 1900 }
@@ -271,11 +288,12 @@ class OtanoxProvider : MainAPI() {
             if (serverIds.isBlank()) return
             val servers = listOf("HD-1", "HD-2", "Vidstream-2", "Vidstream-1 beta")
             val urls = mutableListOf(
-                "\( mainUrl/api/provider/anikoto2/sources?serverIds= \){enc(serverIds)}&type=$type"
+                mainUrl + "/api/provider/anikoto2/sources?serverIds=" + enc(serverIds) + "&type=" + type
             )
             servers.forEach { s ->
                 urls.add(
-                    "\( mainUrl/api/provider/anikoto2/sources?serverIds= \){enc(serverIds)}&type=\( type&server= \){enc(s)}"
+                    mainUrl + "/api/provider/anikoto2/sources?serverIds=" + enc(serverIds) +
+                        "&type=" + type + "&server=" + enc(s)
                 )
             }
             val seen = mutableSetOf<String>()
@@ -296,7 +314,7 @@ class OtanoxProvider : MainAPI() {
 
         if (id.isNotBlank()) {
             val reBody = runCatching {
-                app.get("$mainUrl/api/provider/reanime/servers?id=$id&ep=$ep").text
+                app.get(mainUrl + "/api/provider/reanime/servers?id=" + id + "&ep=" + ep).text
             }.getOrNull()
             if (!reBody.isNullOrBlank()) {
                 val re = runCatching { JSONObject(reBody) }.getOrNull()
