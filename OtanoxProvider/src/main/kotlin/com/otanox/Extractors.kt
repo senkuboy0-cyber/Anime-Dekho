@@ -1,5 +1,6 @@
 package com.otanox
 
+import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
@@ -13,6 +14,7 @@ import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.getQualityFromName
 import com.lagradost.cloudstream3.utils.newExtractorLink
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Base64
 import javax.crypto.Cipher
@@ -165,10 +167,15 @@ class Flixcloud : ExtractorApi() {
         )
 
         val html = app.get(url, headers = pageHeaders).text
-        val rawData = extractSsrData(html) ?: return
+        val rawData = Regex(
+            """type:\s*"data",\s*data:\s*(\{.*?\})\s*,\s*uses:""",
+            RegexOption.DOT_MATCHES_ALL
+        ).find(html)?.groupValues?.get(1) ?: return
+
         val dataJson = jsObjectToJson(rawData)
         val dataObj = JSONObject(dataJson)
 
+        // Subtitles are plain in page data (no decrypt needed)
         val subs = dataObj.optJSONArray("subtitles")
         if (subs != null) {
             for (i in 0 until subs.length()) {
@@ -185,6 +192,7 @@ class Flixcloud : ExtractorApi() {
 
         val langTag = langFromUrl(url)
 
+        // Step 1: resolve one-time token
         val tokenBody = mapOf("data" to mapper.readValue<Map<String, Any?>>(dataJson))
         val tokenRes = app.post(
             "$decApi/dec-flixcloud?type=token",
@@ -196,6 +204,7 @@ class Flixcloud : ExtractorApi() {
         val token = tokenResult.optString("token").ifBlank { return }
         val context = tokenResult.optJSONObject("context") ?: return
 
+        // Step 2: encrypted stream payload
         val streamHeaders = mapOf(
             "User-Agent" to USER_AGENT,
             "Referer" to mainUrl
@@ -206,6 +215,7 @@ class Flixcloud : ExtractorApi() {
         ).text
         val encStream = JSONObject(encStreamText)
 
+        // Step 3: decrypt -> master.m3u8
         val streamPayload = mapOf(
             "data" to mapOf(
                 "context" to mapper.readValue<Map<String, Any?>>(context.toString()),
@@ -260,101 +270,14 @@ class Flixcloud : ExtractorApi() {
         }
     }
 
-    /** Avoid fragile regex escapes: brace-match the SSR data object. */
-    private fun extractSsrData(html: String): String? {
-        val marker = "type:\"data\",data:"
-        var idx = html.indexOf(marker)
-        if (idx < 0) {
-            idx = html.indexOf("type: \"data\", data:")
-            if (idx < 0) return null
-            idx = html.indexOf('{', idx)
-        } else {
-            idx = html.indexOf('{', idx)
-        }
-        if (idx < 0) return null
-
-        var depth = 0
-        var inString = false
-        var escape = false
-        for (i in idx until html.length) {
-            val c = html[i]
-            if (inString) {
-                if (escape) {
-                    escape = false
-                } else if (c == '\\') {
-                    escape = true
-                } else if (c == '"') {
-                    inString = false
-                }
-                continue
-            }
-            when (c) {
-                '"' -> inString = true
-                '{' -> depth++
-                '}' -> {
-                    depth--
-                    if (depth == 0) {
-                        return html.substring(idx, i + 1)
-                    }
-                }
-            }
-        }
-        return null
-    }
-
+    /** Convert JS object literal (unquoted keys) to valid JSON string. */
     private fun jsObjectToJson(raw: String): String {
-        val sb = StringBuilder()
-        var i = 0
-        while (i < raw.length) {
-            val c = raw[i]
-            if (c == '"' ) {
-                sb.append('"')
-                i++
-                while (i < raw.length) {
-                    val ch = raw[i]
-                    sb.append(ch)
-                    i++
-                    if (ch == '\\' && i < raw.length) {
-                        sb.append(raw[i])
-                        i++
-                    } else if (ch == '"') {
-                        break
-                    }
-                }
-                continue
-            }
-            if ((c == '{' || c == '[' || c == ',') && i + 1 < raw.length) {
-                sb.append(c)
-                i++
-                while (i < raw.length && raw[i].isWhitespace()) {
-                    sb.append(raw[i])
-                    i++
-                }
-                if (i < raw.length && raw[i].isLetter()) {
-                    val start = i
-                    while (i < raw.length && (raw[i].isLetterOrDigit() || raw[i] == '_')) {
-                        i++
-                    }
-                    val key = raw.substring(start, i)
-                    while (i < raw.length && raw[i].isWhitespace()) {
-                        i++
-                    }
-                    if (i < raw.length && raw[i] == ':') {
-                        sb.append('"').append(key).append('"')
-                        continue
-                    } else {
-                        sb.append(key)
-                        continue
-                    }
-                }
-                continue
-            }
-            sb.append(c)
-            i++
-        }
-        return sb.toString()
-            .replace(",}", "}")
-            .replace(",]", "]")
+        var s = raw
+        s = Regex("""([{\[,]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:""")
+            .replace(s) { "${it.groupValues[1]}\"${it.groupValues[2]}\":" }
+        s = Regex(""",\s*}""").replace(s, "}")
+        s = Regex(""",\s*]""").replace(s, "]")
+        return s
     }
 }
 
@@ -363,6 +286,7 @@ private fun langFromUrl(url: String): String {
     return when {
         path.endsWith("/dub") || path.contains("/dub/") || path.contains("type=dub") -> "Dub"
         path.endsWith("/sub") || path.contains("/sub/") || path.contains("type=sub") -> "Sub"
+        // reanime flixcloud links share same embed for sub/dub; provider should pass name
         else -> "Sub"
     }
 }
