@@ -39,7 +39,7 @@ class MegaPlay : ExtractorApi() {
         )
 
         val html = app.get(url, headers = pageHeaders).text
-        val fileId = Regex("data-id=[\"'](\\d+)[\"']")
+        val fileId = Regex("""data-id=["'](\d+)["']""")
             .find(html)?.groupValues?.get(1) ?: return
 
         val langTag = langFromUrl(url)
@@ -165,11 +165,7 @@ class Flixcloud : ExtractorApi() {
         )
 
         val html = app.get(url, headers = pageHeaders).text
-        val rawData = Regex(
-            "type:\\s*\"data\",\\s*data:\\s*(\\{.*?\})\\s*,\\s*uses:",
-            RegexOption.DOT_MATCHES_ALL
-        ).find(html)?.groupValues?.get(1) ?: return
-
+        val rawData = extractSsrData(html) ?: return
         val dataJson = jsObjectToJson(rawData)
         val dataObj = JSONObject(dataJson)
 
@@ -264,15 +260,101 @@ class Flixcloud : ExtractorApi() {
         }
     }
 
-    private fun jsObjectToJson(raw: String): String {
-        var s = raw
-        s = Regex("([{\\[,]\\s*)([A-Za-z_][A-Za-z0-9_]*)\\s*:")
-            .replace(s) { mr ->
-                mr.groupValues[1] + "\"" + mr.groupValues[2] + "\":"
+    /** Avoid fragile regex escapes: brace-match the SSR data object. */
+    private fun extractSsrData(html: String): String? {
+        val marker = "type:\"data\",data:"
+        var idx = html.indexOf(marker)
+        if (idx < 0) {
+            idx = html.indexOf("type: \"data\", data:")
+            if (idx < 0) return null
+            idx = html.indexOf('{', idx)
+        } else {
+            idx = html.indexOf('{', idx)
+        }
+        if (idx < 0) return null
+
+        var depth = 0
+        var inString = false
+        var escape = false
+        for (i in idx until html.length) {
+            val c = html[i]
+            if (inString) {
+                if (escape) {
+                    escape = false
+                } else if (c == '\\') {
+                    escape = true
+                } else if (c == '"') {
+                    inString = false
+                }
+                continue
             }
-        s = Regex(",\\s*}").replace(s, "}")
-        s = Regex(",\\s*]").replace(s, "]")
-        return s
+            when (c) {
+                '"' -> inString = true
+                '{' -> depth++
+                '}' -> {
+                    depth--
+                    if (depth == 0) {
+                        return html.substring(idx, i + 1)
+                    }
+                }
+            }
+        }
+        return null
+    }
+
+    private fun jsObjectToJson(raw: String): String {
+        val sb = StringBuilder()
+        var i = 0
+        while (i < raw.length) {
+            val c = raw[i]
+            if (c == '"' ) {
+                sb.append('"')
+                i++
+                while (i < raw.length) {
+                    val ch = raw[i]
+                    sb.append(ch)
+                    i++
+                    if (ch == '\\' && i < raw.length) {
+                        sb.append(raw[i])
+                        i++
+                    } else if (ch == '"') {
+                        break
+                    }
+                }
+                continue
+            }
+            if ((c == '{' || c == '[' || c == ',') && i + 1 < raw.length) {
+                sb.append(c)
+                i++
+                while (i < raw.length && raw[i].isWhitespace()) {
+                    sb.append(raw[i])
+                    i++
+                }
+                if (i < raw.length && raw[i].isLetter()) {
+                    val start = i
+                    while (i < raw.length && (raw[i].isLetterOrDigit() || raw[i] == '_')) {
+                        i++
+                    }
+                    val key = raw.substring(start, i)
+                    while (i < raw.length && raw[i].isWhitespace()) {
+                        i++
+                    }
+                    if (i < raw.length && raw[i] == ':') {
+                        sb.append('"').append(key).append('"')
+                        continue
+                    } else {
+                        sb.append(key)
+                        continue
+                    }
+                }
+                continue
+            }
+            sb.append(c)
+            i++
+        }
+        return sb.toString()
+            .replace(",}", "}")
+            .replace(",]", "]")
     }
 }
 
@@ -292,9 +374,9 @@ private fun parseHlsVariants(masterUrl: String, body: String): List<Pair<String,
     while (i < lines.size) {
         val line = lines[i].trim()
         if (line.startsWith("#EXT-X-STREAM-INF", ignoreCase = true)) {
-            val resolution = Regex("RESOLUTION=(\\d+)x(\\d+)")
+            val resolution = Regex("""RESOLUTION=(\d+)x(\d+)""")
                 .find(line)?.groupValues?.get(2)
-            val nameAttr = Regex("NAME=\"([^\"]+)\"")
+            val nameAttr = Regex("""NAME="([^"]+)"""")
                 .find(line)?.groupValues?.get(1)
 
             var j = i + 1
@@ -324,7 +406,7 @@ private fun resolveUrl(base: String, path: String): String {
     if (path.startsWith("http://") || path.startsWith("https://")) return path
     val baseTrim = base.substringBeforeLast("/")
     return if (path.startsWith("/")) {
-        val origin = Regex("^(https?://[^/]+)").find(base)?.groupValues?.get(1) ?: baseTrim
+        val origin = Regex("""^(https?://[^/]+)""").find(base)?.groupValues?.get(1) ?: baseTrim
         origin + path
     } else {
         "$baseTrim/$path"
