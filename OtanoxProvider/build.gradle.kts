@@ -3,7 +3,7 @@ version = 1
 cloudstream {
     language = "en"
     authors = listOf("senkuboy0-cyber")
-    description = "OtaNox: Stream anime — fast, ad-free, cinematic."
+    description = "OtaNox: Stream anime — fast, cinematic."
 
     /**
      * Status int as the following:
