@@ -27,7 +27,7 @@
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/HianimeqProvider.cs3",
         "status": 1,
-        "version": 12,
+        "version": 13,
         "name": "HianimeqProvider",
         "internalName": "HianimeqProvider",
         "authors": [
@@ -43,10 +43,10 @@
         ],
         "iconUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/refs/heads/main/assets/icons/Hianimeq.png",
         "apiVersion": 1,
-        "fileHash": "sha256-2ea53c7c55befcd203180b9f6439812ecc77fe72c1b0c411454b62f8857e693f",
+        "fileHash": "sha256-b32df165a2043391be19759f4d9cce5587ce0b8a61ba35e4f46e09bd5f3de2f3",
         "jarFileSize": 121678,
         "jarUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/HianimeqProvider.jar",
-        "jarHash": "sha256-8ec6f3347e54a2291ceacc7a72136b45e995a888417a810413854ef7e01c5445"
+        "jarHash": "sha256-27c32f3bfff9e8d4818394f7deaf25fe356cd996ab99a805cf3ec04c6f51b50f"
     },
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/MyAnimesProvider.cs3",
