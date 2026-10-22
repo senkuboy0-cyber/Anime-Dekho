@@ -16,7 +16,7 @@ data class HianimeqMedia(
 )
 
 class HianimeqProvider : MainAPI() {
-    override var mainUrl = "https://hianimeq.de"
+    override var mainUrl = "https://hianimeb.de"
     override var name = "Hianimeq"
     override val hasMainPage = true
     override var lang = "en"
