@@ -221,6 +221,7 @@ open class AnimeDekhoProvider : MainAPI() {
                 rawName = epTitle,
                 poster = ep.still,
                 season = sNum,
+                isFiller = ep.filler == true,
                 calculatedEpNum = epNum
             )
         }
@@ -229,7 +230,7 @@ open class AnimeDekhoProvider : MainAPI() {
 
         val episodes = rawEpisodes.map { ep ->
             newEpisode("$postId|${ep.episodeId}|${ep.href}") {
-                this.name = ep.finalName
+                this.name = if (ep.isFiller) "${ep.finalName} [Filler]" else ep.finalName
                 this.season = ep.season
                 this.episode = ep.calculatedEpNum
                 this.posterUrl = ep.finalPoster
@@ -786,6 +787,7 @@ data class DgtEpisode(
     @JsonProperty("season") val season: Int? = null,
     @JsonProperty("episode") val episode: Int? = null,
     @JsonProperty("label") val label: String? = null,
+    @JsonProperty("filler") val filler: Boolean? = null,
     @JsonProperty("name") val name: String? = null,
     @JsonProperty("still") val still: String? = null,
     @JsonProperty("url") val url: String? = null,
@@ -826,6 +828,7 @@ data class SiteEpisode(
     val rawName: String,
     val poster: String?,
     val season: Int?,
+    val isFiller: Boolean = false,
     var calculatedEpNum: Int = 1,
     var finalName: String = rawName,
     var finalPoster: String? = poster
