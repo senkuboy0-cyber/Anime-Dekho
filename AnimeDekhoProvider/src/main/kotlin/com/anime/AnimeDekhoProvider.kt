@@ -1,18 +1,14 @@
 package com.anime
 
-import android.widget.Toast
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.CloudStreamApp.Companion.context
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withContext
 import org.jsoup.nodes.Document
 import java.net.URLDecoder
 import java.net.URLEncoder
@@ -375,7 +371,6 @@ open class AnimeDekhoProvider : MainAPI() {
      */
     private suspend fun unlockGate(gateUrl: String?, referer: String): Boolean {
         if (gateUrl.isNullOrBlank()) return false
-        var activeToast: Toast? = null
         return try {
             val gateDoc = app.get(
                 gateUrl,
@@ -393,21 +388,7 @@ open class AnimeDekhoProvider : MainAPI() {
                 return false
             }
 
-            // Show live countdown notification every second while waiting for gate unlock
-            val totalSeconds = (GATE_WAIT_MS / 1000L).toInt()
-            for (remaining in totalSeconds downTo 1) {
-                withContext(Dispatchers.Main) {
-                    activeToast?.cancel()
-                    context?.let { ctx ->
-                        activeToast = Toast.makeText(
-                            ctx,
-                            "Ad Gate: Unlocking in ${remaining}s...",
-                            Toast.LENGTH_SHORT
-                        ).also { it.show() }
-                    }
-                }
-                delay(1000L)
-            }
+            delay(GATE_WAIT_MS)
 
             val resp = app.get(
                 verifyUrl,
@@ -417,25 +398,8 @@ open class AnimeDekhoProvider : MainAPI() {
                     "Accept" to "text/html,*/*"
                 )
             )
-
-            val isUnlocked = resp.code in 200..299
-            withContext(Dispatchers.Main) {
-                activeToast?.cancel()
-                context?.let { ctx ->
-                    val statusMsg = if (isUnlocked) {
-                        "Ad Gate Unlocked! Loading stream..."
-                    } else {
-                        "Ad Gate unlock failed!"
-                    }
-                    Toast.makeText(ctx, statusMsg, Toast.LENGTH_SHORT).show()
-                }
-            }
-
-            isUnlocked
+            resp.code in 200..299
         } catch (e: Exception) {
-            withContext(Dispatchers.Main) {
-                activeToast?.cancel()
-            }
             Log.e("AnimeDekho", "Gate unlock failed: ${e.message}")
             false
         }
