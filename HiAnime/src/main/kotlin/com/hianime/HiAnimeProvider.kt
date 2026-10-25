@@ -61,7 +61,10 @@ class HiAnimeProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val html = app.get(url).text
+        // Fix for movies/OVA that redirect directly to the watch page
+        val detailUrl = url.substringBefore("?").replace("/watch/", "/")
+        
+        val html = app.get(detailUrl).text
         val document = Jsoup.parse(html)
 
         val title = document.selectFirst("h2.film-name")?.text()?.trim() 
@@ -91,9 +94,8 @@ class HiAnimeProvider : MainAPI() {
 
         val episodes = ArrayList<Episode>()
         
-        val animeIdMatch = Regex("""data-id=["'](\d+)["']""").find(html)?.groupValues?.get(1) 
-            ?: Regex("""id="syncData"[^>]*data-anime-id=["'](\d+)["']""").find(html)?.groupValues?.get(1)
-            ?: Regex("""anime_id\s*=\s*['"]?(\d+)['"]?""").find(html)?.groupValues?.get(1)
+        // Safely extract Anime ID from URL (e.g. witch-hat-atelier-90 -> 90)
+        val animeIdMatch = detailUrl.substringAfterLast("-").toIntOrNull()
         
         if (animeIdMatch != null) {
             val epListUrl = "$ajaxEpisodes$animeIdMatch"
@@ -114,7 +116,8 @@ class HiAnimeProvider : MainAPI() {
             }
         }
         
-        if (episodes.isEmpty()) {
+        // Fallback for single episode/movie if episode list is empty and it is not "Coming soon"
+        if (episodes.isEmpty() && !html.contains("Coming soon", ignoreCase = true)) {
             val epId = Regex("""\?ep=(\d+)""").find(url)?.groupValues?.get(1)
             if (epId != null) {
                 episodes.add(newEpisode(epId) {
@@ -130,7 +133,10 @@ class HiAnimeProvider : MainAPI() {
             this.year = year
             this.plot = description
             this.recommendations = recommendations
-            addEpisodes(DubStatus.Subbed, episodes) 
+            // Actors and trailers are intentionally skipped as requested
+            if (episodes.isNotEmpty()) {
+                addEpisodes(DubStatus.Subbed, episodes) 
+            }
         }
     }
 
