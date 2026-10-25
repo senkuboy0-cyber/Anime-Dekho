@@ -52,6 +52,31 @@
         "jarHash": "sha256-3b39eda05cc3dbd933a4afa50decbeda4dbfce864b491347abcdceb3038472d3"
     },
     {
+        "url": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/OtanoxProvider.cs3",
+        "status": 1,
+        "version": 2,
+        "name": "OtanoxProvider",
+        "internalName": "OtanoxProvider",
+        "authors": [
+            "senkuboy0-cyber"
+        ],
+        "description": "Otanox: AniList based anime with Hindi (Ravok, Abyss) and Japanese sub/dub (Megaplay, Vidstream) servers.",
+        "fileSize": 67954,
+        "repositoryUrl": "https://github.com/senkuboy0-cyber/Anime-Dekho",
+        "language": "hi",
+        "tvTypes": [
+            "Anime",
+            "AnimeMovie",
+            "OVA"
+        ],
+        "iconUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/refs/heads/main/assets/icons/otanox.png",
+        "apiVersion": 1,
+        "fileHash": "sha256-d95d5ee89f2a5e260a38be83d0ac50790ea953af602059ac875b830327f721b9",
+        "jarFileSize": 287379,
+        "jarUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/OtanoxProvider.jar",
+        "jarHash": "sha256-fa2f90bfeca554c012c547bf3613bbbbb7e717b52eb85e4bb1c7dfb9f53340ca"
+    },
+    {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/TooniboyProvider.cs3",
         "status": 1,
         "version": 23,
