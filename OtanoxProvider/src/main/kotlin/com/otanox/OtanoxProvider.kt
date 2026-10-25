@@ -2,8 +2,6 @@ package com.otanox
 
 import com.google.gson.Gson
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.LoadResponse.Companion.addAniListId
-import com.lagradost.cloudstream3.LoadResponse.Companion.addMalId
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import org.jsoup.Jsoup
 import java.net.URLEncoder
@@ -24,7 +22,7 @@ class OtanoxProvider : MainAPI() {
     override val hasMainPage = true
     override var lang = "hi"
     override val hasDownloadSupport = true
-    override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie, TvType.OVA)
+    override val supportedTypes = setOf(TvType.Anime, TvType.AnimeMovie)
 
     private val api = "https://api.otanox.online"
     private val aniZip = "https://api.ani.zip/mappings?anilist_id="
@@ -76,7 +74,6 @@ class OtanoxProvider : MainAPI() {
     // AniList format -> CloudStream type. MOVIE must be a movie, otherwise the app shows it as episodes.
     private fun typeOf(format: String?): TvType = when (format?.uppercase()) {
         "MOVIE" -> TvType.AnimeMovie
-        "OVA", "SPECIAL" -> TvType.OVA
         else -> TvType.Anime
     }
 
@@ -128,7 +125,12 @@ class OtanoxProvider : MainAPI() {
                 (b.firstOrNull { it.iso6391 == null } ?: b.firstOrNull())?.filePath?.let { "$tmdbImg$it" }
             }
 
+        // MalId / AniListId are not attached on purpose: CloudStream would then pull
+        // cast, genre chips and trailer from AniList, which are not wanted on this page.
         val malScore = info.idMal?.let { fetchMalScore(it) }
+
+        // Recommendations from the AniList details proxy used by the site.
+        val recommendations = fetchRecommendations(id)
         val score = malScore ?: info.averageScore?.let { it / 10.0 }
 
         // Episode list from anikoto2, enriched with ani.zip metadata.
@@ -184,10 +186,8 @@ class OtanoxProvider : MainAPI() {
                 this.plot = plot
                 this.year = info.seasonYear ?: info.startDate?.year
                 this.duration = info.duration
-                this.tags = info.genres
                 this.score = score?.let { Score.from10(it) }
-                addMalId(info.idMal)
-                addAniListId(id.toIntOrNull())
+                this.recommendations = recommendations
             }
         }
 
@@ -198,10 +198,8 @@ class OtanoxProvider : MainAPI() {
             this.plot = plot
             this.year = info.seasonYear ?: info.startDate?.year
             this.duration = info.duration
-            this.tags = info.genres
             this.score = score?.let { Score.from10(it) }
-            addMalId(info.idMal)
-            addAniListId(id.toIntOrNull())
+            this.recommendations = recommendations
             addEpisodes(DubStatus.Subbed, episodes)
         }
     }
@@ -237,15 +235,29 @@ class OtanoxProvider : MainAPI() {
         return null
     }
 
+    private suspend fun fetchRecommendations(id: String): List<SearchResponse> = runCatching {
+        app.get("$mainUrl/api/anilist/details/$id", referer = "$mainUrl/")
+            .parsedSafe<AniListDetails>()?.recommendations?.nodes.orEmpty()
+            .mapNotNull { node ->
+                val media = node.mediaRecommendation ?: return@mapNotNull null
+                val recId = media.id ?: return@mapNotNull null
+                val recTitle = media.title?.english?.ifBlank { null } ?: media.title?.romaji ?: return@mapNotNull null
+                newAnimeSearchResponse(recTitle, "$mainUrl/anime/$recId", TvType.Anime) {
+                    this.posterUrl = media.coverImage?.large
+                }
+            }
+    }.getOrNull().orEmpty()
+
     private suspend fun fetchMalScore(malId: Int): Double? = runCatching {
         app.get("https://api.jikan.moe/v4/anime/$malId").parsedSafe<JikanResponse>()?.data?.score
     }.getOrNull()
 
     // ------------------------------------------------------------- loadLinks
     // Server order:
-    //   Hindi available : Ravok [Hindi] -> Abyss [Hindi] -> Dub -> Sub -> other Abyss languages
+    //   Hindi available : Ravok -> Abyss [Hindi] -> Dub -> Sub -> other Abyss languages
     //   no Hindi        : Dub -> Sub (Dub skipped when the episode has none)
-    // Dub / Sub servers: HD-1 / HD-2 are named "Megaplay", Vidstream-1 / Vidstream-2 "Vidstream".
+    // Dub / Sub servers: HD-1 / HD-2 -> "Megaplay-1" / "Megaplay-2",
+    //                    Vidstream-1 / Vidstream-2 -> "Vidstream-1" / "Vidstream-2".
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -254,11 +266,12 @@ class OtanoxProvider : MainAPI() {
     ): Boolean {
         val ep = runCatching { Gson().fromJson(data, EpisodeData::class.java) }.getOrNull() ?: return false
 
-        // Several servers resolve to the same master playlist; send each url only once.
+        // Every server is shown, even when two of them share a playlist.
+        // Only the exact same name + url pair is dropped.
         val seen = HashSet<String>()
         var found = false
         val unique: (ExtractorLink) -> Unit = { link ->
-            if (seen.add(link.url)) {
+            if (seen.add(link.name + "|" + link.url)) {
                 found = true
                 callback(link)
             }
@@ -272,7 +285,7 @@ class OtanoxProvider : MainAPI() {
         val otherLanguages = mutableListOf<Pair<String, String>>()
         if (salt != null) {
             if (salt.ravok != null) {
-                runCatching { Ravok().getUrl("${salt.ravok}#${salt.ravokLabel}", "$animeSalt/", subtitleCallback, unique) }
+                runCatching { Ravok().getUrl(salt.ravok, "$animeSalt/", subtitleCallback, unique) }
             }
             salt.abyss.firstOrNull { it.first.equals("Hindi", true) }?.let { (lang, link) ->
                 runCatching { Abyss().getUrl("$link#$lang", "$animeSalt/", subtitleCallback, unique) }
@@ -301,22 +314,29 @@ class OtanoxProvider : MainAPI() {
         return found
     }
 
-    // anikoto2 sources: one call per server name, each returns a megaplay.buzz embed url.
-    // HD-2 currently falls back to HD-1 on the API side, duplicates are dropped later.
+    // anikoto2 sources -> megaplay.buzz embeds, each tagged with its server name.
+    // The API often answers HD-2 with the HD-1 url, so all four embeds are built from the
+    // real id it returns:
+    //   HD-1        /stream/s-2/{id}/{type}?s=tcdn   -> Megaplay-1
+    //   HD-2        /stream/s-2/{id}/{type}?s=bcdn   -> Megaplay-2
+    //   Vidstream-1 /videojs/stream/s-2/{id}/{type}  -> Vidstream-1
+    //   Vidstream-2 /stream/s-2/{id}/{type}          -> Vidstream-2
     private suspend fun anikotoEmbeds(serverIds: String, type: String): List<String> {
         val base = "$mainUrl/api/provider/anikoto2/sources?serverIds=${encode(serverIds)}&type=$type"
-        val first = app.get(base, referer = "$mainUrl/").parsedSafe<AnikotoSource>() ?: return emptyList()
-        val serverNames = first.servers?.get(type).orEmpty().ifEmpty { listOf("HD-1", "Vidstream-2", "Vidstream-1") }
+        val first = app.get(base, referer = "$mainUrl/").parsedSafe<AnikotoSource>()
+        val apiUrl = first?.url?.ifBlank { null } ?: return emptyList()
 
-        // HD servers first (Megaplay), then Vidstream.
-        val ordered = serverNames.sortedBy { if (it.startsWith("HD", true)) 0 else 1 }
-        val urls = LinkedHashSet<String>()
-        for (server in ordered) {
-            val src = if (server.equals(first.server, true)) first
-            else runCatching { app.get("$base&server=${encode(server)}", referer = "$mainUrl/").parsedSafe<AnikotoSource>() }.getOrNull()
-            src?.url?.ifBlank { null }?.let { urls.add(it) }
-        }
-        return urls.toList()
+        val match = Regex("""^(https?://[^/]+)/(?:videojs/)?stream/s-2/(\d+)/""").find(apiUrl)
+            ?: return listOf("$apiUrl#Megaplay-1")
+        val host = match.groupValues[1]
+        val realId = match.groupValues[2]
+
+        return listOf(
+            "$host/stream/s-2/$realId/$type?s=tcdn#Megaplay-1",
+            "$host/stream/s-2/$realId/$type?s=bcdn#Megaplay-2",
+            "$host/videojs/stream/s-2/$realId/$type#Vidstream-1",
+            "$host/stream/s-2/$realId/$type#Vidstream-2"
+        )
     }
 
     // AnimeSalt (Hindi and other Indian languages).
@@ -357,9 +377,7 @@ class OtanoxProvider : MainAPI() {
             val abyss = frames.firstOrNull { it.contains("player.php?data=") }?.let { decodePlayerData(it) }.orEmpty()
 
             if (ravok == null && abyss.isEmpty()) continue
-            val languages = info?.languages.orEmpty() + abyss.map { it.first }
-            val ravokLabel = if (languages.any { it.equals("Hindi", true) }) "Hindi" else "Multi"
-            return SaltEmbeds(ravok, ravokLabel, abyss)
+            return SaltEmbeds(ravok, abyss)
         }
         return null
     }

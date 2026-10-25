@@ -37,7 +37,7 @@ internal fun withLabel(name: String, label: String?): String =
     if (label.isNullOrBlank()) name else "$name [$label]"
 
 // ---------------------------------------------------------------------------
-// Ravok (AnimeSalt SERVER 1, multi audio HLS)
+// Ravok (AnimeSalt SERVER 1, one HLS with every audio track, shown as plain "Ravok")
 // ---------------------------------------------------------------------------
 // Same backend as AWSStream / Zephyrflick in AnimeDekhoProvider.
 // POST player/index.php?do=getVideo returns the master m3u8, captions live in a packed script.
@@ -169,9 +169,10 @@ class Abyss : ExtractorApi() {
 // Copied from HianimeqProvider.
 //   embed page -> data-id -> /stream/getSources?id= -> tracks + enc
 //   enc is AES-256-CBC (fixed key / iv) -> {"file": master.m3u8}
-// Naming rule asked for Otanox:
-//   url with ?s=tcdn or ?s=bcdn (HD servers)  -> "Megaplay [Sub|Dub]"
-//   url without ?s= or /videojs/ (Vidstream)  -> "Vidstream [Sub|Dub]"
+// The provider tags each embed with its server name as a url fragment
+// (#Megaplay-1, #Megaplay-2, #Vidstream-1, #Vidstream-2), shown as "Megaplay-1 [Dub]".
+// The ?s=tcdn / ?s=bcdn value must be forwarded to getSources, the same way the
+// player page does it, otherwise both HD servers return the default CDN.
 class MegaPlay : ExtractorApi() {
     override var name = "Megaplay"
     override var mainUrl = "https://megaplay.buzz"
@@ -186,8 +187,9 @@ class MegaPlay : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        val (cleanUrl, _) = splitLabel(url)
-        val serverName = if (cleanUrl.contains("?s=") && !cleanUrl.contains("/videojs/")) "Megaplay" else "Vidstream"
+        val (cleanUrl, label) = splitLabel(url)
+        val serverName = label ?: if (cleanUrl.contains("/videojs/") || !cleanUrl.contains("?s=")) "Vidstream" else "Megaplay"
+        val cdn = Regex("""[?&]s=([a-z0-9_-]+)""", RegexOption.IGNORE_CASE).find(cleanUrl)?.groupValues?.get(1)
         val langTag = langFromUrl(cleanUrl)
 
         val html = app.get(
@@ -202,7 +204,7 @@ class MegaPlay : ExtractorApi() {
 
         val json = JSONObject(
             app.get(
-                "$mainUrl/stream/getSources?id=$fileId",
+                "$mainUrl/stream/getSources?id=$fileId" + (cdn?.let { "&s=$it" } ?: ""),
                 headers = mapOf(
                     "User-Agent" to USER_AGENT,
                     "Referer" to cleanUrl,

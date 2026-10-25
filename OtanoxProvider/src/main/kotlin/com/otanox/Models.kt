@@ -93,9 +93,28 @@ data class SaltServers(
 // What loadLinks needs from an animesalt.cx page.
 data class SaltEmbeds(
     val ravok: String?,
-    val ravokLabel: String,
     val abyss: List<Pair<String, String>>, // (language, abyssplayer link)
 )
+
+// ---------------------------------------------------------------------------
+// otanox.online/api/anilist/details/{id} (only recommendations are used)
+// ---------------------------------------------------------------------------
+
+data class AniListDetails(val recommendations: AniListRecs? = null)
+
+data class AniListRecs(val nodes: List<AniListRecNode>? = null)
+
+data class AniListRecNode(val mediaRecommendation: AniListMedia? = null)
+
+data class AniListMedia(
+    val id: Int? = null,
+    val title: AniListTitle? = null,
+    val coverImage: AniListCover? = null,
+)
+
+data class AniListTitle(val romaji: String? = null, val english: String? = null)
+
+data class AniListCover(val large: String? = null)
 
 // ---------------------------------------------------------------------------
 // api.ani.zip
