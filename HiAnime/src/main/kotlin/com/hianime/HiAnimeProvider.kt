@@ -61,13 +61,11 @@ class HiAnimeProvider : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        // Fix for movies/OVA that redirect directly to the watch page
-        val detailUrl = url.substringBefore("?").replace("/watch/", "/")
-        
-        val html = app.get(detailUrl).text
+        val html = app.get(url).text
         val document = Jsoup.parse(html)
 
         val title = document.selectFirst("h2.film-name")?.text()?.trim() 
+            ?: document.selectFirst("a.dynamic-name.active")?.text()?.trim()
             ?: document.selectFirst("ol.breadcrumb li.active")?.text()?.trim() ?: ""
         
         val poster = document.selectFirst("meta[property=og:image]")?.attr("content") 
@@ -79,7 +77,6 @@ class HiAnimeProvider : MainAPI() {
         document.select("div.item").forEach { item ->
             val text = item.text().trim()
             if (text.contains("Aired:") || text.contains("Premiered:") || text.contains("Release:")) {
-                // Ensure we get the very first year mentioned (ignoring the "to 2026" part)
                 val yearRegex = Regex("""(20\d{2}|19\d{2})""")
                 val match = yearRegex.find(text)
                 if (match != null && year == null) {
@@ -94,12 +91,18 @@ class HiAnimeProvider : MainAPI() {
 
         val episodes = ArrayList<Episode>()
         
-        // Safely extract Anime ID from URL (e.g. witch-hat-atelier-90 -> 90)
-        val animeIdMatch = detailUrl.substringAfterLast("-").toIntOrNull()
+        val animeIdMatch = Regex("""data-anime-id=["'](\d+)["']""").find(html)?.groupValues?.get(1)
+            ?: Regex("""<input[^>]*id=["']anime-id["'][^>]*value=["'](\d+)["']""").find(html)?.groupValues?.get(1)
+            ?: url.substringBefore("?").substringAfterLast("-").toIntOrNull()?.toString()
         
         if (animeIdMatch != null) {
-            val epListUrl = "$ajaxEpisodes$animeIdMatch"
-            val epRes = app.get(epListUrl, headers = mapOf("X-Requested-With" to "XMLHttpRequest")).parsedSafe<HtmlResponse>()
+            var epListUrl = "$ajaxEpisodes$animeIdMatch"
+            var epRes = app.get(epListUrl, headers = mapOf("X-Requested-With" to "XMLHttpRequest")).parsedSafe<HtmlResponse>()
+            
+            if (epRes?.html.isNullOrBlank()) {
+                epRes = app.get("$mainUrl/ajax/v2/episode/list/$animeIdMatch", headers = mapOf("X-Requested-With" to "XMLHttpRequest")).parsedSafe<HtmlResponse>()
+            }
+            
             if (epRes?.html != null) {
                 val epDoc = Jsoup.parse(epRes.html)
                 epDoc.select("a.ep-item").forEach { epItem ->
@@ -116,7 +119,6 @@ class HiAnimeProvider : MainAPI() {
             }
         }
         
-        // Fallback for single episode/movie if episode list is empty and it is not "Coming soon"
         if (episodes.isEmpty() && !html.contains("Coming soon", ignoreCase = true)) {
             val epId = Regex("""\?ep=(\d+)""").find(url)?.groupValues?.get(1)
             if (epId != null) {
@@ -133,7 +135,6 @@ class HiAnimeProvider : MainAPI() {
             this.year = year
             this.plot = description
             this.recommendations = recommendations
-            // Actors and trailers are intentionally skipped as requested
             if (episodes.isNotEmpty()) {
                 addEpisodes(DubStatus.Subbed, episodes) 
             }
@@ -146,10 +147,14 @@ class HiAnimeProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val serversUrl = "$ajaxServers$data"
-        val res = app.get(serversUrl, headers = mapOf("X-Requested-With" to "XMLHttpRequest")).parsedSafe<HtmlResponse>()
+        var serversUrl = "$ajaxServers$data"
+        var res = app.get(serversUrl, headers = mapOf("X-Requested-With" to "XMLHttpRequest")).parsedSafe<HtmlResponse>()
+        
+        if (res?.html.isNullOrBlank()) {
+            res = app.get("$mainUrl/ajax/v2/episode/servers?episodeId=$data", headers = mapOf("X-Requested-With" to "XMLHttpRequest")).parsedSafe<HtmlResponse>()
+        }
+        
         val html = res?.html ?: return false
-
         val document = Jsoup.parse(html)
         var foundLinks = false
 
@@ -157,7 +162,6 @@ class HiAnimeProvider : MainAPI() {
             val serverId = server.attr("data-id")
             val dataHash = server.attr("data-hash")
             
-            // Method 1: Decode Iframe directly from base64 data-hash
             if (dataHash.isNotBlank()) {
                 try {
                     val decodedUrl = String(Base64.getDecoder().decode(dataHash))
@@ -167,10 +171,14 @@ class HiAnimeProvider : MainAPI() {
                     e.printStackTrace()
                 }
             } 
-            // Method 2: Use API fallback to get Iframe link
             else if (serverId.isNotBlank()) {
-                val sourcesUrl = "$ajaxSources$serverId"
-                val srcRes = app.get(sourcesUrl, headers = mapOf("X-Requested-With" to "XMLHttpRequest")).parsedSafe<SourceResponse>()
+                var sourcesUrl = "$ajaxSources$serverId"
+                var srcRes = app.get(sourcesUrl, headers = mapOf("X-Requested-With" to "XMLHttpRequest")).parsedSafe<SourceResponse>()
+                
+                if (srcRes?.link.isNullOrBlank()) {
+                    srcRes = app.get("$mainUrl/ajax/v2/episode/sources?id=$serverId", headers = mapOf("X-Requested-With" to "XMLHttpRequest")).parsedSafe<SourceResponse>()
+                }
+                
                 val link = srcRes?.link
                 if (!link.isNullOrBlank()) {
                     loadExtractor(link, subtitleCallback, callback)
