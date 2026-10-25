@@ -32,7 +32,7 @@ class HiAnimeProvider : MainAPI() {
                 homePageList.add(HomePageList(title, elements))
             }
         }
-        return HomePageResponse(homePageList)
+        return newHomePageResponse(homePageList)
     }
 
     private fun org.jsoup.nodes.Element.toSearchResult(): SearchResponse? {
@@ -105,12 +105,11 @@ class HiAnimeProvider : MainAPI() {
                     val epNum = epItem.attr("data-number").toIntOrNull()
                     val epTitle = epItem.attr("title").ifBlank { epItem.attr("data-jname") }
                     
-                    episodes.add(Episode(
-                        data = epId,
-                        name = epTitle,
-                        episode = epNum,
-                        posterUrl = poster
-                    ))
+                    episodes.add(newEpisode(epId) {
+                        this.name = epTitle
+                        this.episode = epNum
+                        this.posterUrl = poster
+                    })
                 }
             }
         }
@@ -118,12 +117,11 @@ class HiAnimeProvider : MainAPI() {
         if (episodes.isEmpty()) {
             val epId = Regex("""\?ep=(\d+)""").find(url)?.groupValues?.get(1)
             if (epId != null) {
-                episodes.add(Episode(
-                    data = epId,
-                    name = title,
-                    episode = 1,
-                    posterUrl = poster
-                ))
+                episodes.add(newEpisode(epId) {
+                    this.name = title
+                    this.episode = 1
+                    this.posterUrl = poster
+                })
             }
         }
 
@@ -132,7 +130,7 @@ class HiAnimeProvider : MainAPI() {
             this.year = year
             this.plot = description
             this.recommendations = recommendations
-            addEpisodes(Episode.EpisodeType.SUB, episodes) 
+            addEpisodes(DubStatus.Sub, episodes) 
         }
     }
 
