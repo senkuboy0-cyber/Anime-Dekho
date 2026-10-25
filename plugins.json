@@ -25,6 +25,30 @@
         "jarHash": "sha256-75973c8cae433d6e7c222d169faaf710861c8864ab9f1f2ca21fab26efe1c18b"
     },
     {
+        "url": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/HiAnime.cs3",
+        "status": 1,
+        "version": 9,
+        "name": "HiAnime",
+        "internalName": "HiAnime",
+        "authors": [
+            "senkuboy0-cyber"
+        ],
+        "description": "HiAnime: Watch Anime Sub & Dub in HD",
+        "fileSize": 29331,
+        "repositoryUrl": "https://github.com/senkuboy0-cyber/Anime-Dekho",
+        "language": "en",
+        "tvTypes": [
+            "Anime",
+            "AnimeMovie"
+        ],
+        "iconUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/refs/heads/main/assets/icons/Hianimeq.png",
+        "apiVersion": 1,
+        "fileHash": "sha256-e9775826e465558d127591999cdb268e96f48e8d4de105732b648b084eac62d3",
+        "jarFileSize": 110815,
+        "jarUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/HiAnime.jar",
+        "jarHash": "sha256-2430ecd22a7727c3ad0a28b5345d718826cc095cae04f783b83bc4ef76fbaa2f"
+    },
+    {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/HianimeqProvider.cs3",
         "status": 1,
         "version": 13,
