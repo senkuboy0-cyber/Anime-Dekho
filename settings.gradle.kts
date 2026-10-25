@@ -1,20 +1,2 @@
-import org.gradle.api.provider.Provider
-
-include(
-    ":AnimeDekhoProvider",
-    ":MyAnimesProvider",
-    ":TooniboyProvider",
-    ":Toonstream",
-    ":Mlsbd",
-    ":MovieBoxProvider",
-    ":Blakite",
-    ":Zephyrflick",
-    ":HianimeqProvider",
-    ":HiAnime"
-)
-
-fun include(vararg modules: String) {
-    modules.forEach {
-        include(it)
-    }
-}
+rootProject.name = "Anime-Dekho"
+include(":AnimeDekhoProvider", ":Toonstream", ":TooniboyProvider", ":MyAnimesProvider", ":HianimeqProvider", ":HiAnime")
