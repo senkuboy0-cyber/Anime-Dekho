@@ -1,119 +1,118 @@
-name: Build Cloudstream Extension
+name: Build CloudStream Plugin
 
 on:
   push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
+    branches: [master, main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v3
-
-      - name: Set up JDK 11
-        uses: actions/setup-java@v3
+      - name: Checkout code
+        uses: actions/checkout@v4
         with:
-          distribution: 'zulu'
-          java-version: '11'
+          fetch-depth: 2
 
-      - name: Cache Gradle packages
-        uses: actions/cache@v3
+      - name: Auto-increment version in changed specific KTS files
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Define the specific plugin directories that are allowed to be auto-incremented
+          ALLOWED_DIRS=("AnimeDekhoProvider" "Toonstream" "TooniboyProvider" "MyAnimesProvider" "HianimeqProvider" "HiAnime")
+
+          # Get the list of changed files from the latest commit
+          if git rev-parse HEAD~1 >/dev/null 2>&1; then
+            changed_files=$(git diff --name-only HEAD~1 HEAD)
+          else
+            changed_files=$(git ls-files)
+          fi
+
+          changed_kts=0
+
+          # Loop through only the allowed directories
+          for dir in "${ALLOWED_DIRS[@]}"; do
+            # Check if any file inside this specific directory was changed
+            if echo "$changed_files" | grep -q "^$dir/"; then
+              kts_file="$dir/build.gradle.kts"
+
+              if [ -f "$kts_file" ]; then
+                # Extract the current version number
+                current_version=$(grep -oP 'version\s*=\s*\K\d+' "$kts_file")
+
+                if [ -n "$current_version" ]; then
+                  new_version=$((current_version + 1))
+
+                  # Replace the old version with the new version in the file
+                  sed -i "s/version = $current_version/version = $new_version/" "$kts_file"
+                  echo "Updated $kts_file: $current_version -> $new_version"
+
+                  git add "$kts_file"
+                  changed_kts=1
+                fi
+              fi
+            fi
+          done
+
+          # Commit and push only if any build.gradle.kts file was modified
+          if [ "$changed_kts" -eq 1 ]; then
+            git commit -m "chore: auto-increment plugin versions [skip ci]"
+            git push
+          else
+            echo "No changes detected in allowed plugin directories. Skipping version increment."
+          fi
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
         with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Download Gradle Wrapper JAR
+        run: |
+          mkdir -p gradle/wrapper
+          curl -fsSL -o gradle/wrapper/gradle-wrapper.jar \
+            "https://github.com/gradle/gradle/raw/v8.11.1/gradle/wrapper/gradle-wrapper.jar"
 
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      - name: Determine changed directories
-        id: changed-dirs
+      - name: Build and Generate
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            git fetch origin ${{ github.base_ref }} --depth=1
-            BASE_COMMIT=origin/${{ github.base_ref }}
-          else
-            git fetch origin ${{ github.event.before }} --depth=1 || echo "No before commit"
-            BASE_COMMIT=${{ github.event.before }}
-            if [ -z "$BASE_COMMIT" ] || [ "$BASE_COMMIT" = "0000000000000000000000000000000000000000" ]; then
-              BASE_COMMIT=$(git log -2 --format="%H" | tail -n 1)
-            fi
-          fi
-          echo "Comparing with $BASE_COMMIT"
-          CHANGED_DIRS=$(git diff --name-only $BASE_COMMIT ${{ github.sha }} | grep '/' | cut -d'/' -f1 | sort -u | grep -v '^\.' || echo "")
-          echo "Changed directories: $CHANGED_DIRS"
-          echo "dirs=$CHANGED_DIRS" >> $GITHUB_OUTPUT
+          ./gradlew AnimeDekhoProvider:make
+          ./gradlew Toonstream:make
+          ./gradlew TooniboyProvider:make
+          ./gradlew MyAnimesProvider:make
+          ./gradlew HianimeqProvider:make
+          ./gradlew HiAnime:make
+          ./gradlew makePluginsJson
 
-      - name: Increment version in build.gradle.kts for changed plugins
-        run: |
-          CHANGED_DIRS="${{ steps.changed-dirs.outputs.dirs }}"
-          for dir in $CHANGED_DIRS; do
-            BUILD_FILE="$dir/build.gradle.kts"
-            if [ -f "$BUILD_FILE" ]; then
-              echo "Processing $BUILD_FILE"
-              # Extract current version
-              CURRENT_VERSION=$(grep -E '^ *version *= *' "$BUILD_FILE" | sed -E "s/.*version *= *['\"]?([0-9]+)['\"]?.*/\1/")
-              if [ -n "$CURRENT_VERSION" ]; then
-                NEW_VERSION=$((CURRENT_VERSION + 1))
-                echo "Updating $dir from version $CURRENT_VERSION to $NEW_VERSION"
-                # Replace the version in the file
-                sed -i -E "s/^( *version *= *)['\"]?[0-9]+['\"]?(.*)/\1$NEW_VERSION\2/" "$BUILD_FILE"
-              else
-                 echo "Could not find version in $BUILD_FILE"
-              fi
-            fi
-          done
+          mkdir -p build_output
+          cp AnimeDekhoProvider/build/*.cs3 build_output/ || true
+          cp Toonstream/build/*.cs3 build_output/ || true
+          cp TooniboyProvider/build/*.cs3 build_output/ || true
+          cp MyAnimesProvider/build/*.cs3 build_output/ || true
+          cp HianimeqProvider/build/*.cs3 build_output/ || true
+          cp HiAnime/build/*.cs3 build_output/ || true
+          cp build/plugins.json build_output/plugins.json
 
-      - name: Build Plugins
-        run: ./gradlew make
-        
-      - name: Commit version changes
-        uses: stefanzweifel/git-auto-commit-action@v4
+          echo '{
+            "name": "Toonify Stream",
+            "description": "The ultimate CloudStream repository for high-quality Hindi and multi-language dubbed Anime, Movies, and Cartoons.",
+            "manifestVersion": 1,
+            "pluginLists": [
+              "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/plugins.json"
+            ]
+          }' > build_output/repo.json
+
+      - name: Deploy to builds branch
+        uses: JamesIves/github-pages-deploy-action@v4
         with:
-          commit_message: "Auto-increment plugin version [skip ci]"
-          file_pattern: "*/build.gradle.kts"
-          skip_dirty_check: false
-          
-      - name: Generate JSON
-        run: |
-          mkdir -p output
-          echo '[' > output/plugins.json
-          FIRST=true
-          for dir in AnimeDekhoProvider MyAnimesProvider TooniboyProvider Toonstream Mlsbd MovieBoxProvider Blakite Zephyrflick HianimeqProvider HiAnime; do
-            if [ -f "$dir/build.gradle.kts" ]; then
-              PLUGIN_JSON="$dir/build/plugin.json"
-              if [ -f "$PLUGIN_JSON" ]; then
-                if [ "$FIRST" = "false" ]; then
-                  echo ',' >> output/plugins.json
-                fi
-                cat "$PLUGIN_JSON" >> output/plugins.json
-                FIRST=false
-                cp "$dir/build/"*.cs3 output/ || true
-              fi
-            fi
-          done
-          echo ']' >> output/plugins.json
-          cat output/plugins.json
-
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: plugins
-          path: output/*
-
-      - name: Deploy to GitHub Pages
-        if: github.ref == 'refs/heads/main'
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./output
-          keep_files: true
+          branch: builds
+          folder: build_output
+          clean: false
+          token: ${{ secrets.GITHUB_TOKEN }}
