@@ -130,7 +130,7 @@ class HiAnimeProvider : MainAPI() {
             this.year = year
             this.plot = description
             this.recommendations = recommendations
-            addEpisodes(DubStatus.Sub, episodes) 
+            addEpisodes(DubStatus.Subbed, episodes) 
         }
     }
 
