@@ -20,7 +20,7 @@ import java.util.Base64
 // Servers   /api/theme/episode/servers?episodeId={id}
 //           .server-item[data-type sub|dub, data-server-name, data-hash = base64 embed url]
 //             ZokoAnime -> zokoanime.video/stream/mal/{malId}/{ep}/{sub|dub}
-//             HD-1      -> megaplay.buzz/stream/s-2/{id}/{sub|dub}?s=tcdn
+//             HD-1      -> megaplay.buzz/stream/s-2/{id}/{sub|dub}?s=tcdn  (shown as "Megaplay")
 //
 // Metadata
 //   MAL id     read from the ZokoAnime embed url of the first episode (each season has its own)
@@ -309,7 +309,7 @@ class HianimeProvider : MainAPI() {
     }
 
     // ------------------------------------------------------------- loadLinks
-    // Order as on the site: SUB (ZokoAnime, HD-1), then DUB (ZokoAnime, HD-1).
+    // Dub first when the episode has it: ZokoAnime [Dub], Megaplay [Dub], then ZokoAnime [Sub], Megaplay [Sub].
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -317,7 +317,7 @@ class HianimeProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val ep = runCatching { Gson().fromJson(data, EpisodeData::class.java) }.getOrNull() ?: return false
-        val list = servers(ep.episodeId).sortedBy { if (it.type == "dub") 1 else 0 }
+        val list = servers(ep.episodeId).sortedBy { if (it.type == "dub") 0 else 1 }
 
         val seen = HashSet<String>()
         var found = false
@@ -334,7 +334,7 @@ class HianimeProvider : MainAPI() {
                     server.url.contains("zokoanime", true) ->
                         ZokoAnime().getUrl(server.url, "$mainUrl/", subtitleCallback, unique)
                     server.url.contains("megaplay", true) ->
-                        MegaPlay().getUrl("${server.url}#${server.name}", "$mainUrl/", subtitleCallback, unique)
+                        MegaPlay().getUrl(server.url, "$mainUrl/", subtitleCallback, unique)
                     else ->
                         com.lagradost.cloudstream3.utils.loadExtractor(server.url, "$mainUrl/", subtitleCallback, unique)
                 }
