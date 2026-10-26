@@ -54,14 +54,14 @@
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/OtanoxProvider.cs3",
         "status": 1,
-        "version": 3,
+        "version": 4,
         "name": "OtanoxProvider",
         "internalName": "OtanoxProvider",
         "authors": [
             "senkuboy0-cyber"
         ],
         "description": "Otanox: Hindi and multi-audio anime, series and movies.",
-        "fileSize": 70220,
+        "fileSize": 72866,
         "repositoryUrl": "https://github.com/senkuboy0-cyber/Anime-Dekho",
         "language": "hi",
         "tvTypes": [
@@ -70,10 +70,10 @@
         ],
         "iconUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/refs/heads/main/assets/icons/otanox.png",
         "apiVersion": 1,
-        "fileHash": "sha256-bb5f4440667ea3d2ef31be4ce2240fe30d6eea5d70e4557bc04b2e334b590889",
-        "jarFileSize": 307136,
+        "fileHash": "sha256-aa1c232cf3104a3ea1f748b2eb2a1f5a65c03b353a26b4479e7302311edb0be8",
+        "jarFileSize": 315106,
         "jarUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/OtanoxProvider.jar",
-        "jarHash": "sha256-a10a81ed8603706733679a174a94f33c28463c5b18f875a787200c7571d1a4ab"
+        "jarHash": "sha256-dffdcb164cef78f26b2681654793151ef2d146367cb1585eacae9aca6c2be796"
     },
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/TooniboyProvider.cs3",
