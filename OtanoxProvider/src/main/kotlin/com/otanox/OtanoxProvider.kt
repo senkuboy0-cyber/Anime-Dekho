@@ -188,10 +188,13 @@ class OtanoxProvider : MainAPI() {
                 this.duration = info.duration
                 this.score = score?.let { Score.from10(it) }
                 this.recommendations = recommendations
+                this.actors = emptyList()
             }
         }
 
-        return newAnimeLoadResponse(title, url, type) {
+        // A TvSeries response (not AnimeLoadResponse) is used on purpose: for anime responses
+        // CloudStream looks the title up on AniList/MAL and adds cast and trailer to the page.
+        return newTvSeriesLoadResponse(title, url, type, episodes) {
             this.posterUrl = info.coverImageUrls?.firstOrNull()
             this.backgroundPosterUrl = background
             this.logoUrl = logo
@@ -200,7 +203,7 @@ class OtanoxProvider : MainAPI() {
             this.duration = info.duration
             this.score = score?.let { Score.from10(it) }
             this.recommendations = recommendations
-            addEpisodes(DubStatus.Subbed, episodes)
+            this.actors = emptyList()
         }
     }
 

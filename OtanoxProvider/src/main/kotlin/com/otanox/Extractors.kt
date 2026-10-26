@@ -1,6 +1,7 @@
 package com.otanox
 
 import com.lagradost.cloudstream3.SubtitleFile
+import com.lagradost.cloudstream3.newSubtitleFile
 import com.lagradost.cloudstream3.USER_AGENT
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.ExtractorApi
@@ -164,15 +165,28 @@ class Abyss : ExtractorApi() {
 }
 
 // ---------------------------------------------------------------------------
-// MegaPlay (Anikoto servers: HD-1 / HD-2 / Vidstream-1 / Vidstream-2)
+// MegaPlay (megaplay.buzz, Anikoto servers HD-1 / HD-2 / Vidstream-1 / Vidstream-2)
 // ---------------------------------------------------------------------------
-// Copied from HianimeqProvider.
-//   embed page -> data-id -> /stream/getSources?id= -> tracks + enc
-//   enc is AES-256-CBC (fixed key / iv) -> {"file": master.m3u8}
+// Written from scratch for Otanox and verified against the live site (Oct 2026):
+//
+//   1. Embed page            /stream/s-2/{realId}/{sub|dub}[?s=tcdn|bcdn]
+//                            /videojs/stream/s-2/{realId}/{sub|dub}   (Vidstream player)
+//      The page carries data-id="{fileId}".
+//   2. Sources               {base}stream/getSources?id={fileId}[&s=tcdn|bcdn]
+//      base is https://megaplay.buzz/ or https://megaplay.buzz/videojs/.
+//      The player page appends the ?s= value of the embed url to this call, so it must be
+//      forwarded here: tcdn and bcdn return different CDN hosts.
+//      Answer: { tracks: [{file,label,kind}], enc, intro, outro, server }
+//   3. enc                   base64url, AES-256-CBC, key/iv below (zero padded) -> {"file": master.m3u8}
+//   4. Playlist and every subtitle .vtt answer 403 without Referer https://megaplay.buzz/
+//
 // The provider tags each embed with its server name as a url fragment
-// (#Megaplay-1, #Megaplay-2, #Vidstream-1, #Vidstream-2), shown as "Megaplay-1 [Dub]".
-// The ?s=tcdn / ?s=bcdn value must be forwarded to getSources, the same way the
-// player page does it, otherwise both HD servers return the default CDN.
+// (#Megaplay-1, #Megaplay-2, #Vidstream-1, #Vidstream-2); links are shown as
+// "Megaplay-1 [Dub]" and subtitles as "English (Megaplay-1 Dub)".
+//
+// CloudStream (RepoLinkGenerator) drops links and subtitles whose url it has already seen. Several servers
+// share the same playlist / vtt files, so the server name is appended as a url fragment.
+// Fragments are never sent to the server, so playback is not affected.
 class MegaPlay : ExtractorApi() {
     override var name = "Megaplay"
     override var mainUrl = "https://megaplay.buzz"
@@ -187,85 +201,97 @@ class MegaPlay : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        val (cleanUrl, label) = splitLabel(url)
-        val serverName = label ?: if (cleanUrl.contains("/videojs/") || !cleanUrl.contains("?s=")) "Vidstream" else "Megaplay"
-        val cdn = Regex("""[?&]s=([a-z0-9_-]+)""", RegexOption.IGNORE_CASE).find(cleanUrl)?.groupValues?.get(1)
-        val langTag = langFromUrl(cleanUrl)
+        val (embedUrl, label) = splitLabel(url)
+        val isVideoJs = embedUrl.contains("/videojs/")
+        val serverName = label ?: if (isVideoJs || !embedUrl.contains("?s=")) "Vidstream" else "Megaplay"
+        val lang = if (embedUrl.substringBefore("?").trimEnd('/').endsWith("/dub", true)) "Dub" else "Sub"
+        val cdn = Regex("""[?&]s=([a-z0-9_-]+)""", RegexOption.IGNORE_CASE)
+            .find(embedUrl)?.groupValues?.get(1)
 
+        // Embed host (megaplay.buzz) and the player base used by its JS.
+        val host = Regex("""^https?://[^/]+""").find(embedUrl)?.value ?: mainUrl
+        val apiBase = if (isVideoJs) "$host/videojs/" else "$host/"
+        val cdnReferer = "$host/"
+
+        // 1. Embed page -> file id
         val html = app.get(
-            cleanUrl,
+            embedUrl,
             headers = mapOf(
                 "User-Agent" to USER_AGENT,
                 "Referer" to (referer ?: "https://otanox.online/")
             )
         ).text
-        val fileId = Regex("""data-id=["'](\d+)["']""")
-            .find(html)?.groupValues?.get(1) ?: return
+        val fileId = Regex("""data-id=["'](\d+)["']""").find(html)?.groupValues?.get(1) ?: return
 
-        val json = JSONObject(
-            app.get(
-                "$mainUrl/stream/getSources?id=$fileId" + (cdn?.let { "&s=$it" } ?: ""),
-                headers = mapOf(
-                    "User-Agent" to USER_AGENT,
-                    "Referer" to cleanUrl,
-                    "X-Requested-With" to "XMLHttpRequest",
-                    "Accept" to "application/json, text/plain, */*"
-                )
-            ).text
-        )
+        // 2. Sources
+        val sourcesUrl = apiBase + "stream/getSources?id=$fileId" + (cdn?.let { "&s=$it" } ?: "")
+        val json = runCatching {
+            JSONObject(
+                app.get(
+                    sourcesUrl,
+                    headers = mapOf(
+                        "User-Agent" to USER_AGENT,
+                        "Referer" to embedUrl,
+                        "X-Requested-With" to "XMLHttpRequest",
+                        "Accept" to "application/json, text/plain, */*"
+                    )
+                ).text
+            )
+        }.getOrNull() ?: return
 
-        // Soft subtitles (the thumbnails track is skipped).
-        json.optJSONArray("tracks")?.let { tracks ->
-            for (i in 0 until tracks.length()) {
-                val track = tracks.optJSONObject(i) ?: continue
-                val kind = track.optString("kind")
-                if (kind.isNotBlank() && !kind.equals("captions", true) && !kind.equals("subtitles", true)) continue
-                val file = track.optString("file")
-                if (file.isBlank() || file.contains("thumbnails")) continue
-                subtitleCallback.invoke(SubtitleFile(track.optString("label").ifBlank { "Unknown" }, file))
-            }
-        }
+        val tag = "$serverName $lang"
+        val mediaHeaders = mapOf("User-Agent" to USER_AGENT, "Referer" to cdnReferer)
 
-        val enc = json.optString("enc").ifBlank { return }
-        val sourceJson = JSONObject(decryptEnc(enc) ?: return)
-        val masterUrl = sourceJson.optString("file")
-            .ifBlank { sourceJson.optString("url") }
-            .ifBlank { return }
+        // 3. Video
+        val masterUrl = json.optString("enc").ifBlank { null }
+            ?.let { decryptEnc(it) }
+            ?.let { runCatching { JSONObject(it) }.getOrNull() }
+            ?.let { it.optString("file").ifBlank { it.optString("url") } }
+            ?.ifBlank { null }
+            // Older answers sent plain sources instead of enc.
+            ?: json.optJSONArray("sources")?.optJSONObject(0)?.optString("file")?.ifBlank { null }
+            ?: return
 
-        // The CDN answers 403 without the megaplay referer.
         callback.invoke(
             newExtractorLink(
                 source = serverName,
-                name = "$serverName [$langTag]",
-                url = masterUrl,
+                name = "$serverName [$lang]",
+                url = "$masterUrl#${tag.replace(' ', '-')}",
                 type = ExtractorLinkType.M3U8
             ) {
-                this.referer = "$mainUrl/"
+                this.referer = cdnReferer
                 this.quality = Qualities.P1080.value
-                this.headers = mapOf("User-Agent" to USER_AGENT, "Referer" to "$mainUrl/")
+                this.headers = mediaHeaders
             }
         )
-    }
 
-    private fun decryptEnc(enc: String): String? {
-        return try {
-            val keyBytes = ByteArray(32)
-            val ivBytes = ByteArray(16)
-            val keySrc = aesKey.toByteArray(Charsets.UTF_8)
-            val ivSrc = aesIv.toByteArray(Charsets.UTF_8)
-            System.arraycopy(keySrc, 0, keyBytes, 0, minOf(keySrc.size, 32))
-            System.arraycopy(ivSrc, 0, ivBytes, 0, minOf(ivSrc.size, 16))
-
-            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
-            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(keyBytes, "AES"), IvParameterSpec(ivBytes))
-            String(cipher.doFinal(Base64.getUrlDecoder().decode(enc)), Charsets.UTF_8)
-        } catch (_: Exception) {
-            null
+        // 4. Subtitles, every track of every server (thumbnail tracks skipped).
+        val tracks = json.optJSONArray("tracks") ?: return
+        for (i in 0 until tracks.length()) {
+            val track = tracks.optJSONObject(i) ?: continue
+            val kind = track.optString("kind")
+            if (kind.isNotBlank() && !kind.equals("captions", true) && !kind.equals("subtitles", true)) continue
+            val file = track.optString("file").ifBlank { null } ?: continue
+            if (file.contains("thumbnails", true) || file.endsWith(".jpg", true)) continue
+            val subLang = track.optString("label").ifBlank { "Unknown" }
+            // The fragment keeps the url unique per server and still ends in the file
+            // extension, which CloudStream uses to pick the subtitle mime type.
+            val ext = file.substringBefore('?').substringAfterLast('.', "vtt")
+            subtitleCallback.invoke(
+                newSubtitleFile("$subLang ($tag)", "$file#${tag.replace(' ', '-')}.$ext") {
+                    this.headers = mediaHeaders
+                }
+            )
         }
     }
 
-    private fun langFromUrl(url: String): String {
-        val path = url.substringBefore("?").trimEnd('/').lowercase()
-        return if (path.endsWith("/dub")) "Dub" else "Sub"
-    }
+    // AES-256-CBC with a zero padded 32 byte key and 16 byte iv; input is base64url.
+    private fun decryptEnc(enc: String): String? = runCatching {
+        val keyBytes = aesKey.toByteArray(Charsets.UTF_8).copyOf(32)
+        val ivBytes = aesIv.toByteArray(Charsets.UTF_8).copyOf(16)
+        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(keyBytes, "AES"), IvParameterSpec(ivBytes))
+        val data = Base64.getUrlDecoder().decode(enc.trim().trimEnd('='))
+        String(cipher.doFinal(data), Charsets.UTF_8)
+    }.getOrNull()
 }
