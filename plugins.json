@@ -25,30 +25,6 @@
         "jarHash": "sha256-75973c8cae433d6e7c222d169faaf710861c8864ab9f1f2ca21fab26efe1c18b"
     },
     {
-        "url": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/HianimeProvider.cs3",
-        "status": 1,
-        "version": 1,
-        "name": "HianimeProvider",
-        "internalName": "HianimeProvider",
-        "authors": [
-            "senkuboy0-cyber"
-        ],
-        "description": "HiAnime: sub and dub anime series and movies.",
-        "fileSize": 53687,
-        "repositoryUrl": "https://github.com/senkuboy0-cyber/Anime-Dekho",
-        "language": "en",
-        "tvTypes": [
-            "Anime",
-            "AnimeMovie"
-        ],
-        "iconUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/refs/heads/main/assets/icons/HiAnime.png",
-        "apiVersion": 1,
-        "fileHash": "sha256-f1b3b844a4a11efa118418ee57df02b3739f1c08255d2dc6fd4894db22aaae07",
-        "jarFileSize": 217546,
-        "jarUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/HianimeProvider.jar",
-        "jarHash": "sha256-3d59f8f36b54ff8b0cb20935c6917d29468b66de953a65223e22f29eeed45abf"
-    },
-    {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/MyAnimesProvider.cs3",
         "status": 1,
         "version": 18,
