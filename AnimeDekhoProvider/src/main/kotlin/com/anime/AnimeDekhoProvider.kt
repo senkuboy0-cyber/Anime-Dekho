@@ -94,14 +94,45 @@ open class AnimeDekhoProvider : MainAPI() {
             items = parseBrowseCards(doc)
         }
 
-        return newHomePageResponse(request.name, items, hasNextPage(doc, items))
+        val hasNext = items.size >= 24 || doc.selectFirst("a.next.page-numbers, a.next") != null
+        return newHomePageResponse(request.name, items, hasNext)
     }
 
     override suspend fun search(query: String, page: Int): SearchResponseList {
         val encodedQuery = encodeUri(query)
 
-        // The browse page is paginated (24 per page, &pg=N), so every page comes from it.
-        // The suggest API only returns the top 8 and has no pages, so it is just a fallback.
+        if (page == 1) {
+            val suggestRes = try {
+                app.get(
+                    "$mainUrl/wp-json/dgt/v1/suggest?q=$encodedQuery",
+                    headers = mapOf("Accept" to "application/json")
+                ).parsedSafe<DgtSuggestResponse>()
+            } catch (_: Exception) {
+                null
+            }
+
+            val apiResults = suggestRes?.items.orEmpty().mapNotNull { item ->
+                val title = item.title?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                val url = item.url?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+
+                if (item.type == "movie") {
+                    newMovieSearchResponse(title, url, TvType.Movie) {
+                        this.posterUrl = item.poster
+                        this.year = item.year
+                    }
+                } else {
+                    newTvSeriesSearchResponse(title, url, TvType.TvSeries) {
+                        this.posterUrl = item.poster
+                        this.year = item.year
+                    }
+                }
+            }
+
+            if (apiResults.isNotEmpty()) {
+                return newSearchResponseList(apiResults, true)
+            }
+        }
+
         val browseSearchUrl = if (page <= 1) {
             "$mainUrl/browse/?q=$encodedQuery"
         } else {
@@ -110,48 +141,7 @@ open class AnimeDekhoProvider : MainAPI() {
 
         val doc = app.get(browseSearchUrl, timeout = 30).document
         val htmlResults = parseBrowseCards(doc)
-
-        if (page <= 1 && htmlResults.isEmpty()) {
-            return newSearchResponseList(suggest(encodedQuery), false)
-        }
-
-        return newSearchResponseList(htmlResults, hasNextPage(doc, htmlResults))
-    }
-
-    override suspend fun quickSearch(query: String): List<SearchResponse> = suggest(encodeUri(query))
-
-    private suspend fun suggest(encodedQuery: String): List<SearchResponse> {
-        val suggestRes = try {
-            app.get(
-                "$mainUrl/wp-json/dgt/v1/suggest?q=$encodedQuery",
-                headers = mapOf("Accept" to "application/json")
-            ).parsedSafe<DgtSuggestResponse>()
-        } catch (_: Exception) {
-            null
-        }
-
-        return suggestRes?.items.orEmpty().mapNotNull { item ->
-            val title = item.title?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-            val url = item.url?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-
-            if (item.type == "movie") {
-                newMovieSearchResponse(title, url, TvType.Movie) {
-                    this.posterUrl = item.poster
-                    this.year = item.year
-                }
-            } else {
-                newTvSeriesSearchResponse(title, url, TvType.TvSeries) {
-                    this.posterUrl = item.poster
-                    this.year = item.year
-                }
-            }
-        }
-    }
-
-    /** A next page exists when the pager has a "next" link (fallback: a full page of 24 cards). */
-    private fun hasNextPage(doc: Document, items: List<SearchResponse>): Boolean {
-        if (items.isEmpty()) return false
-        return doc.selectFirst("a.next.page-numbers, .pagination a.next, a.next") != null || items.size >= 24
+        return newSearchResponseList(htmlResults, htmlResults.size >= 24)
     }
 
     override suspend fun load(url: String): LoadResponse {
@@ -696,10 +686,11 @@ open class AnimeDekhoProvider : MainAPI() {
                 val validLogos = images.logos?.filter { it.filePath?.endsWith(".svg", ignoreCase = true) != true } ?: emptyList()
                 val bestLogo = validLogos.firstOrNull { it.lang == "en" }
                     ?: validLogos.firstOrNull { it.lang == null }
+                    ?: validLogos.firstOrNull { it.lang == "ja" }
                     ?: validLogos.firstOrNull()
                 bestLogo?.filePath?.let { logoUrl = "$TMDB_IMG$it" }
 
-                val backdrops = images.backdrops?.filter { it.filePath?.endsWith(".svg", ignoreCase = true) != true } ?: emptyList()
+                val backdrops = images.backdrops ?: emptyList()
                 val bestBackdrop = backdrops.firstOrNull { it.lang == null }
                     ?: backdrops.firstOrNull { it.lang == "en" }
                     ?: backdrops.firstOrNull()
