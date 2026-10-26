@@ -15,27 +15,18 @@ import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
-// ---------------------------------------------------------------------------
-// Label helper
-// ---------------------------------------------------------------------------
-// The provider attaches the server name to an embed url as a fragment, for example
-//   https://megaplay.buzz/stream/s-2/67753/sub?s=tcdn#HD-1
-internal fun splitLabel(url: String): Pair<String, String?> {
-    val idx = url.indexOf('#')
-    if (idx < 0) return url to null
-    val label = url.substring(idx + 1).ifBlank { null }
-    return url.substring(0, idx) to label
-}
+// "/sub" or "/dub" at the end of an embed path.
+private fun audioOf(embedUrl: String): String =
+    if (embedUrl.substringBefore("?").trimEnd('/').endsWith("/dub", true)) "Dub" else "Sub"
 
 // ---------------------------------------------------------------------------
-// ZokoAnime (zokoanime.video/stream/mal/{malId}/{episode}/{sub|dub})
+// ZokoAnime  (HiAnime server "ZokoAnime")
 // ---------------------------------------------------------------------------
-// Verified against the live site (Oct 2026):
-//   1. The embed page holds  window.__P = "<base64>"
-//   2. base64 decode, XOR every byte with the key "otaku-embed-v1", parse as JSON:
-//        { src: master.m3u8, subtitles: [{ lang, label, default, src: .vtt }], ... }
-//   3. The playlist, its segments and every .vtt answer 403 without Referer https://zokoanime.video/
-// Links are shown as "ZokoAnime [Sub]" / "ZokoAnime [Dub]".
+// Embed:  zokoanime.video/stream/mal/{malId}/{episode}/{sub|dub}
+// The page has window.__P = "<base64>". Decoded and XORed with "otaku-embed-v1" it is JSON:
+//   src          master m3u8
+//   subtitles[]  label, lang, default, src (.vtt)
+// The m3u8, its segments and the .vtt files need Referer https://zokoanime.video/.
 class ZokoAnime : ExtractorApi() {
     override var name = "ZokoAnime"
     override var mainUrl = "https://zokoanime.video"
@@ -49,29 +40,22 @@ class ZokoAnime : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        val (embedUrl, _) = splitLabel(url)
-        val lang = if (embedUrl.substringBefore("?").trimEnd('/').endsWith("/dub", true)) "Dub" else "Sub"
-        val host = Regex("""^https?://[^/]+""").find(embedUrl)?.value ?: mainUrl
+        val audio = audioOf(url)
+        val host = Regex("""^https?://[^/]+""").find(url)?.value ?: mainUrl
         val cdnReferer = "$host/"
 
         val html = app.get(
-            embedUrl,
+            url,
             headers = mapOf("User-Agent" to USER_AGENT, "Referer" to (referer ?: "https://hianime.at/"))
         ).text
         val packed = Regex("""window\.__P\s*=\s*["']([^"']+)["']""").find(html)?.groupValues?.get(1) ?: return
         val json = decode(packed)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: return
-
         val src = json.optString("src").ifBlank { null } ?: return
+
         val mediaHeaders = mapOf("User-Agent" to USER_AGENT, "Referer" to cdnReferer, "Origin" to host)
-        val tag = "ZokoAnime-$lang"
 
         callback.invoke(
-            newExtractorLink(
-                source = name,
-                name = "$name [$lang]",
-                url = "$src#$tag",
-                type = ExtractorLinkType.M3U8
-            ) {
+            newExtractorLink(name, "$name [$audio]", url = src, type = ExtractorLinkType.M3U8) {
                 this.referer = cdnReferer
                 this.quality = Qualities.P1080.value
                 this.headers = mediaHeaders
@@ -83,9 +67,8 @@ class ZokoAnime : ExtractorApi() {
             val s = subs.optJSONObject(i) ?: continue
             val file = s.optString("src").ifBlank { null } ?: continue
             val label = s.optString("label").ifBlank { s.optString("lang").ifBlank { "Unknown" } }
-            val ext = file.substringBefore('?').substringAfterLast('.', "vtt")
             subtitleCallback.invoke(
-                newSubtitleFile("$label (ZokoAnime $lang)", "$file#$tag.$ext") {
+                newSubtitleFile("$label ($name $audio)", file) {
                     this.headers = mediaHeaders
                 }
             )
@@ -100,28 +83,14 @@ class ZokoAnime : ExtractorApi() {
 }
 
 // ---------------------------------------------------------------------------
-// MegaPlay (megaplay.buzz, Anikoto servers HD-1 / HD-2 / Vidstream-1 / Vidstream-2)
+// Megaplay  (HiAnime server "HD-1", shown as "Megaplay")
 // ---------------------------------------------------------------------------
-// Same extractor as OtanoxProvider, verified against the live site (Oct 2026):
-//
-//   1. Embed page            /stream/s-2/{realId}/{sub|dub}[?s=tcdn|bcdn]
-//                            /videojs/stream/s-2/{realId}/{sub|dub}   (Vidstream player)
-//      The page carries data-id="{fileId}".
-//   2. Sources               {base}stream/getSources?id={fileId}[&s=tcdn|bcdn]
-//      base is https://megaplay.buzz/ or https://megaplay.buzz/videojs/.
-//      The player page appends the ?s= value of the embed url to this call, so it must be
-//      forwarded here: tcdn and bcdn return different CDN hosts.
-//      Answer: { tracks: [{file,label,kind}], enc, intro, outro, server }
-//   3. enc                   base64url, AES-256-CBC, key/iv below (zero padded) -> {"file": master.m3u8}
-//   4. Playlist and every subtitle .vtt answer 403 without Referer https://megaplay.buzz/
-//
-// The provider tags each embed with its server name as a url fragment
-// (#Megaplay-1, #Megaplay-2, #Vidstream-1, #Vidstream-2); links are shown as
-// "Megaplay-1 [Dub]" and subtitles as "English (Megaplay-1 Dub)".
-//
-// CloudStream (RepoLinkGenerator) drops links and subtitles whose url it has already seen. Several servers
-// share the same playlist / vtt files, so the server name is appended as a url fragment.
-// Fragments are never sent to the server, so playback is not affected.
+// Embed:  megaplay.buzz/stream/s-2/{id}/{sub|dub}?s=tcdn
+//   1. The embed page has data-id="{fileId}".
+//   2. stream/getSources?id={fileId}&s=tcdn  ->  { enc, tracks[] }
+//   3. enc is base64url AES-256-CBC (key / iv below, zero padded)  ->  { file: master m3u8 }
+//   4. tracks[] are the subtitles (thumbnail tracks are skipped).
+// The m3u8 and the .vtt files need Referer https://megaplay.buzz/.
 class MegaPlay : ExtractorApi() {
     override var name = "Megaplay"
     override var mainUrl = "https://megaplay.buzz"
@@ -136,37 +105,27 @@ class MegaPlay : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        val (embedUrl, label) = splitLabel(url)
-        val isVideoJs = embedUrl.contains("/videojs/")
-        val serverName = label ?: if (isVideoJs || !embedUrl.contains("?s=")) "Vidstream" else "Megaplay"
-        val lang = if (embedUrl.substringBefore("?").trimEnd('/').endsWith("/dub", true)) "Dub" else "Sub"
-        val cdn = Regex("""[?&]s=([a-z0-9_-]+)""", RegexOption.IGNORE_CASE)
-            .find(embedUrl)?.groupValues?.get(1)
-
-        // Embed host (megaplay.buzz) and the player base used by its JS.
-        val host = Regex("""^https?://[^/]+""").find(embedUrl)?.value ?: mainUrl
-        val apiBase = if (isVideoJs) "$host/videojs/" else "$host/"
+        val audio = audioOf(url)
+        val cdn = Regex("""[?&]s=([a-z0-9_-]+)""", RegexOption.IGNORE_CASE).find(url)?.groupValues?.get(1)
+        val host = Regex("""^https?://[^/]+""").find(url)?.value ?: mainUrl
         val cdnReferer = "$host/"
 
-        // 1. Embed page -> file id
+        // 1. file id
         val html = app.get(
-            embedUrl,
-            headers = mapOf(
-                "User-Agent" to USER_AGENT,
-                "Referer" to (referer ?: "https://hianime.at/")
-            )
+            url,
+            headers = mapOf("User-Agent" to USER_AGENT, "Referer" to (referer ?: "https://hianime.at/"))
         ).text
         val fileId = Regex("""data-id=["'](\d+)["']""").find(html)?.groupValues?.get(1) ?: return
 
-        // 2. Sources
-        val sourcesUrl = apiBase + "stream/getSources?id=$fileId" + (cdn?.let { "&s=$it" } ?: "")
+        // 2. sources
+        val sourcesUrl = "$host/stream/getSources?id=$fileId" + (cdn?.let { "&s=$it" } ?: "")
         val json = runCatching {
             JSONObject(
                 app.get(
                     sourcesUrl,
                     headers = mapOf(
                         "User-Agent" to USER_AGENT,
-                        "Referer" to embedUrl,
+                        "Referer" to url,
                         "X-Requested-With" to "XMLHttpRequest",
                         "Accept" to "application/json, text/plain, */*"
                     )
@@ -174,33 +133,26 @@ class MegaPlay : ExtractorApi() {
             )
         }.getOrNull() ?: return
 
-        val tag = "$serverName $lang"
         val mediaHeaders = mapOf("User-Agent" to USER_AGENT, "Referer" to cdnReferer)
 
-        // 3. Video
+        // 3. video
         val masterUrl = json.optString("enc").ifBlank { null }
             ?.let { decryptEnc(it) }
             ?.let { runCatching { JSONObject(it) }.getOrNull() }
             ?.let { it.optString("file").ifBlank { it.optString("url") } }
             ?.ifBlank { null }
-            // Older answers sent plain sources instead of enc.
             ?: json.optJSONArray("sources")?.optJSONObject(0)?.optString("file")?.ifBlank { null }
             ?: return
 
         callback.invoke(
-            newExtractorLink(
-                source = serverName,
-                name = "$serverName [$lang]",
-                url = "$masterUrl#${tag.replace(' ', '-')}",
-                type = ExtractorLinkType.M3U8
-            ) {
+            newExtractorLink(name, "$name [$audio]", url = masterUrl, type = ExtractorLinkType.M3U8) {
                 this.referer = cdnReferer
                 this.quality = Qualities.P1080.value
                 this.headers = mediaHeaders
             }
         )
 
-        // 4. Subtitles, every track of every server (thumbnail tracks skipped).
+        // 4. subtitles
         val tracks = json.optJSONArray("tracks") ?: return
         for (i in 0 until tracks.length()) {
             val track = tracks.optJSONObject(i) ?: continue
@@ -208,19 +160,15 @@ class MegaPlay : ExtractorApi() {
             if (kind.isNotBlank() && !kind.equals("captions", true) && !kind.equals("subtitles", true)) continue
             val file = track.optString("file").ifBlank { null } ?: continue
             if (file.contains("thumbnails", true) || file.endsWith(".jpg", true)) continue
-            val subLang = track.optString("label").ifBlank { "Unknown" }
-            // The fragment keeps the url unique per server and still ends in the file
-            // extension, which CloudStream uses to pick the subtitle mime type.
-            val ext = file.substringBefore('?').substringAfterLast('.', "vtt")
+            val label = track.optString("label").ifBlank { "Unknown" }
             subtitleCallback.invoke(
-                newSubtitleFile("$subLang ($tag)", "$file#${tag.replace(' ', '-')}.$ext") {
+                newSubtitleFile("$label ($name $audio)", file) {
                     this.headers = mediaHeaders
                 }
             )
         }
     }
 
-    // AES-256-CBC with a zero padded 32 byte key and 16 byte iv; input is base64url.
     private fun decryptEnc(enc: String): String? = runCatching {
         val keyBytes = aesKey.toByteArray(Charsets.UTF_8).copyOf(32)
         val ivBytes = aesIv.toByteArray(Charsets.UTF_8).copyOf(16)
