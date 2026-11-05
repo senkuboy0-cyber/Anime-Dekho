@@ -8,7 +8,6 @@ class AnimeDekhoPlugin: BasePlugin() {
     override fun load() {
         registerMainAPI(AnimeDekhoProvider())
         
-        registerExtractorAPI(Zephyrflick())
         registerExtractorAPI(Ravok())
         registerExtractorAPI(Abyss())
         registerExtractorAPI(StreamRuby())
