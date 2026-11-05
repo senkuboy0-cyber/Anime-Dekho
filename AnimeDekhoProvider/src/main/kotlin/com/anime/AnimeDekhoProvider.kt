@@ -47,18 +47,26 @@ open class AnimeDekhoProvider : MainAPI() {
     private val normalizeRegex = Regex("[^a-zA-Z0-9]")
 
     // Custom Extractors
-    private val zephyrflick  = Zephyrflick()
-    private val awsStream    = AWSStream()
-    private val abyss        = Abyss()
-    private val streamRuby   = StreamRuby()
-    private val cloudy       = Cloudy()
-    private val upnsPlayer   = UpnsPlayer()
-    private val gdMirrorbot  = GDMirrorbot()
-    private val filesForever = FilesForever()
-    private val emTurboVid   = EmTurboVid()
-    private val vidMolyNet   = VidMolyNet()
-    private val blakite      = Blakite()
-    private val neoCdn       = NeoCDN()
+    private val ravok          = Ravok()
+    private val abyss          = Abyss()
+    private val streamRuby     = StreamRuby()
+    private val cloudy         = Cloudy()
+    private val upnsPlayer     = UpnsPlayer()
+    private val gdMirrorbot    = GDMirrorbot()
+    private val gdMirrorbotFhd = GDMirrorbotFHD()
+    private val filesForever   = FilesForever()
+    private val emTurboVid     = EmTurboVid()
+    private val vidMolyNet     = VidMolyNet()
+    private val blakite        = Blakite()
+    private val worldMirror    = WorldMirror()
+    private val rpmshare       = Rpmshare()
+    private val streamPro      = StreamPro()
+    private val streamhg       = Streamhg()
+    private val earnvids       = Earnvids()
+    private val byse           = Byse()
+    private val xerverMirror   = XerverMirror()
+    private val vidSrcGet      = VidSrcGet()
+    private val neoCdn         = NeoCDN()
 
     companion object {
         private const val USER_AGENT =
@@ -448,17 +456,24 @@ open class AnimeDekhoProvider : MainAPI() {
     ): Boolean {
         return try {
             when {
-                url.contains("zephyrflick", true) || url.contains("as-cdn", true) -> { zephyrflick.getUrl(url, referer, subtitleCallback, callback); true }
-                url.contains("awstream", true) -> { awsStream.getUrl(url, referer, subtitleCallback, callback); true }
+                url.contains("ravok", true) -> { ravok.getUrl(url, referer, subtitleCallback, callback); true }
                 url.contains("abyssplayer", true) || url.contains("playhydrax", true) -> { abyss.getUrl(url, referer, subtitleCallback, callback); true }
                 url.contains("rubystm", true) || url.contains("streamruby", true) -> { streamRuby.getUrl(url, referer, subtitleCallback, callback); true }
                 url.contains("cloudy.upns", true) -> { cloudy.getUrl(url, referer, subtitleCallback, callback); true }
+                url.contains("rpmhub", true) || url.contains("rpmshare", true) -> { rpmshare.getUrl(url, referer, subtitleCallback, callback); true }
+                url.contains("streamcasthub", true) -> { streamPro.getUrl(url, referer, subtitleCallback, callback); true }
                 url.contains("upns", true) || url.contains("p2pplay", true) -> { upnsPlayer.getUrl(url, referer, subtitleCallback, callback); true }
                 url.contains("gdmirrorbot.nl", true) -> { gdMirrorbot.getUrl(url, referer, subtitleCallback, callback); true }
                 url.contains("filesforever", true) -> { filesForever.getUrl(url, referer, subtitleCallback, callback); true }
                 url.contains("emturbovid", true) || url.contains("turboviplay", true) -> { emTurboVid.getUrl(url, referer, subtitleCallback, callback); true }
                 url.contains("vidmoly", true) -> { vidMolyNet.getUrl(url, referer, subtitleCallback, callback); true }
                 url.contains("blakite", true) -> { blakite.getUrl(url, referer, subtitleCallback, callback); true }
+                url.contains("animeworld.site", true) -> { worldMirror.getUrl(url, referer, subtitleCallback, callback); true }
+                url.contains("hanerix", true) || url.contains("streamhg", true) -> { streamhg.getUrl(url, referer, subtitleCallback, callback); true }
+                url.contains("morencius", true) || url.contains("earnvids", true) -> { earnvids.getUrl(url, referer, subtitleCallback, callback); true }
+                url.contains("bysetayico", true) || url.contains("byse", true) -> { byse.getUrl(url, referer, subtitleCallback, callback); true }
+                url.contains("mirror.xerver", true) || url.contains("xerver", true) -> { xerverMirror.getUrl(url, referer, subtitleCallback, callback); true }
+                url.contains("aaa/get", true) -> { vidSrcGet.getUrl(url, referer, subtitleCallback, callback); true }
                 url.contains("aaa/myth", true) -> { neoCdn.getUrl(url, referer, subtitleCallback, callback); true }
                 else -> loadExtractor(url, referer, subtitleCallback, callback)
             }
