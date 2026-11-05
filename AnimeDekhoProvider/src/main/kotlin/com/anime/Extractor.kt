@@ -26,25 +26,11 @@ import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
-// Handles the server, utilizing the base extraction logic.
-class Zephyrflick : AWSStream() {
-    override val name = "Zephyrflick"
-    override val mainUrl = "https://as-cdn28.top"
-    override val requiresReferer = true
-}
-
-// Handles the server, utilizing the base extraction logic.
-class Ravok : AWSStream() {
-    override val name = "Ravok"
-    override val mainUrl = "https://ravok.buzz"
-    override val requiresReferer = true
-}
-
 // Base extractor backend.
 // Fetches the HLS video source via a POST request and unpacks JavaScript to extract subtitle captions.
-open class AWSStream : ExtractorApi() {
-    override val name = "AWSStream"
-    override val mainUrl = "https://z.awstream.net"
+open class Ravok : ExtractorApi() {
+    override val name = "Ravok"
+    override val mainUrl = "https://ravok.buzz"
     override val requiresReferer = true
 
     override suspend fun getUrl(
@@ -70,12 +56,12 @@ open class AWSStream : ExtractorApi() {
 
             val extractedPack = doc.selectFirst("script:containsData(function(p,a,c,k,e,d))")?.data().orEmpty()
             JsUnpacker(extractedPack).unpack()?.let { unpacked ->
-                val regex = Regex("""\u0022kind\u0022\s*:\s*\u0022captions\u0022\s*,\s*\u0022file\u0022\s*:\s*\u0022(https[^\u0022]+)\u0022""")
+                val regex = Regex("""\u0022kind\u0022\s*:\s*\u0022captions\u0022\s*,\s*\u0022file\u0022\s*:\s*\u0022(https[^\u0022]+)\u0022.*?(?:,\s*\u0022label\u0022\s*:\s*\u0022([^\u0022]+)\u0022)?""")
                 val matches = regex.findAll(unpacked).toList()
                 for (i in matches.indices) {
                     val matchResult = matches[i]
                     val subtitleUrl = matchResult.groupValues[1]
-                    val subtitleName = if (i == 0) "English" else "Subtitle ${i + 1}"
+                    val subtitleName = matchResult.groups.getOrNull(2)?.value?.takeIf { it.isNotBlank() } ?: "Subtitle ${i + 1}"
                     subtitleCallback.invoke(SubtitleFile(subtitleName, subtitleUrl))
                 }
             }
@@ -306,7 +292,7 @@ open class UpnsPlayer : ExtractorApi() {
                     adjust.optJSONObject(order.getString(i))?.let { candidates.add(it) }
             } else {
                 val keys = adjust.keys()
-                while(keys.hasNext()) {
+                while (keys.hasNext()) {
                     adjust.optJSONObject(keys.next())?.let { candidates.add(it) }
                 }
             }
@@ -851,9 +837,12 @@ open class Streamhg : ExtractorApi() {
             ?: return
 
         // subtitles .vtt
-        val subMatches = Regex("""["'](https?://[^"']+\.vtt[^"']*)["']""").findAll(unpacked)
+        val subMatches = Regex("""file\s*:\s*["'](https?://[^"']+\.vtt[^"']*)["'][^}]*?(?:label\s*:\s*["']([^"']+)["'])?""").findAll(unpacked)
+        var counter = 1
         for (m in subMatches) {
-            subtitleCallback.invoke(SubtitleFile("English", m.groupValues[1]))
+            val subtitleUrl = m.groupValues[1]
+            val subtitleName = m.groups.getOrNull(2)?.value?.takeIf { it.isNotBlank() } ?: "Subtitle ${counter++}"
+            subtitleCallback.invoke(SubtitleFile(subtitleName, subtitleUrl))
         }
 
         callback.invoke(
