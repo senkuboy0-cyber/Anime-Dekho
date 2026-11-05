@@ -61,7 +61,7 @@ open class Ravok : ExtractorApi() {
                 for (i in matches.indices) {
                     val matchResult = matches[i]
                     val subtitleUrl = matchResult.groupValues[1]
-                    val subtitleName = matchResult.groups.getOrNull(2)?.value?.takeIf { it.isNotBlank() } ?: "Subtitle ${i + 1}"
+                    val subtitleName = matchResult.groupValues.getOrNull(2)?.takeIf { it.isNotBlank() } ?: "Subtitle ${i + 1}"
                     subtitleCallback.invoke(SubtitleFile(subtitleName, subtitleUrl))
                 }
             }
@@ -841,7 +841,7 @@ open class Streamhg : ExtractorApi() {
         var counter = 1
         for (m in subMatches) {
             val subtitleUrl = m.groupValues[1]
-            val subtitleName = m.groups.getOrNull(2)?.value?.takeIf { it.isNotBlank() } ?: "Subtitle ${counter++}"
+            val subtitleName = m.groupValues.getOrNull(2)?.takeIf { it.isNotBlank() } ?: "Subtitle ${counter++}"
             subtitleCallback.invoke(SubtitleFile(subtitleName, subtitleUrl))
         }
 
