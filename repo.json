@@ -1,5 +1,6 @@
 {
   "name": "Toonify Stream",
+  "iconUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/refs/heads/main/assets/icons/anime.png",
   "description": "The ultimate CloudStream repository for high-quality Hindi and multi-language dubbed Anime, Movies, and Cartoons.",
   "manifestVersion": 1,
   "pluginLists": [
