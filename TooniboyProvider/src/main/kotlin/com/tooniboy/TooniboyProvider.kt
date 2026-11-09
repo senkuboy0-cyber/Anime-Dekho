@@ -380,16 +380,21 @@ class Tooniboy : MainAPI() {
 
     // --- Main Page Configuration ---
     override val mainPage = mainPageOf(
-        "category/animation"              to "Latest Series",
-        "category/movies"                 to "Latest Movies",
-        "category/cartoon"                to "Cartoon",
-        "category/language/hindi-language" to "Hindi"
+        "category/animation?type=series" to "Latest Series",
+        "category/movies?type=movies"    to "Latest Movies",
+        "category/cartoon?type=series"   to "Cartoon Series",
+        "category/cartoon?type=movies"   to "Cartoon Movies",
+        "category/hindi?type=series"     to "Hindi Dubbed Series",
+        "category/hindi?type=movies"     to "Hindi Dubbed Movies"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val baseUrl = "$mainUrl/${request.data}"
-        // Category pagination: ?type=all&page=N (the old /page/N/ style is dead)
-        val url = if (page > 1) "$baseUrl?type=all&page=$page" else baseUrl
+        // Category data already carries ?type=... — pagination appends &page=N.
+        // Fallback to the old ?type=all&page=N style when data has no query param.
+        val url = if (page > 1) {
+            if (request.data.contains("?")) "$baseUrl&page=$page" else "$baseUrl?type=all&page=$page"
+        } else baseUrl
 
         val document = app.get(url).document
         val home = parseCardList(document)
