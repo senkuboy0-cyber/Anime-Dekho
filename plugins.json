@@ -102,14 +102,14 @@
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/TooniboyProvider.cs3",
         "status": 1,
-        "version": 24,
+        "version": 26,
         "name": "TooniboyProvider",
         "internalName": "TooniboyProvider",
         "authors": [
             "senkuboy0-cyber"
         ],
         "description": "Tooniboy: The best place for Hindi & Multi-language Anime, Cartoons and Movies.",
-        "fileSize": 85502,
+        "fileSize": 88435,
         "repositoryUrl": "https://github.com/senkuboy0-cyber/Anime-Dekho",
         "language": "hi",
         "tvTypes": [
@@ -120,10 +120,10 @@
         ],
         "iconUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/refs/heads/main/assets/icons/tooniboy.png",
         "apiVersion": 1,
-        "fileHash": "sha256-df2ad085f3fd5d39b2b2fa81c74b0b91beeb3f218372d82da4b58f7c046bffdc",
-        "jarFileSize": 408838,
+        "fileHash": "sha256-50c65237e2ad9da207391cc08ffedbab7738ea5fbcf97f84e501206f96cbf418",
+        "jarFileSize": 424194,
         "jarUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/TooniboyProvider.jar",
-        "jarHash": "sha256-2a3cb6c29b612fc959e94ef7f24fea789681e26375c161c8e7d711b57b5848e7"
+        "jarHash": "sha256-e172c1ec3aa388e35856c4ad80e3c05f3e9d5521f0a94f4fb35a20249ac749c3"
     },
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/Toonstream.cs3",
