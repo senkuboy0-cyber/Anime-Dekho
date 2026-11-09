@@ -6,6 +6,9 @@ import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import org.jsoup.select.Elements
 import java.net.URLEncoder
 import kotlin.math.abs
@@ -64,6 +67,32 @@ data class TmdbDetails(
     val type: String?,
     val logo: String?,
     val backdrop: String?
+)
+
+// --- TMDB Episode-level Data Classes ---
+// Used to fetch per-episode title and still thumbnail from TMDB.
+// Season 0 / specials are intentionally excluded (see validSeasons filter).
+
+data class TmdbSeasonBase(
+    @JsonProperty("season_number") val seasonNumber: Int? = null
+)
+
+data class TmdbShowResponse(
+    @JsonProperty("seasons") val seasons: List<TmdbSeasonBase>? = null
+)
+
+data class TmdbEpisode(
+    @JsonProperty("id") val id: Int? = null,
+    @JsonProperty("name") val name: String? = null,
+    @JsonProperty("episode_number") val episodeNumber: Int? = null,
+    @JsonProperty("season_number") val seasonNumber: Int? = null,
+    @JsonProperty("still_path") val stillPath: String? = null
+)
+
+data class TmdbSeason(
+    @JsonProperty("id") val id: Int? = null,
+    @JsonProperty("season_number") val seasonNumber: Int? = null,
+    @JsonProperty("episodes") val episodes: List<TmdbEpisode>? = null
 )
 
 class Tooniboy : MainAPI() {
@@ -559,6 +588,9 @@ class Tooniboy : MainAPI() {
             }
         }
 
+        // Override episode titles and thumbnails from TMDB for every season except Season 0 / specials.
+        applyTmdbEpisodeMetadata(episodes, tmdb)
+
         return newTvSeriesLoadResponse(title, mediaJson, TvType.TvSeries, episodes) {
             this.posterUrl = poster
             this.backgroundPosterUrl = tmdb.backdrop ?: background ?: poster
@@ -566,6 +598,73 @@ class Tooniboy : MainAPI() {
             this.year = year
             this.recommendations = recommendations
             this.logoUrl = tmdb.logo
+        }
+    }
+
+    /**
+     * Overrides episode name and posterUrl from TMDB for every season except Season 0 / specials.
+     *
+     * - Skips entirely if no TMDB id or the matched TMDB entry is not a TV show.
+     * - Fetches /tv/{id} once to enumerate valid seasons (season_number > 0),
+     *   so Season 0 / specials from TMDB are never requested.
+     * - Fetches each valid season in parallel, then for every site Episode with
+     *   season > 0 looks up the matching TMDB episode by (seasonNumber, episodeNumber).
+     * - Episodes in Season 0 (or with null season) are left untouched — they keep
+     *   the site-provided name and thumbnail.
+     * - If anything fails, the original site values are preserved.
+     */
+    private suspend fun applyTmdbEpisodeMetadata(episodes: MutableList<Episode>, tmdb: TmdbDetails) {
+        val tmdbId = tmdb.id ?: return
+        if (tmdb.type != "tv" || episodes.isEmpty()) return
+
+        try {
+            val showRes = app.get("$TMDB_API/tv/$tmdbId?api_key=$TMDB_KEY").parsedSafe<TmdbShowResponse>()
+            // validSeasons excludes season_number == 0 (TMDB specials), null and negatives.
+            val validSeasons = showRes?.seasons?.mapNotNull { it.seasonNumber }?.filter { it > 0 } ?: emptyList()
+            if (validSeasons.isEmpty()) return
+
+            val allTmdbEpisodes = mutableListOf<TmdbEpisode>()
+            coroutineScope {
+                validSeasons.map { sNum ->
+                    async {
+                        app.get("$TMDB_API/tv/$tmdbId/season/$sNum?api_key=$TMDB_KEY").parsedSafe<TmdbSeason>()
+                    }
+                }.awaitAll().forEach { season ->
+                    if (season?.episodes != null) {
+                        allTmdbEpisodes.addAll(season.episodes)
+                    }
+                }
+            }
+            if (allTmdbEpisodes.isEmpty()) return
+
+            // Only consider episodes whose season is explicitly > 0.
+            // Season 0 / specials and null-season episodes are never touched by TMDB.
+            val chronoEpisodes = episodes.filter { (it.season ?: 0) > 0 }
+
+            if (tmdbId == 0x10196) {
+                val s2PlusSiteEpisodes = chronoEpisodes.filter { (it.season ?: 1) >= 2 }
+                val s2PlusTmdbEpisodes = allTmdbEpisodes.drop(25)
+
+                s2PlusSiteEpisodes.forEachIndexed { index, ep ->
+                    val tmdbEp = s2PlusTmdbEpisodes.getOrNull(index) ?: return@forEachIndexed
+                    tmdbEp.name?.takeIf { it.isNotBlank() }?.let { ep.name = it }
+                    tmdbEp.stillPath?.takeIf { it.isNotBlank() }?.let { ep.posterUrl = "$TMDB_IMG$it" }
+                }
+            } else {
+                chronoEpisodes.forEach { ep ->
+                    val sNum = ep.season ?: return@forEach
+                    val epNum = ep.episode ?: return@forEach
+
+                    val tmdbEp = allTmdbEpisodes.find {
+                        it.seasonNumber == sNum && it.episodeNumber == epNum
+                    } ?: return@forEach
+
+                    tmdbEp.name?.takeIf { it.isNotBlank() }?.let { ep.name = it }
+                    tmdbEp.stillPath?.takeIf { it.isNotBlank() }?.let { ep.posterUrl = "$TMDB_IMG$it" }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("Tooniboy", "TMDB episode metadata mapping failed: ${e.message}")
         }
     }
 
