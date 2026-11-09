@@ -101,6 +101,7 @@ class Tooniboy : MainAPI() {
     private val extStreamTape   = StreamTape()
     private val extMixDrop      = MixDrop()
     private val extDoodStream   = DoodStream()
+    private val extLuluvdo      = Luluvdo()
 
     // --- TMDB API Constants ---
     private val TMDB_API = "https://api.themoviedb.org/3"
@@ -598,12 +599,18 @@ class Tooniboy : MainAPI() {
             .filter { !it.contains("youtube.com", ignoreCase = true) && !it.contains("youtu.be", ignoreCase = true) }
             .distinct()
             .sortedBy { url ->
-                // Priority: Ravok first, then VidMoly, then everything else
+                // Playback order:
+                //   1. Ravok (first)
+                //   2. VidMoly (second)
+                //   3. every host that has a custom extractor in Extractors.kt
+                //   4. LAST - unknown hosts, which are handed over to
+                //      CloudStream's built-in extractor system (loadExtractor)
                 // (stable sort keeps DOM order inside each group)
                 when {
                     url.contains("ravok", ignoreCase = true) -> 0
                     url.contains("vidmoly", ignoreCase = true) -> 1
-                    else -> 2
+                    isCustomExtractorHost(url) -> 2
+                    else -> 3
                 }
             }
 
@@ -624,6 +631,25 @@ class Tooniboy : MainAPI() {
         }
 
         return success
+    }
+
+    /**
+     * True when the iframe host belongs to one of the custom extractors in
+     * Extractors.kt. Unknown hosts (voe, vidara, vidstreaming, ...) return
+     * false and are handed to CloudStream's built-in loadExtractor() last.
+     */
+    private fun isCustomExtractorHost(url: String): Boolean {
+        val u = url.lowercase()
+        return u.contains("abyssplayer") || u.contains("playhydrax") ||
+            u.contains("rubystm") || u.contains("streamruby") ||
+            u.contains("filesforever") || u.contains("cloudy.upns") ||
+            u.contains("blakite") || u.contains("p2pplay") || u.contains("upns.one") ||
+            u.contains("hanerix") || u.contains("streamhg") ||
+            u.contains("morencius") || u.contains("earnvids") ||
+            u.contains("bysetayico") || u.contains("byse") ||
+            u.contains("luluvdo") || u.contains("lulustream") ||
+            u.contains("streamtape") || u.contains("mixdrop") ||
+            u.contains("dood")
     }
 
     /**
@@ -675,6 +701,9 @@ class Tooniboy : MainAPI() {
                 }
                 lowerUrl.contains("bysetayico") || lowerUrl.contains("byse") -> {
                     extByse.getUrl(url, referer, subtitleCallback, callback); true
+                }
+                lowerUrl.contains("luluvdo") || lowerUrl.contains("lulustream") -> {
+                    extLuluvdo.getUrl(url, referer, subtitleCallback, callback); true
                 }
                 lowerUrl.contains("streamtape") -> {
                     extStreamTape.getUrl(url, referer, subtitleCallback, callback); true

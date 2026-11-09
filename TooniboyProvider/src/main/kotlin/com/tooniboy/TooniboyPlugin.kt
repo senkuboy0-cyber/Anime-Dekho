@@ -21,6 +21,7 @@ class TooniboyPlugin : BasePlugin() {
         registerExtractorAPI(FilesForever())
         registerExtractorAPI(Streamhg())
         registerExtractorAPI(Earnvids())
+        registerExtractorAPI(Luluvdo())
         registerExtractorAPI(Byse())
         registerExtractorAPI(StreamTape())
         registerExtractorAPI(MixDrop())

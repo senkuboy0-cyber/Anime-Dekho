@@ -26,17 +26,17 @@ import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 // ═════════════════════════════════════════════════════════════════════
-// Tooniboy Extractors (14 total)
+// Tooniboy Extractors (15 total)
 //
 // Direct iframe servers on tooniboy.xyz pages:
 //   1. Ravok        - ravok.buzz            (top priority)
-//   2. StreamRuby   - rubystm.com
+//   2. StreamRuby   - rubystm.com           (redirects to nuvorel.top)
 //   3. VidMolyNet   - vidmoly.net
 //   4. Abyss        - abyssplayer.com
 //   5. Cloudy       - cloudy.upns.one
-//   6. Blakite      - blakiteapi.xyz        (rumble CDN multi-quality)
+//   6. Blakite      - blakiteapi.xyz        (rumble CDN, quality from API JSON)
 //
-// FilesForever system (embed -> embedhelper2.php -> 7 mirrors):
+// FilesForever system (embed -> embedhelper2.php -> 8 mirrors):
 //   7. FilesForever - filesforever.link     (main router)
 //   8. Streamhg     - hanerix.com           (mirror key: smwh)
 //   9. UpnsPlayer   - upns.one / p2pplay    (mirror key: strmp2)
@@ -45,6 +45,7 @@ import javax.crypto.spec.SecretKeySpec
 //  12. StreamTape   - streamtape.site       (mirror key: strmtp)
 //  13. MixDrop      - mixdrop.ag            (mirror key: mxdp)
 //  14. DoodStream   - dood.li               (mirror key: ddstm)
+//  15. Luluvdo      - luluvdo.com           (mirror key: llstm)
 //
 // Unknown iframe hosts (voe, vidara, vidstreaming, ...) are NOT handled
 // here - the provider routes them to CloudStream's built-in loadExtractor().
@@ -169,7 +170,15 @@ class Abyss : ExtractorApi() {
 }
 
 // ─────────────────────────────────────────────────────────────
-// STREAMRUBY -> rubystm.com (/dl POST + JS unpack)
+// STREAMRUBY -> rubystm.com (/dl POST on the redirected domain)
+// rubystm.com now 302-redirects to the live player domain
+// (e.g. nuvorel.top). Verified live flow:
+//  1. GET  /e/{code}.html     -> follow redirect, keep final domain
+//  2. POST {finalDomain}/dl   op=embed&file_code={code}&auto=1&referer=...
+//     -> plain JWPlayer setup page (NO packed JS anymore):
+//        sources: [{file:"https://...streamruby.net/hls2/.../master.m3u8?..."}]
+//        tracks : [{file:"..._sli.vtt", kind:"thumbnails"},
+//                  {file:"..._eng.vtt", label:"English", kind:"captions"}]
 // ─────────────────────────────────────────────────────────────
 class StreamRuby : ExtractorApi() {
     override var name = "StreamRuby"
@@ -185,35 +194,43 @@ class StreamRuby : ExtractorApi() {
         val fileCode = url.substringAfterLast("/e/").substringBefore(".html")
         if (fileCode.isBlank()) return
 
-        app.get("$mainUrl/e/$fileCode.html", referer = referer ?: mainUrl)
+        // Follow the redirect to the live player domain and POST /dl there
+        val embedRes = app.get("$mainUrl/e/$fileCode.html", referer = referer ?: mainUrl)
+        val playerBase = try {
+            val u = URI(embedRes.url)
+            "${u.scheme}://${u.host}"
+        } catch (e: Exception) {
+            mainUrl
+        }
 
         val html = app.post(
-            url = "$mainUrl/dl",
+            url = "$playerBase/dl",
             data = mapOf(
                 "op" to "embed",
                 "file_code" to fileCode,
                 "auto" to "1",
                 "referer" to (referer ?: "")
             ),
-            referer = "$mainUrl/e/$fileCode.html"
+            referer = embedRes.url
         ).text
 
-        val packed = Regex("""eval\(function\(p,a,c,k,e,d\)[\s\S]+?'\|'\)\)""")
-            .find(html)?.value ?: return
-        val unpacked = JsUnpacker(packed).unpack() ?: return
-
         val m3u8 = Regex("""file\s*:\s*"(https?://[^"]+\.m3u8[^"]*)"""")
-            .find(unpacked)?.groupValues?.get(1) ?: return
+            .find(html)?.groupValues?.get(1) ?: return
 
-        Regex("""file\s*:\s*"(https?://[^"]+_([a-z]{2,3})\.vtt[^"]*)""[\s\S]+?kind\s*:\s*"captions"""")
-            .findAll(unpacked).forEach { match ->
-                subtitleCallback(SubtitleFile(match.groupValues[2], match.groupValues[1]))
+        // tracks: only kind "captions" - skip the "thumbnails" preview track
+        Regex("""\{[^{}]*file\s*:\s*"(https?://[^"]+\.vtt[^"]*)"[^{}]*\}""").findAll(html)
+            .forEach { track ->
+                val obj = track.groupValues[0]
+                if (!obj.contains("captions", ignoreCase = true)) return@forEach
+                val label = Regex("""label\s*:\s*"([^"]*)"""").find(obj)
+                    ?.groupValues?.get(1)?.takeIf { it.isNotBlank() } ?: "English"
+                subtitleCallback(SubtitleFile(label, track.groupValues[1]))
             }
 
         callback(
             newExtractorLink(source = name, name = name, url = m3u8, type = ExtractorLinkType.M3U8) {
-                this.referer = mainUrl
-                this.quality = Qualities.Unknown.value
+                this.referer = playerBase
+                this.quality = detectQualityFromPage(html)
             }
         )
     }
@@ -395,12 +412,17 @@ open class UpnsPlayer : ExtractorApi() {
 //  1. GET {mainUrl}/api/get.php?id={uniqueId}&tmdbId={tmdbId}
 //     (movie embeds have no uniqueId -> only ?tmdbId={tmdbId})
 //     -> JSON { success, data:{ dataId, qid, quality, format, ranges } }
-//  2. format M3U8: ranges = "39656448-39670373 (240p)\n..."
+//  2. Quality names are NEVER written by hand - they come straight
+//     from the API JSON: every line of "ranges" is
+//        "byteFrom-byteTo (NNNp)"
+//     and the standalone "quality" field holds the current label.
+//  3. Each parsed range is paired with the fixed CDN path code at the
+//     same position (CDN_PATH_CODES = ascending quality order; these
+//     are URL path parts, not quality labels):
 //     url = https://hugh.cdn.rumble.cloud/video/{dataId}.{code}.tar
 //           ?r_file=chunklist.m3u8&r_type=application%2Fvnd.apple.mpegurl
-//           [&r_range={range}]
-//     quality codes: 240p=oaa 360p=baa 480p=caa 720p=gaa 1080p=haa
-//  3. format MP4: url = .../{dataId}.{code}.mp4 (qid fallback)
+//           &r_range={range}
+//     MP4 format uses .../{dataId}.{code}.mp4 instead.
 //  4. No subtitles are served by this host.
 // ─────────────────────────────────────────────────────────────
 class Blakite : ExtractorApi() {
@@ -410,8 +432,7 @@ class Blakite : ExtractorApi() {
 
     companion object {
         private const val CDN_BASE = "https://hugh.cdn.rumble.cloud/video/"
-        private val QUALITY_CODES = listOf("oaa", "baa", "caa", "gaa", "haa")
-        private val QUALITY_LABELS = listOf("240p", "360p", "480p", "720p", "1080p")
+        private val CDN_PATH_CODES = listOf("oaa", "baa", "caa", "gaa", "haa")
         private val RANGE_REGEX = Regex("""(\d+-\d+)\s*\((\d+p)\)""")
     }
 
@@ -448,48 +469,47 @@ class Blakite : ExtractorApi() {
 
         val data = response.data ?: return
         val dataId = data.dataId?.takeIf { it.isNotBlank() } ?: return
-
-        // Build the quality list: prefer explicit ranges, fall back to qid count
-        data class QualityEntry(val label: String, val code: String, val range: String?)
-
-        val qualityList = mutableListOf<QualityEntry>()
-        if (data.format.equals("M3U8", ignoreCase = true) && !data.ranges.isNullOrBlank()) {
-            val rangeMap = RANGE_REGEX.findAll(data.ranges)
-                .associate { it.groupValues[2] to it.groupValues[1] }
-            for ((index, label) in QUALITY_LABELS.withIndex()) {
-                rangeMap[label]?.let { range ->
-                    qualityList.add(QualityEntry(label, QUALITY_CODES[index], range))
-                }
-            }
-        }
-        if (qualityList.isEmpty()) {
-            val maxIndex = minOf(data.qid ?: QUALITY_LABELS.size, QUALITY_LABELS.size) - 1
-            for (i in 0..maxIndex) {
-                qualityList.add(QualityEntry(QUALITY_LABELS[i], QUALITY_CODES[i], null))
-            }
-        }
-
         val isHls = data.format.equals("M3U8", ignoreCase = true)
-        for (q in qualityList) {
-            val streamUrl = if (isHls) {
-                CDN_BASE + dataId + "." + q.code +
-                    ".tar?r_file=chunklist.m3u8&r_type=application%2Fvnd.apple.mpegurl" +
-                    (q.range?.let { "&r_range=$it" } ?: "")
-            } else {
-                CDN_BASE + dataId + "." + q.code + ".mp4"
-            }
 
+        fun emit(streamUrl: String, label: String?) {
             callback.invoke(
                 newExtractorLink(
                     source = name,
-                    name = "$name [${q.label}]",
+                    name = name,
                     url = streamUrl,
                     type = if (isHls) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                 ) {
-                    this.quality = getQualityFromName(q.label)
                     this.referer = "$mainUrl/"
+                    this.quality = label?.let { getQualityFromName(it) }
+                        ?: Qualities.Unknown.value
                 }
             )
+        }
+
+        // Quality labels parsed from the API JSON itself - never hardcoded.
+        val renditions = RANGE_REGEX.findAll(data.ranges.orEmpty())
+            .map { it.groupValues[2] to it.groupValues[1] } // label to byte range
+            .sortedBy { it.first.removeSuffix("p").toIntOrNull() ?: 0 }
+            .toList()
+
+        if (renditions.isEmpty()) {
+            // No ranges in the JSON: single link, label from the "quality" field
+            val codeIndex = (data.qid ?: 1).coerceIn(1, CDN_PATH_CODES.size) - 1
+            val streamUrl = if (isHls)
+                "$CDN_BASE$dataId.${CDN_PATH_CODES[codeIndex]}.tar?r_file=chunklist.m3u8&r_type=application%2Fvnd.apple.mpegurl"
+            else
+                "$CDN_BASE$dataId.${CDN_PATH_CODES[codeIndex]}.mp4"
+            emit(streamUrl, data.quality?.takeIf { it.isNotBlank() })
+            return
+        }
+
+        renditions.forEachIndexed { index, (label, range) ->
+            val code = CDN_PATH_CODES.getOrNull(index) ?: return@forEachIndexed
+            val streamUrl = if (isHls)
+                "$CDN_BASE$dataId.$code.tar?r_file=chunklist.m3u8&r_type=application%2Fvnd.apple.mpegurl&r_range=$range"
+            else
+                "$CDN_BASE$dataId.$code.mp4"
+            emit(streamUrl, label)
         }
     }
 
@@ -516,7 +536,7 @@ class Blakite : ExtractorApi() {
 //         -> 302 chain -> player origin e.g. https://pro.iqsmartgames.com/svid/{token}
 //  2. POST {playerOrigin}/embedhelper2.php
 //         sid={sid}&UserFavSite=&currentDomain={playerOrigin host}
-//     -> JSON { sources:{smwh,strmp2,flmn,strmtp,mxdp,ddstm,flls}, mresult: base64 }
+//     -> JSON { sources:{smwh,strmp2,flmn,strmtp,mxdp,ddstm,flls,llstm}, mresult: base64 }
 //  3. mresult decoded -> {"smwh":"id","strmp2":"id", ...}
 //  4. iframe URL = sources[key].siteUrl + mresult[key] + embedSuffix
 //  5. Route each mirror to its custom extractor (never to loadExtractor):
@@ -527,6 +547,7 @@ class Blakite : ExtractorApi() {
 //     strmtp StreamTape  streamtape.site/e/{id}/
 //     mxdp   MixDrop     mixdrop.ag/e/{id}
 //     ddstm  DoodStream  dood.li/e/{id}
+//     llstm  Luluvdo     luluvdo.com/e/{id}
 // ─────────────────────────────────────────────────────────────
 class FilesForever : ExtractorApi() {
     override var name = "FilesForever"
@@ -677,6 +698,15 @@ class FilesForever : ExtractorApi() {
                 Log.e(name, "DoodStream failed: ${e.message}")
             }
         }
+
+        // llstm = Luluvdo
+        mirrors["llstm"]?.takeIf { it.isNotBlank() }?.let { id ->
+            try {
+                Luluvdo().getUrl(mirrorUrl("llstm", id, "https://luluvdo.com/e/"), referer, subtitleCallback, callback)
+            } catch (e: Exception) {
+                Log.e(name, "Luluvdo failed: ${e.message}")
+            }
+        }
     }
 
     protected fun getHost(url: String): String =
@@ -702,9 +732,40 @@ class FilesForever : ExtractorApi() {
     )
 }
 
+/**
+ * Best-effort quality detection from a mirror embed page.
+ * Most of these hosts print the release name in the page head, e.g.
+ *   <title>Movie 1994 720p HD BDRip ...</title>
+ *   <meta name="og:title" content="Movie_1994_1080p_...mkv.mp4">
+ *   <meta name="description" content="Movie 1994 480p BDRip ...">
+ * The real quality of the stream is read from there so CloudStream can
+ * display it as the quality label of the link. Returns Unknown when the
+ * page carries no quality info (e.g. MixDrop).
+ */
+private fun detectQualityFromPage(html: String): Int {
+    Regex("""<title[^>]*>([^<]+)</title>""", RegexOption.IGNORE_CASE).find(html)
+        ?.groupValues?.get(1)
+        ?.let { title ->
+            Regex("""(\d{3,4})\s*p\b""", RegexOption.IGNORE_CASE).find(title)?.let {
+                return getQualityFromName(it.groupValues[1] + "p")
+            }
+        }
+    Regex("""<meta[^>]+(?:name|property)\s*=\s*["'](og:title|description)["'][^>]*>""", RegexOption.IGNORE_CASE)
+        .findAll(html)
+        .forEach { tag ->
+            val content = Regex("""content\s*=\s*["']([^"']+)['"]""", RegexOption.IGNORE_CASE)
+                .find(tag.value)?.groupValues?.get(1) ?: return@forEach
+            Regex("""(\d{3,4})\s*p\b""").find(content)?.let {
+                return getQualityFromName(it.groupValues[1] + "p")
+            }
+        }
+    return Qualities.Unknown.value
+}
+
 // ─────────────────────────────────────────────────────────────
 // StreamHG mirror -> hanerix.com
 // Unpack JWPlayer -> m3u8 + .vtt subtitles
+// Quality is read from the embed page title (e.g. "... 720p HD BDRip")
 // ─────────────────────────────────────────────────────────────
 open class Streamhg : ExtractorApi() {
     override var name = "Streamhg"
@@ -744,7 +805,7 @@ open class Streamhg : ExtractorApi() {
         callback.invoke(
             newExtractorLink(name, name, m3u8, ExtractorLinkType.M3U8) {
                 this.referer = mainUrl
-                this.quality = Qualities.Unknown.value
+                this.quality = detectQualityFromPage(html)
             }
         )
     }
@@ -754,6 +815,12 @@ open class Streamhg : ExtractorApi() {
 class Earnvids : Streamhg() {
     override var name = "Earnvids"
     override var mainUrl = "https://morencius.com"
+}
+
+// Luluvdo mirror -> luluvdo.com (same JWPlayer unpack family)
+class Luluvdo : Streamhg() {
+    override var name = "Luluvdo"
+    override var mainUrl = "https://luluvdo.com"
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -922,6 +989,7 @@ class Byse : ExtractorApi() {
 //       '//streamtape.s' + ('xcdite/get_video?id=...').substring(2).substring(1)
 // Apply the same substring operations and prefix "https:".
 // Verified live: https://streamtape.site/get_video?id=...&expires=...&ip=...&token=...
+// Quality is read from the og:title meta tag (e.g. "..._1994_1080p_...mkv.mp4")
 // ─────────────────────────────────────────────────────────────
 class StreamTape : ExtractorApi() {
     override var name = "StreamTape"
@@ -962,7 +1030,7 @@ class StreamTape : ExtractorApi() {
         callback(
             newExtractorLink(name, name, url = finalUrl, type = ExtractorLinkType.VIDEO) {
                 this.referer = mainUrl
-                this.quality = Qualities.Unknown.value
+                this.quality = detectQualityFromPage(html)
             }
         )
     }
@@ -1033,7 +1101,8 @@ class MixDrop : ExtractorApi() {
 //  1) GET embed page -> find /pass_md5/{token}/{file} path
 //  2) GET {mainUrl}/pass_md5/... (Referer: mainUrl) -> direct CDN url text
 //  3) final link = direct url + "?" + random 10-char token
-// Verified live: pass_md5 -> https://*.cloudatacdn.com/...
+// Verified live: pass_md5 -> https://*.cloudatacdn.com/
+// Quality is read from the embed page title (e.g. "... 1080p HD BDRip ...")
 // ─────────────────────────────────────────────────────────────
 class DoodStream : ExtractorApi() {
     override var name = "DoodStream"
@@ -1070,7 +1139,7 @@ class DoodStream : ExtractorApi() {
         callback(
             newExtractorLink(name, name, url = finalUrl, type = ExtractorLinkType.VIDEO) {
                 this.referer = "$mainUrl/"
-                this.quality = Qualities.Unknown.value
+                this.quality = detectQualityFromPage(res)
             }
         )
     }
