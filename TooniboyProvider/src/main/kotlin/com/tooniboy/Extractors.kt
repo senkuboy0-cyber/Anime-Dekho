@@ -471,7 +471,7 @@ class Blakite : ExtractorApi() {
         val dataId = data.dataId?.takeIf { it.isNotBlank() } ?: return
         val isHls = data.format.equals("M3U8", ignoreCase = true)
 
-        fun emit(streamUrl: String, label: String?) {
+        suspend fun emit(streamUrl: String, label: String?) {
             callback.invoke(
                 newExtractorLink(
                     source = name,

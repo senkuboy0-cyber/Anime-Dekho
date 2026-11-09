@@ -323,9 +323,15 @@ class Tooniboy : MainAPI() {
 
     /**
      * Parses all listing cards on a search / category / related page.
+     *
+     * Scoped to <main class="main-site"> on purpose: the site renders two
+     * sidebar widgets ("Random Series" and "Random Movies") inside
+     * <aside class="sidebar">, and they reuse the SAME article.post.dfx.fcl.movies
+     * markup. Without this scope, every search/category page would inject
+     * ~10 random unrelated cards into the real results.
      */
     private fun parseCardList(document: org.jsoup.nodes.Document): List<SearchResponse> {
-        val elements = document.select("article.post.dfx.fcl.movies")
+        val elements = document.select("main.main-site article.post.dfx.fcl.movies")
         val seen = mutableSetOf<String>()
 
         return elements.mapNotNull { el ->
