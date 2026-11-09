@@ -7,14 +7,23 @@ import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 class TooniboyPlugin : BasePlugin() {
     override fun load() {
         registerMainAPI(Tooniboy())
-        registerExtractorAPI(Zephyrflick())
+
+        // Direct iframe servers on tooniboy.xyz
+        registerExtractorAPI(Ravok())
         registerExtractorAPI(Abyss())
         registerExtractorAPI(StreamRuby())
-        registerExtractorAPI(Cloudy())
-        registerExtractorAPI(GDMirrorbot())
-        registerExtractorAPI(GDMirrorbotFHD())
-        registerExtractorAPI(EmTurboVid())
         registerExtractorAPI(VidMolyNet())
+        registerExtractorAPI(Cloudy())
+        registerExtractorAPI(UpnsPlayer())
         registerExtractorAPI(Blakite())
+
+        // FilesForever system + all its mirror extractors
+        registerExtractorAPI(FilesForever())
+        registerExtractorAPI(Streamhg())
+        registerExtractorAPI(Earnvids())
+        registerExtractorAPI(Byse())
+        registerExtractorAPI(StreamTape())
+        registerExtractorAPI(MixDrop())
+        registerExtractorAPI(DoodStream())
     }
 }
