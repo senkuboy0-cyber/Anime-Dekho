@@ -102,6 +102,7 @@ class Tooniboy : MainAPI() {
     private val extMixDrop      = MixDrop()
     private val extDoodStream   = DoodStream()
     private val extLuluvdo      = Luluvdo()
+    private val extVidara       = Vidara()
 
     // --- TMDB API Constants ---
     private val TMDB_API = "https://api.themoviedb.org/3"
@@ -649,7 +650,8 @@ class Tooniboy : MainAPI() {
         return u.contains("abyssplayer") || u.contains("playhydrax") ||
             u.contains("rubystm") || u.contains("streamruby") ||
             u.contains("filesforever") || u.contains("cloudy.upns") ||
-            u.contains("blakite") || u.contains("p2pplay") || u.contains("upns.one") ||
+            u.contains("blakite") || u.contains("vidara") ||
+            u.contains("p2pplay") || u.contains("upns.one") ||
             u.contains("hanerix") || u.contains("streamhg") ||
             u.contains("morencius") || u.contains("earnvids") ||
             u.contains("bysetayico") || u.contains("byse") ||
@@ -695,6 +697,9 @@ class Tooniboy : MainAPI() {
                 }
                 lowerUrl.contains("blakite") -> {
                     extBlakite.getUrl(url, referer, subtitleCallback, callback); true
+                }
+                lowerUrl.contains("vidara") -> {
+                    extVidara.getUrl(url, referer, subtitleCallback, callback); true
                 }
                 lowerUrl.contains("p2pplay") || lowerUrl.contains("upns.one") -> {
                     extUpns.getUrl(url, referer, subtitleCallback, callback); true

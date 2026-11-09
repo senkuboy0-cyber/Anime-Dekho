@@ -16,6 +16,7 @@ class TooniboyPlugin : BasePlugin() {
         registerExtractorAPI(Cloudy())
         registerExtractorAPI(UpnsPlayer())
         registerExtractorAPI(Blakite())
+        registerExtractorAPI(Vidara())
 
         // FilesForever system + all its mirror extractors
         registerExtractorAPI(FilesForever())

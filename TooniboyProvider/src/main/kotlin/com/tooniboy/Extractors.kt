@@ -26,7 +26,7 @@ import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 // ═════════════════════════════════════════════════════════════════════
-// Tooniboy Extractors (15 total)
+// Tooniboy Extractors (16 total)
 //
 // Direct iframe servers on tooniboy.xyz pages:
 //   1. Ravok        - ravok.buzz            (top priority)
@@ -35,19 +35,20 @@ import javax.crypto.spec.SecretKeySpec
 //   4. Abyss        - abyssplayer.com
 //   5. Cloudy       - cloudy.upns.one
 //   6. Blakite      - blakiteapi.xyz        (rumble CDN, quality from API JSON)
+//   7. Vidara       - vidara.to             (POST /api/stream -> streaming_url)
 //
 // FilesForever system (embed -> embedhelper2.php -> 8 mirrors):
-//   7. FilesForever - filesforever.link     (main router)
-//   8. Streamhg     - hanerix.com           (mirror key: smwh)
-//   9. UpnsPlayer   - upns.one / p2pplay    (mirror key: strmp2)
-//  10. Byse         - bysetayico.com        (mirror key: flmn)
-//  11. Earnvids     - morencius.com         (mirror key: flls)
-//  12. StreamTape   - streamtape.site       (mirror key: strmtp)
-//  13. MixDrop      - mixdrop.ag            (mirror key: mxdp)
-//  14. DoodStream   - dood.li               (mirror key: ddstm)
-//  15. Luluvdo      - luluvdo.com           (mirror key: llstm)
+//   8. FilesForever - filesforever.link     (main router)
+//   9. Streamhg     - hanerix.com           (mirror key: smwh)
+//  10. UpnsPlayer   - upns.one / p2pplay    (mirror key: strmp2)
+//  11. Byse         - bysetayico.com        (mirror key: flmn)
+//  12. Earnvids     - morencius.com         (mirror key: flls)
+//  13. StreamTape   - streamtape.site       (mirror key: strmtp)
+//  14. MixDrop      - mixdrop.ag            (mirror key: mxdp)
+//  15. DoodStream   - dood.li               (mirror key: ddstm)
+//  16. Luluvdo      - luluvdo.com           (mirror key: llstm)
 //
-// Unknown iframe hosts (voe, vidara, vidstreaming, ...) are NOT handled
+// Unknown iframe hosts (voe, vidstreaming, ...) are NOT handled
 // here - the provider routes them to CloudStream's built-in loadExtractor().
 // ═════════════════════════════════════════════════════════════════════
 
@@ -231,6 +232,12 @@ class StreamRuby : ExtractorApi() {
             newExtractorLink(source = name, name = name, url = m3u8, type = ExtractorLinkType.M3U8) {
                 this.referer = playerBase
                 this.quality = detectQualityFromPage(html)
+                // streamruby.net rejects non-browser user agents (okhttp -> 403),
+                // so the playback request must carry a desktop UA
+                this.headers = mapOf(
+                    "User-Agent" to USER_AGENT,
+                    "Referer" to "$playerBase/"
+                )
             }
         )
     }
@@ -266,6 +273,10 @@ class VidMolyNet : ExtractorApi() {
             newExtractorLink(name, name, url = m3u8, type = ExtractorLinkType.M3U8) {
                 this.referer = mainUrl
                 this.quality = Qualities.Unknown.value
+                this.headers = mapOf(
+                    "User-Agent" to USER_AGENT,
+                    "Referer" to "$mainUrl/"
+                )
             }
         )
     }
@@ -806,6 +817,12 @@ open class Streamhg : ExtractorApi() {
             newExtractorLink(name, name, m3u8, ExtractorLinkType.M3U8) {
                 this.referer = mainUrl
                 this.quality = detectQualityFromPage(html)
+                // the stream CDN (tnmr.org etc.) rejects non-browser user
+                // agents (okhttp -> 403), so carry a desktop UA explicitly
+                this.headers = mapOf(
+                    "User-Agent" to USER_AGENT,
+                    "Referer" to "$mainUrl/"
+                )
             }
         )
     }
@@ -1031,6 +1048,7 @@ class StreamTape : ExtractorApi() {
             newExtractorLink(name, name, url = finalUrl, type = ExtractorLinkType.VIDEO) {
                 this.referer = mainUrl
                 this.quality = detectQualityFromPage(html)
+                this.headers = mapOf("User-Agent" to USER_AGENT)
             }
         )
     }
@@ -1091,6 +1109,7 @@ class MixDrop : ExtractorApi() {
             newExtractorLink(name, name, url = finalUrl, type = ExtractorLinkType.VIDEO) {
                 this.referer = mainUrl
                 this.quality = Qualities.Unknown.value
+                this.headers = mapOf("User-Agent" to USER_AGENT)
             }
         )
     }
@@ -1140,6 +1159,10 @@ class DoodStream : ExtractorApi() {
             newExtractorLink(name, name, url = finalUrl, type = ExtractorLinkType.VIDEO) {
                 this.referer = "$mainUrl/"
                 this.quality = detectQualityFromPage(res)
+                this.headers = mapOf(
+                    "User-Agent" to USER_AGENT,
+                    "Referer" to "$mainUrl/"
+                )
             }
         )
     }
@@ -1148,4 +1171,80 @@ class DoodStream : ExtractorApi() {
         val chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
         return (1..length).map { chars.random() }.joinToString("")
     }
+}
+
+// ─────────────────────────────────────────────────────────────
+// VIDARA -> vidara.to/e/{code}
+// Verified live flow:
+//  1. code = last path segment of the /e/{code} url
+//  2. POST {mainUrl}/api/stream  (JSON body)
+//        { "filecode": code, "device": "web", "codecs": [] }
+//     -> { streaming_url: "https://.../master.m3u8?token=...",
+//          title, subtitles: [{type, language, file_path}], default_sub_lang }
+//     streaming_url is the HLS master playlist; subtitles type 0 are
+//     caption tracks (file_path + language).
+//  3. The stream CDN rejects non-browser user agents (okhttp -> 404),
+//     so the link MUST carry a desktop User-Agent header.
+// ─────────────────────────────────────────────────────────────
+class Vidara : ExtractorApi() {
+    override var name = "Vidara"
+    override var mainUrl = "https://vidara.to"
+    override val requiresReferer = false
+
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val fileCode = url.trimEnd('/').substringAfterLast('/')
+        if (fileCode.isBlank()) return
+
+        val res = try {
+            app.post(
+                url = "$mainUrl/api/stream",
+                headers = mapOf(
+                    "User-Agent" to USER_AGENT,
+                    "Referer" to "$mainUrl/e/$fileCode",
+                    "Content-Type" to "application/json"
+                ),
+                requestBody = "{\"filecode\":\"$fileCode\",\"device\":\"web\",\"codecs\":[]}".toRequestBody("application/json".toMediaType())
+            ).parsedSafe<VidaraResponse>()
+        } catch (e: Exception) {
+            Log.e(name, "api/stream failed: ${e.message}")
+            null
+        } ?: return
+
+        val streamUrl = res.streaming_url?.takeIf { it.startsWith("http") } ?: return
+
+        // type 0 = caption track
+        res.subtitles.orEmpty().forEach { sub ->
+            val subUrl = sub.file_path?.takeIf { it.startsWith("http") } ?: return@forEach
+            subtitleCallback(SubtitleFile(sub.language?.takeIf { it.isNotBlank() } ?: "Subtitle", subUrl))
+        }
+
+        callback(
+            newExtractorLink(source = name, name = name, url = streamUrl, type = ExtractorLinkType.M3U8) {
+                this.referer = "$mainUrl/"
+                this.quality = detectQualityFromPage(res.title.orEmpty())
+                this.headers = mapOf(
+                    "User-Agent" to USER_AGENT,
+                    "Referer" to "$mainUrl/"
+                )
+            }
+        )
+    }
+
+    data class VidaraResponse(
+        val streaming_url: String? = null,
+        val title: String? = null,
+        val subtitles: List<VidaraSubtitle>? = null,
+        val default_sub_lang: String? = null
+    )
+
+    data class VidaraSubtitle(
+        val type: Int? = null,
+        val language: String? = null,
+        val file_path: String? = null
+    )
 }
