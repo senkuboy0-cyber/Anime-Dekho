@@ -609,6 +609,9 @@ class Tooniboy : MainAPI() {
      *   so Season 0 / specials from TMDB are never requested.
      * - Fetches each valid season in parallel, then for every site Episode with
      *   season > 0 looks up the matching TMDB episode by (seasonNumber, episodeNumber).
+     * - When the exact match fails (e.g. the show keeps all its seasons merged
+     *   inside a single TMDB season), falls back to sequential position matching
+     *   against the flattened TMDB episode list.
      * - Episodes in Season 0 (or with null season) are left untouched — they keep
      *   the site-provided name and thumbnail.
      * - If anything fails, the original site values are preserved.
@@ -637,9 +640,12 @@ class Tooniboy : MainAPI() {
             }
             if (allTmdbEpisodes.isEmpty()) return
 
-            // Only consider episodes whose season is explicitly > 0.
+            // Only consider episodes whose season is explicitly > 0, sorted chronologically
+            // (season, then episode) so positional fallback aligns with the flat TMDB list.
             // Season 0 / specials and null-season episodes are never touched by TMDB.
-            val chronoEpisodes = episodes.filter { (it.season ?: 0) > 0 }
+            val chronoEpisodes = episodes
+                .filter { (it.season ?: 0) > 0 }
+                .sortedWith(compareBy({ it.season ?: 0 }, { it.episode ?: 0 }))
 
             if (tmdbId == 0x10196) {
                 val s2PlusSiteEpisodes = chronoEpisodes.filter { (it.season ?: 1) >= 2 }
@@ -651,13 +657,17 @@ class Tooniboy : MainAPI() {
                     tmdbEp.stillPath?.takeIf { it.isNotBlank() }?.let { ep.posterUrl = "$TMDB_IMG$it" }
                 }
             } else {
-                chronoEpisodes.forEach { ep ->
-                    val sNum = ep.season ?: return@forEach
-                    val epNum = ep.episode ?: return@forEach
+                chronoEpisodes.forEachIndexed { index, ep ->
+                    val sNum = ep.season ?: return@forEachIndexed
+                    val epNum = ep.episode ?: return@forEachIndexed
 
+                    // Exact (season, episode) match first; if the show keeps all its seasons
+                    // merged inside a single TMDB season, fall back to sequential position
+                    // matching against the flattened TMDB episode list.
                     val tmdbEp = allTmdbEpisodes.find {
                         it.seasonNumber == sNum && it.episodeNumber == epNum
-                    } ?: return@forEach
+                    } ?: allTmdbEpisodes.getOrNull(index)
+                        ?: return@forEachIndexed
 
                     tmdbEp.name?.takeIf { it.isNotBlank() }?.let { ep.name = it }
                     tmdbEp.stillPath?.takeIf { it.isNotBlank() }?.let { ep.posterUrl = "$TMDB_IMG$it" }
