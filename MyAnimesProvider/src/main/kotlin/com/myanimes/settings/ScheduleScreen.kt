@@ -615,7 +615,13 @@ class ScheduleScreen(context: Context) : Dialog(context, android.R.style.Theme_B
             })
         }
 
-        val dayItems = allItems.filter { showsOnDay(it, day, selectedDateKey) }
+        val dayItems = allItems
+            .filter { showsOnDay(it, day, selectedDateKey) }
+            // earliest release first; items without a time go last
+            .sortedBy { item ->
+                parseReleaseTime(item.releaseTime)?.let { (h, m) -> h * 60 + m }
+                    ?: Int.MAX_VALUE
+            }
         if (dayItems.isEmpty()) {
             listContainer.addView(text("No releases scheduled for this day.", 13f, TEXT_SECONDARY).apply {
                 setPadding(dp(4), dp(8), dp(4), dp(8))
@@ -634,6 +640,7 @@ class ScheduleScreen(context: Context) : Dialog(context, android.R.style.Theme_B
     private fun scheduleCard(item: ScheduleItem): View {
         val card = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(12), dp(12), dp(12), dp(12))
             background = round(CARD_2, 18)
         }
@@ -653,7 +660,6 @@ class ScheduleScreen(context: Context) : Dialog(context, android.R.style.Theme_B
 
         val col = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_VERTICAL
         }
 
         // Live countdown chip on top of the card
@@ -731,7 +737,9 @@ class ScheduleScreen(context: Context) : Dialog(context, android.R.style.Theme_B
             })
         }
 
-        card.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
+        // wrap content so a long two-line title grows the card instead of
+        // pushing the release time out of the visible area
+        card.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
             marginStart = dp(12)
         })
 

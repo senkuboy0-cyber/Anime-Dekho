@@ -321,7 +321,15 @@ private fun urlOrigin(url: String): String? = try {
 // ─────────────────────────────────────────────────────────────
 // StreamHG (also the "smwh" mirror inside FilesForever) and its
 // mirrors. JWPlayer packed script -> master m3u8 + .vtt subs.
-// The quality label is read from the embed page title / meta tags.
+//
+// The embed host rotates its domain through a JS "Loading..." shell:
+// the first response is a stub page that loads /main.js, which decodes
+// a pool of mirror domains from an obfuscated string table and sends
+// the browser to one of them (same path). Without a JS engine the
+// extractor replays that logic statically:
+//   string array -> custom base64 + RC4 -> rotation checksum -> shift
+//   -> ordered decode -> fragment run -> mirror domain candidates
+// No domain is ever hardcoded; the pool is read live from /main.js.
 // ─────────────────────────────────────────────────────────────
 open class Streamhg : ExtractorApi() {
     override var name = "StreamHG"
@@ -335,9 +343,38 @@ open class Streamhg : ExtractorApi() {
         callback: (ExtractorLink) -> Unit
     ) {
         // live origin of the embed page (this family rotates domains)
-        val base = urlOrigin(url) ?: mainUrl
-        val html = app.get(url, referer = referer ?: base).text
+        val origin = urlOrigin(url) ?: mainUrl
+        val path = try {
+            URI(url).rawPath?.takeIf { it.isNotBlank() } ?: "/e/${url.substringAfterLast('/')}"
+        } catch (e: Exception) {
+            "/e/${url.substringAfterLast('/')}"
+        }
 
+        var html = app.get(url, referer = referer ?: origin).text
+        var base = origin
+
+        // Loading shell -> follow the site's own domain rotation
+        if (!html.contains("p,a,c,k,e,d") && html.contains("main.js")) {
+            val resolved = resolveLiveEmbed(origin, path)
+            if (resolved == null) return
+            base = resolved.first
+            html = resolved.second
+        }
+
+        parseEmbedPage(html, base, subtitleCallback, callback)
+    }
+
+    /**
+     * Parses the packed JWPlayer setup of an embed page. The player picks
+     * its source as links.hls4 || links.hls3 || links.hls2, where hls4 is
+     * a path relative to the embed origin; absolute CDN urls are kept as-is.
+     */
+    private suspend fun parseEmbedPage(
+        html: String,
+        base: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
         val packed = Regex("""eval\(function\(p,a,c,k,e,d\)[\s\S]+?\.split\('\|'\)\)\)""")
             .find(html)?.value
             ?: Regex("""eval\(function\(p,a,c,k,e,d\)[\s\S]+?\}\('[\s\S]+?'\.split\('\|'\)""").find(html)?.value
@@ -345,9 +382,20 @@ open class Streamhg : ExtractorApi() {
 
         val unpacked = JsUnpacker(packed).unpack() ?: return
 
-        // master.txt or .m3u8
-        val m3u8 = Regex("""(https?://[^"'\s\\]+(?:master\.txt|master\.m3u8|\.m3u8)[^"'\s\\]*)""")
-            .find(unpacked)?.groupValues?.get(1)
+        // preferred source order of the player itself
+        val hls4 = Regex("""["']hls4["']\s*:\s*"([^"]+)""").find(unpacked)?.groupValues?.get(1)
+        val hls3 = Regex("""["']hls3["']\s*:\s*"([^"]+)""").find(unpacked)?.groupValues?.get(1)
+        val hls2 = Regex("""["']hls2["']\s*:\s*"([^"]+)""").find(unpacked)?.groupValues?.get(1)
+
+        val m3u8 = listOfNotNull(hls4, hls3, hls2)
+            .firstOrNull { it.isNotBlank() }
+            ?.let {
+                if (it.startsWith("http")) it
+                else base.trimEnd('/') + (if (it.startsWith("/")) it else "/$it")
+            }
+            // fall back to any absolute stream url in the script
+            ?: Regex("""(https?://[^"'\s\\]+(?:master\.txt|master\.m3u8|\.m3u8)[^"'\s\\]*)""")
+                .find(unpacked)?.groupValues?.get(1)
             ?: Regex("""file\s*:\s*["'](https?://[^"']+)["']""").find(unpacked)?.groupValues?.get(1)
             ?: return
 
@@ -360,10 +408,13 @@ open class Streamhg : ExtractorApi() {
             subtitleCallback.invoke(SubtitleFile(subtitleName, subtitleUrl))
         }
 
+        val labelled = Regex("""qualityLabels["']?\s*:\s*\{[^}]*?"\d+"\s*:\s*"(\d+)\s*p""", RegexOption.IGNORE_CASE)
+            .find(unpacked)?.groupValues?.get(1)?.toIntOrNull()
+
         callback.invoke(
             newExtractorLink(name, name, m3u8, ExtractorLinkType.M3U8) {
                 this.referer = base
-                this.quality = detectQualityFromPage(html)
+                this.quality = labelled ?: detectQualityFromPage(html)
                 // the stream CDN rejects non-browser user agents
                 // (okhttp -> 403), so carry a desktop UA explicitly
                 this.headers = mapOf(
@@ -373,6 +424,381 @@ open class Streamhg : ExtractorApi() {
             }
         )
     }
+
+    /**
+     * Reads the current mirror pool from the shell page's /main.js and
+     * returns the first mirror that serves a real embed page for [path].
+     */
+    private suspend fun resolveLiveEmbed(origin: String, path: String): Pair<String, String>? {
+        val js = runCatching {
+            app.get("$origin/main.js", referer = "$origin/").text
+        }.getOrNull() ?: return null
+
+        for (mirror in streamHgMirrorCandidates(js)) {
+            if (mirror.equals(origin.substringAfter("//"), true)) continue
+            val mirrorUrl = "https://$mirror$path"
+            val page = runCatching {
+                app.get(mirrorUrl, referer = "$origin/").text
+            }.getOrNull() ?: continue
+            if (page.contains("p,a,c,k,e,d")) return "https://$mirror" to page
+        }
+        return null
+    }
+
+    /** Mirror domain candidates decoded from the obfuscated /main.js table. */
+    private fun streamHgMirrorCandidates(js: String): List<String> {
+        return runCatching {
+            val entries = obfStringArray(js) ?: return emptyList()
+            val decoder = obfDecoderName(js) ?: return emptyList()
+            val wrappers = obfWrappers(js, decoder)
+            if (wrappers.isEmpty()) return emptyList()
+
+            val offset = obfIndexOffset(js, decoder)
+            val rotation = obfRotation(js) ?: return emptyList()
+            val shift = obfRotationShift(entries, rotation, wrappers, offset) ?: return emptyList()
+
+            // decode every wrapper call in source order and keep the longest
+            // run of domain-part fragments
+            val callRe = Regex("""(_0x[0-9a-f]+)\(((?:[^()'"]|'[^']*')*)\)""")
+            val fragRe = Regex("""^[a-z0-9][a-z0-9.\-]{1,13}$""")
+            var best = listOf<String>()
+            var cur = mutableListOf<String>()
+            for (m in callRe.findAll(js)) {
+                val w = wrappers[m.groupValues[1]] ?: continue
+                val args = argTokens(m.groupValues[2])
+                val idxTok = args.getOrNull(w.first)?.trim() ?: continue
+                val keyTok = args.getOrNull(w.second)?.trim()?.trim('\'') ?: continue
+                val idx = hexArg(idxTok) ?: continue
+                val value = obfDecode(entries, idx - w.third, keyTok, offset, shift) ?: continue
+                if (fragRe.matches(value)) {
+                    cur.add(value)
+                    if (cur.size > best.size) best = cur.toList()
+                } else {
+                    cur = mutableListOf()
+                }
+            }
+
+            // join consecutive fragments into every domain-shaped candidate
+            val domRe = Regex("""^(?=.{4,40}$)[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,6}$""")
+            val found = LinkedHashSet<String>()
+            for (i in best.indices) {
+                var acc = ""
+                for (j in i until minOf(best.size, i + 6)) {
+                    acc += best[j]
+                    if (acc.length > 40) break
+                    if (domRe.matches(acc)) found.add(acc)
+                }
+            }
+            // short candidates first: real mirrors beat accidental joins
+            found.sortedBy { it.length }.take(12)
+        }.getOrDefault(emptyList())
+    }
+
+    /** Hex literal of the obfuscator calls: "0x1b3" / "-0x3a". */
+    private fun hexArg(tok: String): Int? {
+        val t = tok.trim().lowercase()
+        val negative = t.startsWith("-")
+        val hex = (if (negative) t.drop(1) else t).removePrefix("0x")
+        if (hex.isEmpty() || hex.any { it !in "0123456789abcdef" }) return null
+        val value = hex.toLongOrNull(16) ?: return null
+        return (if (negative) -value else value).toInt()
+    }
+
+    /** The giant string-array literal of the obfuscator output. */
+    private fun obfStringArray(js: String): List<String>? {
+        val startRe = Regex("""function\s+_0x[0-9a-f]+\s*\(\s*\)\s*\{\s*(?:const|var|let)\s+_0x[0-9a-f]+\s*=\s*\[""")
+        val m = startRe.find(js) ?: return null
+        val open = m.range.last
+        // the array itself may contain ']' inside string literals, so scan
+        // for the first unquoted closing bracket instead of indexOf
+        var inStr: Char? = null
+        var close = -1
+        var i = open + 1
+        while (i < js.length) {
+            val c = js[i]
+            val cur = inStr
+            if (cur != null) {
+                if (c == '\\') { i += 2; continue }
+                if (c == cur) inStr = null
+            } else when (c) {
+                '\'', '"' -> inStr = c
+                ']' -> { close = i; break }
+            }
+            i++
+        }
+        if (close < 0 || close - open < 500) return null
+        val body = js.substring(open + 1, close)
+        val out = mutableListOf<String>()
+        val litRe = Regex("""'((?:[^'\\]|\\.)*)'""")
+        var idx = 0
+        while (true) {
+            val lm = litRe.find(body, idx) ?: break
+            idx = lm.range.last + 1
+            out.add(unescapeJs(lm.groupValues[1]))
+        }
+        return if (out.size > 50) out else null
+    }
+
+    private fun unescapeJs(s: String): String {
+        val sb = StringBuilder(s.length)
+        var i = 0
+        while (i < s.length) {
+            val c = s[i]
+            if (c == '\\' && i + 1 < s.length) {
+                when (s[i + 1]) {
+                    'x' -> {
+                        val hex = s.drop(i + 2).take(2)
+                        hex.toIntOrNull(16)?.let { sb.append(it.toChar()); i += 3 } ?: sb.append(c)
+                    }
+                    'u' -> {
+                        val hex = s.drop(i + 2).take(4)
+                        hex.toIntOrNull(16)?.let { sb.append(it.toChar()); i += 5 } ?: sb.append(c)
+                    }
+                    else -> { sb.append(s[i + 1]); i += 1 }
+                }
+                i += 1
+            } else {
+                sb.append(c)
+                i += 1
+            }
+        }
+        return sb.toString()
+    }
+
+    /** Name of the RC4/base64 decoder function (calls the array function). */
+    private fun obfDecoderName(js: String): String? {
+        val decRe = Regex("""function\s+(_0x[0-9a-f]+)\s*\(\s*_0x[0-9a-f]+\s*,\s*_0x[0-9a-f]+\s*\)\s*\{""")
+        for (m in decRe.findAll(js)) {
+            val open = m.range.last
+            val close = matchBrace(js, open) ?: continue
+            val body = js.substring(m.range.first, close)
+            if (body.length in 101..9000 && Regex("""_0x[0-9a-f]+\(\)""").containsMatchIn(body)) {
+                return m.groupValues[1]
+            }
+        }
+        return null
+    }
+
+    /** Small arg shuffling wrappers around the decoder: (idxArgIdx, keyArgIdx, offset). */
+    private fun obfWrappers(js: String, decoder: String): Map<String, Triple<Int, Int, Int>> {
+        val re = Regex(
+            """function\s+(_0x[0-9a-f]+)\s*\(([^)]*)\)\s*\{\s*return\s+$decoder\s*\(\s*(_0x[0-9a-f]+)\s*(?:-\s*(-?0x[0-9a-fA-F]+))?\s*,\s*(_0x[0-9a-f]+)\s*\)\s*;?\s*\}"""
+        )
+        val out = mutableMapOf<String, Triple<Int, Int, Int>>()
+        for (m in re.findAll(js)) {
+            val offStr = m.groupValues[4].takeIf { it.isNotBlank() } ?: continue
+            val argNames = m.groupValues[2].split(',').map { it.trim() }
+            val magnitude = offStr.drop(1).toLongOrNull(16) ?: continue
+            val off = if (offStr.startsWith("-")) -magnitude else magnitude
+            val idxArg = argNames.indexOf(m.groupValues[3])
+            val keyArg = argNames.indexOf(m.groupValues[5])
+            if (idxArg >= 0 && keyArg >= 0) out[m.groupValues[1]] = Triple(idxArg, keyArg, off.toInt())
+        }
+        return out
+    }
+
+    /** Constant subtracted from every raw index inside the decoder. */
+    private fun obfIndexOffset(js: String, decoder: String): Int {
+        val start = js.indexOf("function $decoder")
+        if (start < 0) return 0
+        val m = Regex("""_0x[0-9a-f]+\s*=\s*_0x[0-9a-f]+\s*-\s*\(([^;]+)\);""").find(js, start) ?: return 0
+        return evalArith(m.groupValues[1])?.toInt() ?: 0
+    }
+
+    /** The leading rotation IIFE: (target, check expression). */
+    private fun obfRotation(js: String): Pair<Long, String>? {
+        val close = matchParen(js, 0) ?: return null
+        val rot = js.substring(0, close)
+        val tgt = Regex("""\}\s*\(\s*_0x[0-9a-f]+\s*,\s*(.*)\)\s*\)\s*;?\s*$""").find(rot)?.groupValues?.get(1) ?: return null
+        val chk = Regex("""try\{const _0x[0-9a-f]+=([\s\S]*?);if\(_0x[0-9a-f]+===_0x[0-9a-f]+\)break""").find(rot)?.groupValues?.get(1) ?: return null
+        val target = evalArith(tgt) ?: return null
+        return target to chk
+    }
+
+    /**
+     * Replays the rotation loop: shifts the array until the checksum of the
+     * check expression equals the target, then returns the shift count.
+     */
+    private fun obfRotationShift(
+        entries: List<String>,
+        rotation: Pair<Long, String>,
+        wrappers: Map<String, Triple<Int, Int, Int>>,
+        offset: Int
+    ): Int? {
+        val (target, chk) = rotation
+        val callRe = Regex("""(_0x[0-9a-f]+)\(((?:[^()'"]|'[^']*')*)\)""")
+        data class Call(val full: String, val idx: Int, val key: String)
+        val calls = mutableListOf<Call>()
+        for (m in callRe.findAll(chk)) {
+            val w = wrappers[m.groupValues[1]] ?: continue
+            val args = argTokens(m.groupValues[2])
+            val idxTok = args.getOrNull(w.first)?.trim() ?: continue
+            val keyTok = args.getOrNull(w.second)?.trim()?.trim('\'') ?: continue
+            val idx = hexArg(idxTok) ?: continue
+            calls.add(Call(m.groupValues[0], idx - w.third, keyTok))
+        }
+        if (calls.isEmpty()) return null
+        val n = entries.size
+        for (s in 0 until n) {
+            var expr = chk
+            for (c in calls) {
+                val v = obfDecode(entries, c.idx, c.key, offset, s)
+                val parsed = v?.trim()?.toLongOrNull()
+                expr = expr.replace(c.full, parsed?.toString() ?: "NaN")
+            }
+            expr = expr.replace(Regex("""parseInt\(NaN\)"""), "NaN")
+                .replace(Regex("""parseInt\((-?\d+)\)"""), "$1")
+            val value = evalArith(expr) ?: continue
+            if (value == target) return s
+        }
+        return null
+    }
+
+    /** "https" style decode: array entry -> base64 -> utf8 -> RC4 over char codes. */
+    private fun obfDecode(entries: List<String>, rawIdx: Int, key: String, offset: Int, shift: Int): String? {
+        val n = entries.size
+        if (n == 0) return null
+        val pos = ((rawIdx - offset + shift) % n + n) % n
+        val entry = entries.getOrNull(pos) ?: return null
+        val bytes = obfBase64(entry) ?: return null
+        val decoded = String(bytes, Charsets.UTF_8)
+        if (decoded.isEmpty() || key.isEmpty()) return null
+
+        // RC4 keystream over the decoded string's char codes
+        val s = IntArray(256) { it }
+        var j = 0
+        for (i in 0 until 256) {
+            j = (j + s[i] + key[i % key.length].code) % 256
+            val t = s[i]; s[i] = s[j]; s[j] = t
+        }
+        var i = 0
+        j = 0
+        val out = StringBuilder(decoded.length)
+        for (ch in decoded) {
+            i = (i + 1) % 256
+            j = (j + s[i]) % 256
+            val t = s[i]; s[i] = s[j]; s[j] = t
+            out.append(((ch.code xor s[(s[i] + s[j]) % 256]) and 0xFFFF).toChar())
+        }
+        return out.toString()
+    }
+
+    /** Base64 with the obfuscator's lowercase-first alphabet. */
+    private fun obfBase64(input: String): ByteArray? {
+        val alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+/="
+        var acc = 0
+        var bits = 0
+        val out = ArrayList<Byte>(input.size * 3 / 4)
+        for (c in input) {
+            val idx = alphabet.indexOf(c)
+            if (idx < 0 || idx == 64) continue
+            acc = (acc shl 6) or idx
+            bits += 6
+            if (bits >= 8) {
+                bits -= 8
+                out.add(((acc shr bits) and 0xFF).toByte())
+            }
+        }
+        return out.toByteArray()
+    }
+
+    /** Tiny arithmetic evaluator for the obfuscator's hex math (ints, + - * /). */
+    private fun evalArith(expr: String): Long? {
+        var pos = 0
+
+        fun skipWs() { while (pos < expr.length && expr[pos].isWhitespace()) pos++ }
+
+        fun primary(): Double? {
+            skipWs()
+            if (pos < expr.length && expr[pos] == '(') {
+                pos++
+                val v = sum() ?: return null
+                skipWs()
+                if (pos < expr.length && expr[pos] == ')') pos++
+                return v
+            }
+            var sign = 1.0
+            skipWs()
+            while (pos < expr.length && expr[pos] == '+') { pos++; skipWs() }
+            while (pos < expr.length && expr[pos] == '-') { sign = -sign; pos++; skipWs() }
+            val rest = expr.substring(pos)
+            val m = Regex("""^0[xX][0-9a-fA-F]+|^\d+""").find(rest) ?: return null
+            pos += m.value.length
+            val value = if (m.value.startsWith("0x") || m.value.startsWith("0X"))
+                m.value.substring(2).toLongOrNull(16)?.toDouble() else m.value.toDoubleOrNull()
+            return value?.times(sign)
+        }
+
+        fun term(): Double? {
+            var v = primary() ?: return null
+            while (true) {
+                skipWs()
+                if (pos < expr.length && expr[pos] == '*') { pos++; v *= primary() ?: return null }
+                else if (pos + 1 < expr.length && expr[pos] == '/' && expr[pos + 1] != '/') {
+                    pos++
+                    v /= primary() ?: return null
+                } else return v
+            }
+        }
+
+        fun sum(): Double? {
+            var v = term() ?: return null
+            while (true) {
+                skipWs()
+                if (pos < expr.length && expr[pos] == '+') { pos++; v += term() ?: return null }
+                else if (pos < expr.length && expr[pos] == '-') { pos++; v -= term() ?: return null }
+                else return v
+            }
+        }
+
+        val result = sum() ?: return null
+        skipWs()
+        if (pos != expr.length) return null
+        return if (result.isNaN() || result.isInfinite()) null else result.toLong()
+    }
+
+    private fun matchBrace(js: String, open: Int): Int? {
+        var depth = 0
+        var inStr: Char? = null
+        var i = open
+        while (i < js.length) {
+            val c = js[i]
+            val cur = inStr
+            if (cur != null) {
+                if (c == '\\') { i += 2; continue }
+                if (c == cur) inStr = null
+            } else when (c) {
+                '\'', '"' -> inStr = c
+                '{' -> depth++
+                '}' -> { depth--; if (depth == 0) return i + 1 }
+            }
+            i++
+        }
+        return null
+    }
+
+    private fun matchParen(js: String, open: Int): Int? {
+        var depth = 0
+        var inStr: Char? = null
+        var i = open
+        while (i < js.length) {
+            val c = js[i]
+            val cur = inStr
+            if (cur != null) {
+                if (c == '\\') { i += 2; continue }
+                if (c == cur) inStr = null
+            } else when (c) {
+                '\'', '"' -> inStr = c
+                '(' -> depth++
+                ')' -> { depth--; if (depth == 0) return i + 1 }
+            }
+            i++
+        }
+        return null
+    }
+
+    private fun argTokens(args: String): List<String> =
+        Regex("""'(?:[^'\\]|\\.)*'|[^,]+""").findAll(args).map { it.value }.toList()
 }
 
 // Earnvids mirror (same JWPlayer unpack family as StreamHG)
