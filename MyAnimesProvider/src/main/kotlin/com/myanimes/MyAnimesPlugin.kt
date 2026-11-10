@@ -13,6 +13,16 @@ class MyAnimesPlugin : Plugin() {
         registerExtractorAPI(Cloudy())
         registerExtractorAPI(StreamP2P())
         registerExtractorAPI(RubyVidHub())
+        registerExtractorAPI(Streamhg())
+        registerExtractorAPI(Earnvids())
+        registerExtractorAPI(Luluvdo())
+        registerExtractorAPI(Vidara())
+        registerExtractorAPI(Vidmoly())
+        registerExtractorAPI(FilesForever())
+        registerExtractorAPI(Byse())
+        registerExtractorAPI(StreamTape())
+        registerExtractorAPI(MixDrop())
+        registerExtractorAPI(DoodStream())
         openSettings = { ctx ->
             ScheduleScreen(ctx).show()
         }

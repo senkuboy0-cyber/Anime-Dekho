@@ -5,7 +5,6 @@ import com.google.gson.Gson
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
-import com.lagradost.cloudstream3.LoadResponse.Companion.addAniListId
 import com.lagradost.cloudstream3.LoadResponse.Companion.addMalId
 import com.lagradost.cloudstream3.utils.AppUtils
 import com.lagradost.cloudstream3.utils.ExtractorLink
@@ -295,16 +294,12 @@ class MyAnimesProvider : MainAPI() {
         return match.groupValues[1] to id
     }
 
-    /** MAL + AniList ids from the metadata sources section. CloudStream uses them
+    /** MAL id from the metadata sources section. CloudStream uses it
      *  for tracking and to show the skip intro/outro buttons in the player. */
-    private fun parseExternalIds(document: org.jsoup.nodes.Document): Pair<Int?, Int?> {
-        val malId = document.selectFirst("nav.ma-metadata-sources a[href*=myanimelist.net]")
+    private fun parseMalId(document: org.jsoup.nodes.Document): Int? {
+        return document.selectFirst("nav.ma-metadata-sources a[href*=myanimelist.net]")
             ?.attr("href")
             ?.let { Regex("myanimelist\\.net/anime/(\\d+)").find(it)?.groupValues?.get(1)?.toIntOrNull() }
-        val aniListId = document.selectFirst("nav.ma-metadata-sources a[href*=anilist.co]")
-            ?.attr("href")
-            ?.let { Regex("anilist\\.co/anime/(\\d+)").find(it)?.groupValues?.get(1)?.toIntOrNull() }
-        return malId to aniListId
     }
 
     /**
@@ -468,15 +463,6 @@ class MyAnimesProvider : MainAPI() {
             Regex("""\b(19|20)\d{2}\b""").find(it)?.value?.toIntOrNull()
         } ?: Regex("""\b(19|20)\d{2}\b""").find(document.text())?.value?.toIntOrNull()
 
-        val tags = document.select("a[href*=/category/]")
-            .map { it.text().trim() }
-            .filter {
-                it.isNotBlank()
-                        && !it.equals("Watch Now", true)
-                        && !it.equals("View More", true)
-            }
-            .distinct()
-
         val actors = document.select("li.rw")
             .firstOrNull { it.selectFirst("span")?.text()?.contains("Cast", true) == true }
             ?.select("a")?.map { it.text().trim() }.orEmpty()
@@ -487,7 +473,7 @@ class MyAnimesProvider : MainAPI() {
 
         val tmdbTitle = cleanTitleForTmdb(title)
         val tmdbDetails = fetchTmdbDetails(document, tmdbTitle, !isMovie, year)
-        val (malId, aniListId) = parseExternalIds(document)
+        val malId = parseMalId(document)
 
         if (isMovie) {
             return newMovieLoadResponse(title, url, TvType.AnimeMovie, actualUrl) {
@@ -496,11 +482,10 @@ class MyAnimesProvider : MainAPI() {
                 this.logoUrl = tmdbDetails.logo
                 this.year = year
                 this.plot = plot
-                this.tags = tags
+                this.tags = emptyList()
                 this.recommendations = recommendations
                 addActors(actors)
                 addMalId(malId)
-                addAniListId(aniListId)
             }
         }
 
@@ -561,11 +546,10 @@ class MyAnimesProvider : MainAPI() {
             this.logoUrl = tmdbDetails.logo
             this.year = year
             this.plot = plot
-            this.tags = tags
+            this.tags = emptyList()
             this.recommendations = recommendations
             addActors(actors)
             addMalId(malId)
-            addAniListId(aniListId)
         }
     }
 
@@ -623,6 +607,31 @@ class MyAnimesProvider : MainAPI() {
                     lower.contains("streamp2p.php") -> {
                         val playerSrc = resolveWrapperIframe(embedUrl) ?: continue
                         extStreamP2P.getUrl(playerSrc, mainUrl, subtitleCallback, callback)
+                        found = true
+                    }
+                    lower.contains("streamhg.php") -> {
+                        val playerSrc = resolveWrapperIframe(embedUrl) ?: continue
+                        Streamhg().getUrl(playerSrc, mainUrl, subtitleCallback, callback)
+                        found = true
+                    }
+                    lower.contains("vidara.php") -> {
+                        val playerSrc = resolveWrapperIframe(embedUrl) ?: continue
+                        Vidara().getUrl(playerSrc, mainUrl, subtitleCallback, callback)
+                        found = true
+                    }
+                    lower.contains("ruby.php") -> {
+                        val playerSrc = resolveWrapperIframe(embedUrl) ?: continue
+                        RubyVidHub().getUrl(playerSrc, mainUrl, subtitleCallback, callback)
+                        found = true
+                    }
+                    lower.contains("vidmoly.php") -> {
+                        val playerSrc = resolveWrapperIframe(embedUrl) ?: continue
+                        Vidmoly().getUrl(playerSrc, mainUrl, subtitleCallback, callback)
+                        found = true
+                    }
+                    lower.contains("filesforever.php") -> {
+                        val playerSrc = resolveWrapperIframe(embedUrl) ?: continue
+                        FilesForever().getUrl(playerSrc, mainUrl, subtitleCallback, callback)
                         found = true
                     }
                     lower.contains("upns") || lower.contains("cloudy") || lower.contains("p2pplay") -> {

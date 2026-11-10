@@ -1,13 +1,17 @@
 package com.myanimes
 
+import com.google.gson.JsonParser
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.USER_AGENT
 import com.lagradost.cloudstream3.app
+import com.lagradost.cloudstream3.base64Decode
+import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.lagradost.cloudstream3.utils.ExtractorApi
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.INFER_TYPE
+import com.lagradost.cloudstream3.utils.JsUnpacker
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.getQualityFromName
 import com.lagradost.cloudstream3.utils.newExtractorLink
@@ -15,7 +19,9 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.net.URI
+import java.util.Base64
 import javax.crypto.Cipher
+import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
@@ -297,4 +303,729 @@ open class UpnsPlayer : ExtractorApi() {
 
     protected fun getBaseUrl(url: String): String =
         try { URI(url).let { "${it.scheme}://${it.host}" } } catch (e: Exception) { mainUrl }
+}
+
+// ─────────────────────────────────────────────────────────────
+// StreamHG -> hgcloud.to (also used as the "smwh" mirror inside
+// FilesForever). JWPlayer packed script -> master m3u8 + .vtt subs.
+// The quality label is read from the embed page title / meta tags.
+// ─────────────────────────────────────────────────────────────
+open class Streamhg : ExtractorApi() {
+    override var name = "StreamHG"
+    override var mainUrl = "https://hgcloud.to"
+    override val requiresReferer = true
+
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val html = app.get(url, referer = referer ?: mainUrl).text
+
+        val packed = Regex("""eval\(function\(p,a,c,k,e,d\)[\s\S]+?\.split\('\|'\)\)\)""")
+            .find(html)?.value
+            ?: Regex("""eval\(function\(p,a,c,k,e,d\)[\s\S]+?\}\('[\s\S]+?'\.split\('\|'\)""").find(html)?.value
+            ?: return
+
+        val unpacked = JsUnpacker(packed).unpack() ?: return
+
+        // master.txt or .m3u8
+        val m3u8 = Regex("""(https?://[^"'\s\\]+(?:master\.txt|master\.m3u8|\.m3u8)[^"'\s\\]*)""")
+            .find(unpacked)?.groupValues?.get(1)
+            ?: Regex("""file\s*:\s*["'](https?://[^"']+)["']""").find(unpacked)?.groupValues?.get(1)
+            ?: return
+
+        // subtitles .vtt
+        val subMatches = Regex("""file\s*:\s*["'](https?://[^"']+\.vtt[^"']*)["'][^}]*?(?:label\s*:\s*["']([^"']+)["'])?""").findAll(unpacked)
+        var counter = 1
+        for (m in subMatches) {
+            val subtitleUrl = m.groupValues[1]
+            val subtitleName = m.groupValues.getOrNull(2)?.takeIf { it.isNotBlank() } ?: "Subtitle ${counter++}"
+            subtitleCallback.invoke(SubtitleFile(subtitleName, subtitleUrl))
+        }
+
+        callback.invoke(
+            newExtractorLink(name, name, m3u8, ExtractorLinkType.M3U8) {
+                this.referer = mainUrl
+                this.quality = detectQualityFromPage(html)
+                // the stream CDN rejects non-browser user agents
+                // (okhttp -> 403), so carry a desktop UA explicitly
+                this.headers = mapOf(
+                    "User-Agent" to USER_AGENT,
+                    "Referer" to "$mainUrl/"
+                )
+            }
+        )
+    }
+}
+
+// Earnvids mirror -> morencius.com (same JWPlayer unpack family)
+class Earnvids : Streamhg() {
+    override var name = "Earnvids"
+    override var mainUrl = "https://morencius.com"
+}
+
+// Luluvdo mirror -> luluvdo.com (same JWPlayer unpack family)
+class Luluvdo : Streamhg() {
+    override var name = "Luluvdo"
+    override var mainUrl = "https://luluvdo.com"
+}
+
+/**
+ * Best-effort quality detection from an embed page.
+ * Most of these hosts print the release name in the page head, e.g.
+ *   <title>Movie 1994 720p HD BDRip ...</title>
+ * The real quality of the stream is read from there so CloudStream can
+ * display it as the quality label of the link. Returns Unknown when the
+ * page carries no quality info.
+ */
+private fun detectQualityFromPage(html: String): Int {
+    Regex("""<title[^>]*>([^<]+)</title>""", RegexOption.IGNORE_CASE).find(html)
+        ?.groupValues?.get(1)
+        ?.let { title ->
+            Regex("""(\d{3,4})\s*p\b""", RegexOption.IGNORE_CASE).find(title)?.let {
+                return getQualityFromName(it.groupValues[1] + "p")
+            }
+        }
+    Regex("""<meta[^>]+(?:name|property)\s*=\s*["'](og:title|description)["'][^>]*>""", RegexOption.IGNORE_CASE)
+        .findAll(html)
+        .forEach { tag ->
+            val content = Regex("""content\s*=\s*["']([^"']+)['"]""", RegexOption.IGNORE_CASE)
+                .find(tag.value)?.groupValues?.get(1) ?: return@forEach
+            Regex("""(\d{3,4})\s*p\b""").find(content)?.let {
+                return getQualityFromName(it.groupValues[1] + "p")
+            }
+        }
+    return Qualities.Unknown.value
+}
+
+// ─────────────────────────────────────────────────────────────
+// Byse -> bysetayico.com (used as the "flmn" mirror inside FilesForever)
+//  1) URL: /e/{code}
+//  2) GET  /api/videos/{code}
+//  3) playback = AES-256-GCM encrypted JSON
+//  4) version N -> key_parts[N-1] + key_parts[31-N-1] (1-based N and 31-N)
+//  5) decrypt -> sources[].url (m3u8) + tracks[] (subs)
+// ─────────────────────────────────────────────────────────────
+class Byse : ExtractorApi() {
+    override var name = "Byse"
+    override var mainUrl = "https://bysetayico.com"
+    override val requiresReferer = true
+
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val code = Regex("""/e/([A-Za-z0-9]+)""")
+            .find(url)?.groupValues?.getOrNull(1)
+            ?: url.trimEnd('/').substringAfterLast('/').substringBefore('?')
+        if (code.isBlank()) return
+
+        val apiUrl = "$mainUrl/api/videos/$code"
+        val raw = try {
+            app.get(
+                apiUrl,
+                headers = mapOf(
+                    "Accept" to "application/json",
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Referer" to url,
+                ),
+                referer = referer ?: url
+            ).text
+        } catch (e: Exception) {
+            Log.e(name, "API failed: ${e.message}")
+            return
+        }
+
+        val root = try {
+            JSONObject(raw)
+        } catch (e: Exception) {
+            Log.e(name, "JSON parse failed: ${e.message}")
+            return
+        }
+
+        emitTracks(root.optJSONArray("tracks"), subtitleCallback)
+
+        val playback = root.optJSONObject("playback") ?: run {
+            Log.e(name, "no playback object")
+            return
+        }
+
+        val decrypted = try {
+            decryptPlayback(playback)
+        } catch (e: Exception) {
+            Log.e(name, "decrypt failed: ${e.message}")
+            return
+        }
+
+        val sources = decrypted.optJSONArray("sources")
+        if (sources == null || sources.length() == 0) {
+            Log.e(name, "no sources after decrypt")
+            return
+        }
+
+        for (i in 0 until sources.length()) {
+            val src = sources.optJSONObject(i) ?: continue
+            val streamUrl = src.optString("url").takeIf { it.startsWith("http") } ?: continue
+            val label = src.optString("label").ifBlank { src.optString("quality") }.ifBlank { "Unknown" }
+            val mime = src.optString("mime_type")
+            val isHls = mime.contains("mpegurl", true) || streamUrl.contains(".m3u8", true)
+
+            callback.invoke(
+                newExtractorLink(
+                    source = name,
+                    name = name,
+                    url = streamUrl,
+                    type = if (isHls) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                ) {
+                    this.quality = getQualityFromName(label)
+                    this.referer = mainUrl
+                    this.headers = mapOf(
+                        "Referer" to "$mainUrl/",
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                    )
+                }
+            )
+        }
+
+        emitTracks(decrypted.optJSONArray("tracks"), subtitleCallback)
+    }
+
+    private fun emitTracks(
+        tracks: org.json.JSONArray?,
+        subtitleCallback: (SubtitleFile) -> Unit
+    ) {
+        if (tracks == null) return
+        for (i in 0 until tracks.length()) {
+            val t = tracks.optJSONObject(i) ?: continue
+            val subUrl = t.optString("url")
+                .ifBlank { t.optString("file") }
+                .ifBlank { t.optString("src") }
+            if (!subUrl.startsWith("http")) continue
+            val lang = t.optString("label")
+                .ifBlank { t.optString("language") }
+                .ifBlank { t.optString("lang") }
+                .ifBlank { "Unknown" }
+            subtitleCallback.invoke(SubtitleFile(lang, subUrl))
+        }
+    }
+
+    /**
+     * AES-256-GCM decrypt of playback object.
+     * version "N" -> use key_parts indices N and (31-N) (1-based).
+     */
+    private fun decryptPlayback(playback: JSONObject): JSONObject {
+        val version = playback.optString("version").trim()
+        val v = version.toIntOrNull()
+            ?: throw IllegalArgumentException("bad version: $version")
+
+        val keyPartsArr = playback.optJSONArray("key_parts")
+            ?: throw IllegalArgumentException("missing key_parts")
+        val keyParts = buildList {
+            for (i in 0 until keyPartsArr.length()) {
+                add(keyPartsArr.optString(i))
+            }
+        }
+
+        // 1-based indices: v and 31-v
+        val i1 = v
+        val i2 = 31 - v
+        if (i1 < 1 || i2 < 1 || i1 > keyParts.size || i2 > keyParts.size) {
+            throw IllegalArgumentException("version indices out of range: $i1, $i2 size=${keyParts.size}")
+        }
+
+        val keyBytes = b64UrlDecode(keyParts[i1 - 1]) + b64UrlDecode(keyParts[i2 - 1])
+        val iv = b64UrlDecode(playback.optString("iv"))
+        val ciphertext = b64UrlDecode(playback.optString("payload"))
+
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(
+            Cipher.DECRYPT_MODE,
+            SecretKeySpec(keyBytes, "AES"),
+            GCMParameterSpec(128, iv) // 128-bit auth tag
+        )
+        val plain = cipher.doFinal(ciphertext)
+        return JSONObject(String(plain, Charsets.UTF_8))
+    }
+
+    private fun b64UrlDecode(s: String): ByteArray {
+        var t = s.replace('-', '+').replace('_', '/')
+        val pad = (4 - t.length % 4) % 4
+        t += "=".repeat(pad)
+        return Base64.getDecoder().decode(t)
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// StreamTape (used as the "strmtp" mirror inside FilesForever)
+// The embed page builds the link inside inline JS:
+//   document.getElementById('robotlink').innerHTML =
+//       '//streamtape.s' + ('xcdite/get_video?id=...').substring(2).substring(1)
+// Apply the same substring operations and prefix "https:".
+// ─────────────────────────────────────────────────────────────
+class StreamTape : ExtractorApi() {
+    override var name = "StreamTape"
+    override var mainUrl = "https://streamtape.site"
+    override val requiresReferer = false
+
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val html = app.get(url, referer = referer ?: mainUrl).text
+
+        val match = Regex(
+            """getElementById\(['"]robotlink['"]\)\.innerHTML\s*=\s*'([^']*)'\s*((?:\.substring\(\d+\))*)\s*\+\s*\('([^']*)'\)\s*((?:\.substring\(\d+\))*)"""
+        ).find(html) ?: run {
+            Log.e(name, "robotlink pattern not found")
+            return
+        }
+
+        var part1 = match.groupValues[1]
+        Regex("""\.substring\((\d+)\)""").findAll(match.groupValues[2]).forEach {
+            part1 = part1.substring(it.groupValues[1].toInt())
+        }
+
+        var part2 = match.groupValues[3]
+        Regex("""\.substring\((\d+)\)""").findAll(match.groupValues[4]).forEach {
+            part2 = part2.substring(it.groupValues[1].toInt())
+        }
+
+        val finalUrl = "https:$part1$part2"
+        if (!finalUrl.contains("get_video")) {
+            Log.e(name, "unexpected link: $finalUrl")
+            return
+        }
+
+        callback(
+            newExtractorLink(name, name, url = finalUrl, type = ExtractorLinkType.VIDEO) {
+                this.referer = mainUrl
+                this.quality = detectQualityFromPage(html)
+                this.headers = mapOf("User-Agent" to USER_AGENT)
+            }
+        )
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// MixDrop (used as the "mxdp" mirror inside FilesForever)
+// Embed page contains a Dean-Edwards packed eval block whose
+// unpacked source holds: wurl = "//host/path/{id}.mp4?s=...&e=..."
+// ─────────────────────────────────────────────────────────────
+class MixDrop : ExtractorApi() {
+    override var name = "MixDrop"
+    override var mainUrl = "https://mixdrop.ag"
+    override val requiresReferer = true
+
+    companion object {
+        private val PACKED_REGEX =
+            Regex("""eval\(function\(p,a,c,k,e,[dr]\)\{[\s\S]{50,}?\.split\('\|'\)[\s\S]{0,20}?\)\)""")
+        private val WURL_REGEX = Regex("""wurl\s*=\s*["']([^"']+)["']""")
+    }
+
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val html = app.get(url, referer = referer ?: mainUrl).text
+
+        val packed = PACKED_REGEX.find(html)?.value ?: run {
+            Log.e(name, "packed JS not found")
+            return
+        }
+
+        val unpacked = JsUnpacker(packed).unpack() ?: run {
+            Log.e(name, "unpack failed")
+            return
+        }
+
+        // wurl can live in the first unpack level or in a nested packed block
+        val raw = WURL_REGEX.find(unpacked)?.groupValues?.get(1)
+            ?: JsUnpacker(unpacked).unpack()?.let { nested ->
+                WURL_REGEX.find(nested)?.groupValues?.get(1)
+            }
+            ?: run {
+                Log.e(name, "wurl not found")
+                return
+            }
+
+        val finalUrl = if (raw.startsWith("//")) "https:$raw" else raw
+        if (!finalUrl.contains(".mp4") && !finalUrl.contains(".m3u8")) {
+            Log.e(name, "unexpected source: $finalUrl")
+            return
+        }
+
+        callback(
+            newExtractorLink(name, name, url = finalUrl, type = ExtractorLinkType.VIDEO) {
+                this.referer = mainUrl
+                this.quality = Qualities.Unknown.value
+                this.headers = mapOf("User-Agent" to USER_AGENT)
+            }
+        )
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// DoodStream (used as the "ddstm" mirror inside FilesForever)
+//  1) GET embed page -> find /pass_md5/{token}/{file} path
+//  2) GET {mainUrl}/pass_md5/... (Referer: mainUrl) -> direct CDN url text
+//  3) final link = direct url + "?" + random 10-char token
+// ─────────────────────────────────────────────────────────────
+class DoodStream : ExtractorApi() {
+    override var name = "DoodStream"
+    override var mainUrl = "https://dood.li"
+    override val requiresReferer = false
+
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val res = app.get(url, referer = referer ?: "$mainUrl/").text
+
+        val md5Path = Regex("""/pass_md5/[^'"]+""").find(res)?.value ?: run {
+            Log.e(name, "pass_md5 path not found")
+            return
+        }
+
+        val directUrl = try {
+            app.get("$mainUrl$md5Path", referer = "$mainUrl/").text.trim()
+        } catch (e: Exception) {
+            Log.e(name, "pass_md5 request failed: ${e.message}")
+            return
+        }
+
+        if (!directUrl.startsWith("http")) {
+            Log.e(name, "unexpected pass_md5 response")
+            return
+        }
+
+        val finalUrl = "$directUrl?${randomToken(10)}"
+
+        callback(
+            newExtractorLink(name, name, url = finalUrl, type = ExtractorLinkType.VIDEO) {
+                this.referer = "$mainUrl/"
+                this.quality = detectQualityFromPage(res)
+                this.headers = mapOf(
+                    "User-Agent" to USER_AGENT,
+                    "Referer" to "$mainUrl/"
+                )
+            }
+        )
+    }
+
+    private fun randomToken(length: Int): String {
+        val chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+        return (1..length).map { chars.random() }.joinToString("")
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// FilesForever -> filesforever.link/embed/{sid}
+//  1) GET the embed page (follows a 302 chain to the player origin)
+//  2) POST embedhelper2.php on the player origin
+//     -> sources: mirror definitions, mresult: base64 mirror id map
+//  3) route every mirror id to its dedicated extractor
+// ─────────────────────────────────────────────────────────────
+class FilesForever : ExtractorApi() {
+    override var name = "FilesForever"
+    override var mainUrl = "https://filesforever.link"
+    override val requiresReferer = true
+
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        // sid
+        val sid = url.substringAfterLast("/embed/").substringBefore("?").trimEnd('/')
+        if (sid.isBlank()) return
+
+        // Step 1: resolve embed page -> player origin (follows the 302 chain)
+        val resolved = try {
+            app.get("$mainUrl/embed/$sid", referer = referer ?: mainUrl)
+        } catch (e: Exception) {
+            Log.e(name, "embed resolve failed: ${e.message}")
+            return
+        }
+
+        val playerOrigin = try {
+            val u = URI(resolved.url)
+            "${u.scheme}://${u.host}"
+        } catch (e: Exception) {
+            Log.e(name, "bad redirect url: ${resolved.url}")
+            return
+        }
+
+        // Step 2: helper API v2 on the resolved player origin
+        val responseText = try {
+            app.post(
+                "$playerOrigin/embedhelper2.php",
+                data = mapOf(
+                    "sid" to sid,
+                    "UserFavSite" to "",
+                    "currentDomain" to playerOrigin.removePrefix("https://"),
+                ),
+                headers = mapOf(
+                    "Referer" to "$mainUrl/embed/$sid",
+                    "Origin" to playerOrigin,
+                    "X-Requested-With" to "XMLHttpRequest",
+                )
+            ).text
+        } catch (e: Exception) {
+            Log.e(name, "embedhelper2 failed: ${e.message}")
+            return
+        }
+
+        val root = tryParseJson<GDEmbedHelper>(responseText) ?: run {
+            Log.e(name, "embedhelper2 unparsable")
+            return
+        }
+
+        // mresult: object OR base64-encoded JSON string
+        val rawMresult = root.mresult
+        val mirrors: Map<String, String> = when (rawMresult) {
+            is Map<*, *> -> @Suppress("UNCHECKED_CAST") (rawMresult as Map<String, String>)
+            is String -> try {
+                val jo = JsonParser.parseString(base64Decode(rawMresult)).asJsonObject
+                jo.keySet().associateWith { jo[it]?.asString.orEmpty() }
+            } catch (e: Exception) {
+                Log.e(name, "mresult decode failed: ${e.message}")
+                return
+            }
+            else -> {
+                Log.e(name, "mresult missing")
+                return
+            }
+        }
+
+        // helper: siteUrl + id + embedSuffix (same as JS constructIframeSrc)
+        fun mirrorUrl(key: String, id: String, fallback: String): String {
+            val src = root.sources?.get(key)
+            val site = (src?.siteUrl ?: fallback)
+            val suffix = src?.embedSuffix ?: ""
+            return site + id + (suffix ?: "")
+        }
+
+        // Step 3: route each mirror to its custom extractor
+
+        // smwh = StreamHG (hanerix.com family)
+        mirrors["smwh"]?.takeIf { it.isNotBlank() }?.let { id ->
+            try {
+                Streamhg().getUrl(mirrorUrl("smwh", id, "https://hanerix.com/e/"), referer, subtitleCallback, callback)
+            } catch (e: Exception) {
+                Log.e(name, "StreamHG failed: ${e.message}")
+            }
+        }
+
+        // strmp2 = StreamP2P (upns-family player)
+        mirrors["strmp2"]?.takeIf { it.isNotBlank() }?.let { id ->
+            try {
+                val fullUrl = mirrorUrl("strmp2", id, "https://cloudy.p2pplay.pro/#")
+                UpnsPlayer().apply {
+                    this.name = "StreamPro"
+                    this.mainUrl = getHost(fullUrl)
+                }.getUrl(fullUrl, referer, subtitleCallback, callback)
+            } catch (e: Exception) {
+                Log.e(name, "StreamP2P failed: ${e.message}")
+            }
+        }
+
+        // flmn = Byse (bysetayico.com, AES-256-GCM)
+        mirrors["flmn"]?.takeIf { it.isNotBlank() }?.let { id ->
+            try {
+                Byse().getUrl(mirrorUrl("flmn", id, "https://bysetayico.com/e/"), referer, subtitleCallback, callback)
+            } catch (e: Exception) {
+                Log.e(name, "Byse failed: ${e.message}")
+            }
+        }
+
+        // flls = EarnVids (morencius.com)
+        mirrors["flls"]?.takeIf { it.isNotBlank() }?.let { id ->
+            try {
+                Earnvids().getUrl(mirrorUrl("flls", id, "https://morencius.com/v/"), referer, subtitleCallback, callback)
+            } catch (e: Exception) {
+                Log.e(name, "EarnVids failed: ${e.message}")
+            }
+        }
+
+        // strmtp = StreamTape
+        mirrors["strmtp"]?.takeIf { it.isNotBlank() }?.let { id ->
+            try {
+                StreamTape().getUrl(mirrorUrl("strmtp", id, "https://streamtape.site/e/"), referer, subtitleCallback, callback)
+            } catch (e: Exception) {
+                Log.e(name, "StreamTape failed: ${e.message}")
+            }
+        }
+
+        // mxdp = MixDrop
+        mirrors["mxdp"]?.takeIf { it.isNotBlank() }?.let { id ->
+            try {
+                MixDrop().getUrl(mirrorUrl("mxdp", id, "https://mixdrop.ag/e/"), referer, subtitleCallback, callback)
+            } catch (e: Exception) {
+                Log.e(name, "MixDrop failed: ${e.message}")
+            }
+        }
+
+        // ddstm = DoodStream
+        mirrors["ddstm"]?.takeIf { it.isNotBlank() }?.let { id ->
+            try {
+                DoodStream().getUrl(mirrorUrl("ddstm", id, "https://dood.li/e/"), referer, subtitleCallback, callback)
+            } catch (e: Exception) {
+                Log.e(name, "DoodStream failed: ${e.message}")
+            }
+        }
+
+        // llstm = Luluvdo
+        mirrors["llstm"]?.takeIf { it.isNotBlank() }?.let { id ->
+            try {
+                Luluvdo().getUrl(mirrorUrl("llstm", id, "https://luluvdo.com/e/"), referer, subtitleCallback, callback)
+            } catch (e: Exception) {
+                Log.e(name, "Luluvdo failed: ${e.message}")
+            }
+        }
+    }
+
+    protected fun getHost(url: String): String =
+        try {
+            URI(url).let { "${it.scheme}://${it.host}" }
+        } catch (e: Exception) {
+            mainUrl
+        }
+
+    data class GDSource(
+        val encryptedValue: String? = null,
+        val encryptedSiteName: String? = null,
+        val encryptedApiKey: String? = null,
+        val siteUrl: String? = null,
+        val embedSuffix: String? = null,
+        val friendlyName: String? = null,
+    )
+
+    data class GDEmbedHelper(
+        val sources: Map<String, GDSource>? = null,
+        val mresult: Any? = null,
+        val sid: String? = null,
+    )
+}
+
+// ─────────────────────────────────────────────────────────────
+// Vidara -> vidara.to/e/{code}
+//  1) code = last path segment of the /e/{code} url
+//  2) POST {mainUrl}/api/stream  (JSON body)
+//        { "filecode": code, "device": "web", "codecs": [] }
+//     -> { streaming_url, title, subtitles: [{type, language, file_path}] }
+//  3) The stream CDN rejects non-browser user agents (okhttp -> 404),
+//     so the link MUST carry a desktop User-Agent header.
+// ─────────────────────────────────────────────────────────────
+class Vidara : ExtractorApi() {
+    override var name = "Vidara"
+    override var mainUrl = "https://vidara.to"
+    override val requiresReferer = false
+
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val fileCode = url.trimEnd('/').substringAfterLast('/')
+        if (fileCode.isBlank()) return
+
+        val res = try {
+            app.post(
+                url = "$mainUrl/api/stream",
+                headers = mapOf(
+                    "User-Agent" to USER_AGENT,
+                    "Referer" to "$mainUrl/e/$fileCode",
+                    "Content-Type" to "application/json"
+                ),
+                requestBody = "{\"filecode\":\"$fileCode\",\"device\":\"web\",\"codecs\":[]}".toRequestBody("application/json".toMediaType())
+            ).parsedSafe<VidaraResponse>()
+        } catch (e: Exception) {
+            Log.e(name, "api/stream failed: ${e.message}")
+            null
+        } ?: return
+
+        val streamUrl = res.streaming_url?.takeIf { it.startsWith("http") } ?: return
+
+        // type 0 = caption track
+        res.subtitles.orEmpty().forEach { sub ->
+            val subUrl = sub.file_path?.takeIf { it.startsWith("http") } ?: return@forEach
+            subtitleCallback(SubtitleFile(sub.language?.takeIf { it.isNotBlank() } ?: "Subtitle", subUrl))
+        }
+
+        callback(
+            newExtractorLink(source = name, name = name, url = streamUrl, type = ExtractorLinkType.M3U8) {
+                this.referer = "$mainUrl/"
+                this.quality = detectQualityFromPage(res.title.orEmpty())
+                this.headers = mapOf(
+                    "User-Agent" to USER_AGENT,
+                    "Referer" to "$mainUrl/"
+                )
+            }
+        )
+    }
+
+    data class VidaraResponse(
+        val streaming_url: String? = null,
+        val title: String? = null,
+        val subtitles: List<VidaraSubtitle>? = null,
+        val default_sub_lang: String? = null
+    )
+
+    data class VidaraSubtitle(
+        val type: Int? = null,
+        val language: String? = null,
+        val file_path: String? = null
+    )
+}
+
+// ─────────────────────────────────────────────────────────────
+// Vidmoly -> vidmoly.org/embed-{code}.html (vidmoly.net family)
+// JWPlayer config inline -> m3u8 + .vtt subtitles.
+// ─────────────────────────────────────────────────────────────
+class Vidmoly : ExtractorApi() {
+    override var name = "Vidmoly"
+    override var mainUrl = "https://vidmoly.org"
+    override val requiresReferer = false
+
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val txt = app.get(url, referer = referer ?: mainUrl).text
+
+        val m3u8 = Regex("""file\s*:\s*['"]([^'"]+\.m3u8[^'"]*)['"]""")
+            .find(txt)?.groupValues?.get(1)
+            ?: Regex("""https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""").find(txt)?.value
+            ?: return
+
+        Regex("""file\s*:\s*['"](https[^'"]+\.vtt[^'"]*)['"][\s\S]{0,200}?label\s*:\s*['"]([^'"]*)['"]""")
+            .find(txt)?.let { match ->
+                subtitleCallback(SubtitleFile(match.groupValues[2].ifBlank { "English" }, match.groupValues[1]))
+            }
+
+        callback(
+            newExtractorLink(name, name, url = m3u8, type = ExtractorLinkType.M3U8) {
+                this.referer = mainUrl
+                this.quality = detectQualityFromPage(txt)
+                this.headers = mapOf(
+                    "User-Agent" to USER_AGENT,
+                    "Referer" to "$mainUrl/"
+                )
+            }
+        )
+    }
 }
