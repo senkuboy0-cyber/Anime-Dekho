@@ -365,10 +365,11 @@ class ScheduleScreen(context: Context) : Dialog(context, android.R.style.Theme_B
             val h = seconds / 3600
             val m = (seconds % 3600) / 60
             val s = seconds % 60
-            chip.view.text = if (chip.isToday) {
-                String.format("%02d:%02d:%02d", h, m, s)
-            } else {
-                String.format("%dd %02d:%02d:%02d", h / 24, h % 24, m, s)
+            // Day prefix only when at least a full day is left; under 24 h
+            // the chip shows a plain clock instead of an ugly "0d" prefix
+            chip.view.text = when {
+                chip.isToday || h < 24 -> String.format("%02d:%02d:%02d", h, m, s)
+                else -> String.format("%dd %02d:%02d:%02d", h / 24, h % 24, m, s)
             }
             chip.view.setTextColor(ACCENT)
             chip.view.background = round(ACCENT_SOFT, 8)
