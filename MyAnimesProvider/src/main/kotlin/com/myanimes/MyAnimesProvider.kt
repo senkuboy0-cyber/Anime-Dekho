@@ -121,7 +121,6 @@ class MyAnimesProvider : MainAPI() {
     )
 
     override val mainPage = mainPageOf(
-        "$mainUrl/#recent-regional-dub" to "Latest Episodes",
         "$mainUrl/" to "Latest Drop",
         "$mainUrl/series/" to "Series",
         "$mainUrl/movies/" to "Movies",
@@ -363,19 +362,24 @@ class MyAnimesProvider : MainAPI() {
     // --- Main Page ---
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        if (request.data.endsWith("#recent-regional-dub")) {
-            if (page > 1) return newHomePageResponse(request.name, emptyList(), false)
-            val document = app.get(mainUrl).document
-            return newHomePageResponse(request.name, recentRegionalDubItems(document), false)
-        }
-
         val isHome = request.data == "$mainUrl/" || request.data == mainUrl
 
         if (isHome) {
             if (page > 1) return newHomePageResponse(request.name, emptyList(), false)
             val document = app.get(mainUrl).document
-            val home = document.select("section.as-latest-drop article.as-card")
-                .mapNotNull { it.toSearchResult() }
+            // The homepage no longer has a dedicated "Latest Drop" section; the
+            // newest releases now live in the "Recent Regional Dub Episodes"
+            // section. Locate it by heading text so a section reorder on the
+            // site cannot break it (the other as-language-releases sections
+            // hold English Dub / English Sub releases and must not be mixed in).
+            val home = document.select("section.as-language-releases")
+                .firstOrNull { section ->
+                    section.selectFirst(".as-section-heading h2")?.text()
+                        ?.contains("Regional Dub", ignoreCase = true) == true
+                }
+                ?.select("article.as-card")
+                ?.mapNotNull { it.toSearchResult() }
+                ?: emptyList()
             return newHomePageResponse(request.name, home, false)
         }
 
@@ -787,49 +791,6 @@ class MyAnimesProvider : MainAPI() {
     }
 
     // --- Helpers ---
-
-    /**
-     * Items of the homepage "Recent Regional Dub Episodes" sections. The
-     * sections are located by their heading text (theme markup agnostic);
-     * every episode link inside the heading's item container becomes a list
-     * item.
-     */
-    private fun recentRegionalDubItems(document: Element): List<SearchResponse> {
-        val headings = document.select("h1,h2,h3,h4,h5,div,span,p")
-            .filter { it.ownText().contains("Regional Dub", true) }
-        if (headings.isEmpty()) return emptyList()
-
-        val seen = linkedSetOf<String>()
-        val items = mutableListOf<SearchResponse>()
-        for (heading in headings) {
-            // climb from the heading until a container holding episode links
-            var container: Element? = heading
-            while (container != null && container.select("a[href*=/episode/]").isEmpty()) {
-                container = container.parent()
-            }
-            container ?: continue
-
-            for (a in container.select("a[href*=/episode/]")) {
-                val href = fixUrl(a.attr("href"))
-                if (!href.contains("/episode/") || !seen.add(href)) continue
-
-                val card = a.parents().firstOrNull { it.tagName() == "article" } ?: a
-                val img = card.selectFirst("img")
-                val title = card.selectFirst("h3,h4,h5")?.text()?.trim()?.takeIf { it.isNotBlank() }
-                    ?: a.attr("title").trim().takeIf { it.isNotBlank() }
-                    ?: img?.attr("alt")?.trim()?.takeIf { it.isNotBlank() }
-                    ?: a.text().trim().takeIf { it.isNotBlank() }
-                    ?: continue
-                val poster = img?.let { it.attr("src").ifBlank { it.attr("data-src") } }
-                    ?.takeIf { it.isNotBlank() }
-                val mediaJson = Gson().toJson(Media(href, poster))
-                items.add(newTvSeriesSearchResponse(title, mediaJson, TvType.TvSeries) {
-                    this.posterUrl = poster
-                })
-            }
-        }
-        return items
-    }
 
     private fun Element.toSearchResult(): SearchResponse? {
         val anchor = this.selectFirst("a.as-card-link[href], a[href*=/series/], a[href*=/movies/]")
