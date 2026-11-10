@@ -305,9 +305,22 @@ open class UpnsPlayer : ExtractorApi() {
         try { URI(url).let { "${it.scheme}://${it.host}" } } catch (e: Exception) { mainUrl }
 }
 
+/**
+ * scheme://host of a url, or null when it cannot be parsed.
+ * Every extractor builds its requests, referers and headers from the origin
+ * of the url it was handed (resolved live from the site's wrapper iframe),
+ * so a rotating player domain can never break extraction.
+ */
+private fun urlOrigin(url: String): String? = try {
+    val u = URI(url)
+    if (u.host.isNullOrBlank()) null else "${u.scheme}://${u.host}"
+} catch (e: Exception) {
+    null
+}
+
 // ─────────────────────────────────────────────────────────────
-// StreamHG -> hgcloud.to (also used as the "smwh" mirror inside
-// FilesForever). JWPlayer packed script -> master m3u8 + .vtt subs.
+// StreamHG (also the "smwh" mirror inside FilesForever) and its
+// mirrors. JWPlayer packed script -> master m3u8 + .vtt subs.
 // The quality label is read from the embed page title / meta tags.
 // ─────────────────────────────────────────────────────────────
 open class Streamhg : ExtractorApi() {
@@ -321,7 +334,9 @@ open class Streamhg : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        val html = app.get(url, referer = referer ?: mainUrl).text
+        // live origin of the embed page (this family rotates domains)
+        val base = urlOrigin(url) ?: mainUrl
+        val html = app.get(url, referer = referer ?: base).text
 
         val packed = Regex("""eval\(function\(p,a,c,k,e,d\)[\s\S]+?\.split\('\|'\)\)\)""")
             .find(html)?.value
@@ -347,26 +362,26 @@ open class Streamhg : ExtractorApi() {
 
         callback.invoke(
             newExtractorLink(name, name, m3u8, ExtractorLinkType.M3U8) {
-                this.referer = mainUrl
+                this.referer = base
                 this.quality = detectQualityFromPage(html)
                 // the stream CDN rejects non-browser user agents
                 // (okhttp -> 403), so carry a desktop UA explicitly
                 this.headers = mapOf(
                     "User-Agent" to USER_AGENT,
-                    "Referer" to "$mainUrl/"
+                    "Referer" to "$base/"
                 )
             }
         )
     }
 }
 
-// Earnvids mirror -> morencius.com (same JWPlayer unpack family)
+// Earnvids mirror (same JWPlayer unpack family as StreamHG)
 class Earnvids : Streamhg() {
     override var name = "Earnvids"
     override var mainUrl = "https://morencius.com"
 }
 
-// Luluvdo mirror -> luluvdo.com (same JWPlayer unpack family)
+// Luluvdo mirror (same JWPlayer unpack family as StreamHG)
 class Luluvdo : Streamhg() {
     override var name = "Luluvdo"
     override var mainUrl = "https://luluvdo.com"
@@ -401,7 +416,7 @@ private fun detectQualityFromPage(html: String): Int {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Byse -> bysetayico.com (used as the "flmn" mirror inside FilesForever)
+// Byse (used as the "flmn" mirror inside FilesForever)
 //  1) URL: /e/{code}
 //  2) GET  /api/videos/{code}
 //  3) playback = AES-256-GCM encrypted JSON
@@ -424,7 +439,13 @@ class Byse : ExtractorApi() {
             ?: url.trimEnd('/').substringAfterLast('/').substringBefore('?')
         if (code.isBlank()) return
 
-        val apiUrl = "$mainUrl/api/videos/$code"
+        // live origin of the embed page (the api host rotates with it)
+        val base = urlOrigin(url) ?: run {
+            Log.e(name, "bad url: $url")
+            return
+        }
+
+        val apiUrl = "$base/api/videos/$code"
         val raw = try {
             app.get(
                 apiUrl,
@@ -482,9 +503,9 @@ class Byse : ExtractorApi() {
                     type = if (isHls) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                 ) {
                     this.quality = getQualityFromName(label)
-                    this.referer = mainUrl
+                    this.referer = base
                     this.headers = mapOf(
-                        "Referer" to "$mainUrl/",
+                        "Referer" to "$base/",
                         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                     )
                 }
@@ -604,7 +625,7 @@ class StreamTape : ExtractorApi() {
 
         callback(
             newExtractorLink(name, name, url = finalUrl, type = ExtractorLinkType.VIDEO) {
-                this.referer = mainUrl
+                this.referer = urlOrigin(url) ?: mainUrl
                 this.quality = detectQualityFromPage(html)
                 this.headers = mapOf("User-Agent" to USER_AGENT)
             }
@@ -664,7 +685,7 @@ class MixDrop : ExtractorApi() {
 
         callback(
             newExtractorLink(name, name, url = finalUrl, type = ExtractorLinkType.VIDEO) {
-                this.referer = mainUrl
+                this.referer = urlOrigin(url) ?: mainUrl
                 this.quality = Qualities.Unknown.value
                 this.headers = mapOf("User-Agent" to USER_AGENT)
             }
@@ -675,7 +696,7 @@ class MixDrop : ExtractorApi() {
 // ─────────────────────────────────────────────────────────────
 // DoodStream (used as the "ddstm" mirror inside FilesForever)
 //  1) GET embed page -> find /pass_md5/{token}/{file} path
-//  2) GET {mainUrl}/pass_md5/... (Referer: mainUrl) -> direct CDN url text
+//  2) GET {origin}/pass_md5/... -> direct CDN url text
 //  3) final link = direct url + "?" + random 10-char token
 // ─────────────────────────────────────────────────────────────
 class DoodStream : ExtractorApi() {
@@ -689,7 +710,13 @@ class DoodStream : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        val res = app.get(url, referer = referer ?: "$mainUrl/").text
+        // live origin of the embed page (the pass_md5 host rotates with it)
+        val base = urlOrigin(url) ?: run {
+            Log.e(name, "bad url: $url")
+            return
+        }
+
+        val res = app.get(url, referer = referer ?: "$base/").text
 
         val md5Path = Regex("""/pass_md5/[^'"]+""").find(res)?.value ?: run {
             Log.e(name, "pass_md5 path not found")
@@ -697,7 +724,7 @@ class DoodStream : ExtractorApi() {
         }
 
         val directUrl = try {
-            app.get("$mainUrl$md5Path", referer = "$mainUrl/").text.trim()
+            app.get("$base$md5Path", referer = "$base/").text.trim()
         } catch (e: Exception) {
             Log.e(name, "pass_md5 request failed: ${e.message}")
             return
@@ -712,11 +739,11 @@ class DoodStream : ExtractorApi() {
 
         callback(
             newExtractorLink(name, name, url = finalUrl, type = ExtractorLinkType.VIDEO) {
-                this.referer = "$mainUrl/"
+                this.referer = "$base/"
                 this.quality = detectQualityFromPage(res)
                 this.headers = mapOf(
                     "User-Agent" to USER_AGENT,
-                    "Referer" to "$mainUrl/"
+                    "Referer" to "$base/"
                 )
             }
         )
@@ -729,7 +756,7 @@ class DoodStream : ExtractorApi() {
 }
 
 // ─────────────────────────────────────────────────────────────
-// FilesForever -> filesforever.link/embed/{sid}
+// FilesForever -> /embed/{sid}
 //  1) GET the embed page (follows a 302 chain to the player origin)
 //  2) POST embedhelper2.php on the player origin
 //     -> sources: mirror definitions, mresult: base64 mirror id map
@@ -752,7 +779,7 @@ class FilesForever : ExtractorApi() {
 
         // Step 1: resolve embed page -> player origin (follows the 302 chain)
         val resolved = try {
-            app.get("$mainUrl/embed/$sid", referer = referer ?: mainUrl)
+            app.get(url, referer = referer ?: mainUrl)
         } catch (e: Exception) {
             Log.e(name, "embed resolve failed: ${e.message}")
             return
@@ -776,7 +803,7 @@ class FilesForever : ExtractorApi() {
                     "currentDomain" to playerOrigin.removePrefix("https://"),
                 ),
                 headers = mapOf(
-                    "Referer" to "$mainUrl/embed/$sid",
+                    "Referer" to url,
                     "Origin" to playerOrigin,
                     "X-Requested-With" to "XMLHttpRequest",
                 )
@@ -808,20 +835,23 @@ class FilesForever : ExtractorApi() {
             }
         }
 
-        // helper: siteUrl + id + embedSuffix (same as JS constructIframeSrc)
-        fun mirrorUrl(key: String, id: String, fallback: String): String {
-            val src = root.sources?.get(key)
-            val site = (src?.siteUrl ?: fallback)
-            val suffix = src?.embedSuffix ?: ""
-            return site + id + (suffix ?: "")
+        // helper: live mirror site url + id + embedSuffix (same as JS
+        // constructIframeSrc). The helper api always carries the current
+        // domain of each mirror; when it is missing the mirror is skipped
+        // instead of guessing a hardcoded domain that may no longer exist.
+        fun mirrorUrl(key: String, id: String): String? {
+            val src = root.sources?.get(key) ?: return null
+            val site = src.siteUrl?.takeIf { it.isNotBlank() } ?: return null
+            return site + id + (src.embedSuffix ?: "")
         }
 
         // Step 3: route each mirror to its custom extractor
 
-        // smwh = StreamHG (hanerix.com family)
+        // smwh = StreamHG
         mirrors["smwh"]?.takeIf { it.isNotBlank() }?.let { id ->
+            val mirrorPage = mirrorUrl("smwh", id) ?: return@let
             try {
-                Streamhg().getUrl(mirrorUrl("smwh", id, "https://hanerix.com/e/"), referer, subtitleCallback, callback)
+                Streamhg().getUrl(mirrorPage, referer, subtitleCallback, callback)
             } catch (e: Exception) {
                 Log.e(name, "StreamHG failed: ${e.message}")
             }
@@ -830,7 +860,7 @@ class FilesForever : ExtractorApi() {
         // strmp2 = StreamP2P (upns-family player)
         mirrors["strmp2"]?.takeIf { it.isNotBlank() }?.let { id ->
             try {
-                val fullUrl = mirrorUrl("strmp2", id, "https://cloudy.p2pplay.pro/#")
+                val fullUrl = mirrorUrl("strmp2", id) ?: return@let
                 UpnsPlayer().apply {
                     this.name = "StreamPro"
                     this.mainUrl = getHost(fullUrl)
@@ -840,19 +870,21 @@ class FilesForever : ExtractorApi() {
             }
         }
 
-        // flmn = Byse (bysetayico.com, AES-256-GCM)
+        // flmn = Byse (AES-256-GCM)
         mirrors["flmn"]?.takeIf { it.isNotBlank() }?.let { id ->
+            val mirrorPage = mirrorUrl("flmn", id) ?: return@let
             try {
-                Byse().getUrl(mirrorUrl("flmn", id, "https://bysetayico.com/e/"), referer, subtitleCallback, callback)
+                Byse().getUrl(mirrorPage, referer, subtitleCallback, callback)
             } catch (e: Exception) {
                 Log.e(name, "Byse failed: ${e.message}")
             }
         }
 
-        // flls = EarnVids (morencius.com)
+        // flls = EarnVids
         mirrors["flls"]?.takeIf { it.isNotBlank() }?.let { id ->
+            val mirrorPage = mirrorUrl("flls", id) ?: return@let
             try {
-                Earnvids().getUrl(mirrorUrl("flls", id, "https://morencius.com/v/"), referer, subtitleCallback, callback)
+                Earnvids().getUrl(mirrorPage, referer, subtitleCallback, callback)
             } catch (e: Exception) {
                 Log.e(name, "EarnVids failed: ${e.message}")
             }
@@ -860,8 +892,9 @@ class FilesForever : ExtractorApi() {
 
         // strmtp = StreamTape
         mirrors["strmtp"]?.takeIf { it.isNotBlank() }?.let { id ->
+            val mirrorPage = mirrorUrl("strmtp", id) ?: return@let
             try {
-                StreamTape().getUrl(mirrorUrl("strmtp", id, "https://streamtape.site/e/"), referer, subtitleCallback, callback)
+                StreamTape().getUrl(mirrorPage, referer, subtitleCallback, callback)
             } catch (e: Exception) {
                 Log.e(name, "StreamTape failed: ${e.message}")
             }
@@ -869,8 +902,9 @@ class FilesForever : ExtractorApi() {
 
         // mxdp = MixDrop
         mirrors["mxdp"]?.takeIf { it.isNotBlank() }?.let { id ->
+            val mirrorPage = mirrorUrl("mxdp", id) ?: return@let
             try {
-                MixDrop().getUrl(mirrorUrl("mxdp", id, "https://mixdrop.ag/e/"), referer, subtitleCallback, callback)
+                MixDrop().getUrl(mirrorPage, referer, subtitleCallback, callback)
             } catch (e: Exception) {
                 Log.e(name, "MixDrop failed: ${e.message}")
             }
@@ -878,8 +912,9 @@ class FilesForever : ExtractorApi() {
 
         // ddstm = DoodStream
         mirrors["ddstm"]?.takeIf { it.isNotBlank() }?.let { id ->
+            val mirrorPage = mirrorUrl("ddstm", id) ?: return@let
             try {
-                DoodStream().getUrl(mirrorUrl("ddstm", id, "https://dood.li/e/"), referer, subtitleCallback, callback)
+                DoodStream().getUrl(mirrorPage, referer, subtitleCallback, callback)
             } catch (e: Exception) {
                 Log.e(name, "DoodStream failed: ${e.message}")
             }
@@ -887,8 +922,9 @@ class FilesForever : ExtractorApi() {
 
         // llstm = Luluvdo
         mirrors["llstm"]?.takeIf { it.isNotBlank() }?.let { id ->
+            val mirrorPage = mirrorUrl("llstm", id) ?: return@let
             try {
-                Luluvdo().getUrl(mirrorUrl("llstm", id, "https://luluvdo.com/e/"), referer, subtitleCallback, callback)
+                Luluvdo().getUrl(mirrorPage, referer, subtitleCallback, callback)
             } catch (e: Exception) {
                 Log.e(name, "Luluvdo failed: ${e.message}")
             }
@@ -919,9 +955,9 @@ class FilesForever : ExtractorApi() {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Vidara -> vidara.to/e/{code}
+// Vidara -> /e/{code}
 //  1) code = last path segment of the /e/{code} url
-//  2) POST {mainUrl}/api/stream  (JSON body)
+//  2) POST {origin}/api/stream  (JSON body)
 //        { "filecode": code, "device": "web", "codecs": [] }
 //     -> { streaming_url, title, subtitles: [{type, language, file_path}] }
 //  3) The stream CDN rejects non-browser user agents (okhttp -> 404),
@@ -941,12 +977,18 @@ class Vidara : ExtractorApi() {
         val fileCode = url.trimEnd('/').substringAfterLast('/')
         if (fileCode.isBlank()) return
 
+        // live origin of the embed page (the api host rotates with it)
+        val base = urlOrigin(url) ?: run {
+            Log.e(name, "bad url: $url")
+            return
+        }
+
         val res = try {
             app.post(
-                url = "$mainUrl/api/stream",
+                url = "$base/api/stream",
                 headers = mapOf(
                     "User-Agent" to USER_AGENT,
-                    "Referer" to "$mainUrl/e/$fileCode",
+                    "Referer" to "$base/e/$fileCode",
                     "Content-Type" to "application/json"
                 ),
                 requestBody = "{\"filecode\":\"$fileCode\",\"device\":\"web\",\"codecs\":[]}".toRequestBody("application/json".toMediaType())
@@ -966,11 +1008,11 @@ class Vidara : ExtractorApi() {
 
         callback(
             newExtractorLink(source = name, name = name, url = streamUrl, type = ExtractorLinkType.M3U8) {
-                this.referer = "$mainUrl/"
+                this.referer = "$base/"
                 this.quality = detectQualityFromPage(res.title.orEmpty())
                 this.headers = mapOf(
                     "User-Agent" to USER_AGENT,
-                    "Referer" to "$mainUrl/"
+                    "Referer" to "$base/"
                 )
             }
         )
@@ -991,7 +1033,7 @@ class Vidara : ExtractorApi() {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Vidmoly -> vidmoly.org/embed-{code}.html (vidmoly.net family)
+// Vidmoly -> /embed-{code}.html (vidmoly.net family)
 // JWPlayer config inline -> m3u8 + .vtt subtitles.
 // ─────────────────────────────────────────────────────────────
 class Vidmoly : ExtractorApi() {
@@ -1005,7 +1047,8 @@ class Vidmoly : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        val txt = app.get(url, referer = referer ?: mainUrl).text
+        val base = urlOrigin(url) ?: mainUrl
+        val txt = app.get(url, referer = referer ?: base).text
 
         val m3u8 = Regex("""file\s*:\s*['"]([^'"]+\.m3u8[^'"]*)['"]""")
             .find(txt)?.groupValues?.get(1)
@@ -1019,11 +1062,11 @@ class Vidmoly : ExtractorApi() {
 
         callback(
             newExtractorLink(name, name, url = m3u8, type = ExtractorLinkType.M3U8) {
-                this.referer = mainUrl
+                this.referer = base
                 this.quality = detectQualityFromPage(txt)
                 this.headers = mapOf(
                     "User-Agent" to USER_AGENT,
-                    "Referer" to "$mainUrl/"
+                    "Referer" to "$base/"
                 )
             }
         )

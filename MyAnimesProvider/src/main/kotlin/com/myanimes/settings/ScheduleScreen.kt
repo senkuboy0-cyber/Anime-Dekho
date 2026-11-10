@@ -41,6 +41,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Calendar
+import java.util.Locale
 import java.util.TimeZone
 
 data class ScheduleResponse(
@@ -59,6 +60,8 @@ data class ScheduleItem(
     @JsonProperty("poster_url") val posterUrl: String? = null,
     @JsonProperty("total_eps") val totalEps: Int? = null,
     @JsonProperty("current_ep") val currentEp: Int? = null,
+    @JsonProperty("episode_schedule") val episodeSchedule: List<String>? = null,
+    @JsonProperty("episodes_per_release") val episodesPerRelease: Int? = null,
     @JsonProperty("frequency") val frequency: String? = null,
     @JsonProperty("is_new") val isNew: Int? = null,
     @JsonProperty("is_paused") val isPaused: Int? = null,
@@ -71,7 +74,11 @@ data class ScheduleItem(
  *
  * - A weekday selector picks which day is displayed; the current day
  *   is selected by default.
- * - Every card carries a live countdown chip on top:
+ * - The per-episode release dates (episode_schedule) drive everything:
+ *   index 0 = episode 1, a date repeated several times = several
+ *   episodes that day, and current_ep marks how many episodes are out.
+ * - Every card carries a live countdown chip on top, counting to the
+ *   episodes of the selected tab date:
  *     today            -> "HH:MM:SS", turning into "Released" once the
  *                         release time has passed
  *     any other day    -> "Xd HH:MM:SS" until that day's release
@@ -89,6 +96,11 @@ class ScheduleScreen(context: Context) : Dialog(context, android.R.style.Theme_B
         private val TEXT_SECONDARY = Color.parseColor("#A0A0A5")
         private val RELEASED_GREEN = Color.parseColor("#5AD07A")
         private val RELEASED_BG = Color.parseColor("#1D3326")
+
+        private val MONTHS = listOf(
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+        )
 
         private val WEEK_DAYS = listOf(
             "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"
@@ -117,6 +129,9 @@ class ScheduleScreen(context: Context) : Dialog(context, android.R.style.Theme_B
     private var allItems: List<ScheduleItem> = emptyList()
     private var siteTimeZone: TimeZone = TimeZone.getDefault()
     private var selectedDay: String = currentDayName()
+
+    /** Concrete yyyy-MM-dd date (site timezone) shown by the selected tab. */
+    private var selectedDateKey: String = todayKey()
     private var timeZoneNote: String? = null
 
     /** Countdown chip currently on screen, refreshed once per second. */
@@ -176,6 +191,60 @@ class ScheduleScreen(context: Context) : Dialog(context, android.R.style.Theme_B
         return hour to minute
     }
 
+    /** yyyy-MM-dd of "now" in the site timezone. */
+    private fun todayKey(): String {
+        val cal = Calendar.getInstance(siteTimeZone)
+        return String.format(
+            Locale.US, "%04d-%02d-%02d",
+            cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1, cal.get(Calendar.DAY_OF_MONTH)
+        )
+    }
+
+    /** yyyy-MM-dd (site timezone) of the next occurrence of a weekday tab, today included. */
+    private fun dateKeyForDay(day: String): String {
+        val cal = Calendar.getInstance(siteTimeZone)
+        val targetDow = DAY_TO_CALENDAR[day] ?: return todayKey()
+        cal.add(Calendar.DAY_OF_YEAR, (targetDow - cal.get(Calendar.DAY_OF_WEEK) + 7) % 7)
+        return String.format(
+            Locale.US, "%04d-%02d-%02d",
+            cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1, cal.get(Calendar.DAY_OF_MONTH)
+        )
+    }
+
+    /** Epoch millis of a yyyy-MM-dd date at the given (hour, minute), site timezone. */
+    private fun targetMillisFor(dateKey: String, time: Pair<Int, Int>?): Long? {
+        time ?: return null
+        val p = dateKey.trim().split("-")
+        val year = p.getOrNull(0)?.toIntOrNull() ?: return null
+        val month = p.getOrNull(1)?.toIntOrNull() ?: return null
+        val day = p.getOrNull(2)?.toIntOrNull() ?: return null
+        val cal = Calendar.getInstance(siteTimeZone)
+        cal.clear()
+        cal.set(year, month - 1, day, time.first, time.second, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+        return cal.timeInMillis
+    }
+
+    /** Episode numbers (1-based) releasing on a yyyy-MM-dd date; index 0 = episode 1. */
+    private fun episodesOnDate(item: ScheduleItem, dateKey: String): List<Int> {
+        val schedule = item.episodeSchedule ?: return emptyList()
+        return schedule.mapIndexedNotNull { index, d ->
+            if (d.trim().take(10) == dateKey) index + 1 else null
+        }
+    }
+
+    /** First upcoming (today or later) release date that still has an unreleased episode. */
+    private fun nextUnreleasedDateKey(item: ScheduleItem, currentEp: Int): String? {
+        val schedule = item.episodeSchedule ?: return null
+        val today = todayKey()
+        for (i in schedule.indices) {
+            if (i + 1 > currentEp && schedule[i].trim().take(10) >= today) {
+                return schedule[i].trim().take(10)
+            }
+        }
+        return null
+    }
+
     /**
      * Epoch millis of the next release for the given weekday at the given
      * time. Returns the target together with whether that weekday is the
@@ -194,10 +263,27 @@ class ScheduleScreen(context: Context) : Dialog(context, android.R.style.Theme_B
         return nowCal.timeInMillis to (daysAhead == 0)
     }
 
-    /** True when the item belongs on the given weekday tab (daily items show every day). */
-    private fun showsOnDay(item: ScheduleItem, day: String): Boolean {
+    /** True when the item matches the weekly release_day pattern (daily shows every day). */
+    private fun matchesReleaseDay(item: ScheduleItem, day: String): Boolean {
         val d = item.releaseDay?.trim()?.takeIf { it.isNotBlank() } ?: return true
         return d.equals(day, true) || d.equals("Daily", true)
+    }
+
+    /**
+     * True when the item belongs on the given weekday tab. The per-episode
+     * release dates (episode_schedule) are authoritative; only items without
+     * them fall back to the weekly release_day pattern. Tabs beyond the last
+     * scheduled date keep the weekly pattern visible.
+     */
+    private fun showsOnDay(item: ScheduleItem, day: String, dateKey: String): Boolean {
+        val daily = item.releaseDay?.equals("Daily", true) == true ||
+            item.frequency?.equals("daily", true) == true
+        val schedule = item.episodeSchedule
+        if (schedule.isNullOrEmpty()) return matchesReleaseDay(item, day) || daily
+        if (episodesOnDate(item, dateKey).isNotEmpty()) return true
+        if (daily) return true
+        val last = schedule.maxOfOrNull { it.trim().take(10) }
+        return last != null && dateKey > last && matchesReleaseDay(item, day)
     }
 
     private fun startTicks() {
@@ -231,6 +317,95 @@ class ScheduleScreen(context: Context) : Dialog(context, android.R.style.Theme_B
             }
             chip.view.setTextColor(ACCENT)
             chip.view.background = round(ACCENT_SOFT, 8)
+        }
+    }
+
+    /** "Nov 10" style label of a yyyy-MM-dd key. */
+    private fun prettyDateKey(key: String): String {
+        val p = key.split("-")
+        val month = p.getOrNull(1)?.toIntOrNull() ?: return key
+        val day = p.getOrNull(2)?.toIntOrNull() ?: return key
+        val name = MONTHS.getOrNull(month - 1) ?: return key
+        return "$name $day"
+    }
+
+    /**
+     * Binds the countdown chip of a card. Everything is derived from the
+     * per-episode release dates (episode_schedule) and current_ep:
+     *   - episodes of the selected tab date above current_ep are pending
+     *     -> live countdown to that date at release_time
+     *   - when those episodes are already out -> "Released"
+     *   - items without episode_schedule keep the weekly pattern countdown
+     */
+    private fun bindTimer(timerView: TextView, item: ScheduleItem) {
+        fun static(label: String, fg: Int, bg: Int) {
+            timerView.text = label
+            timerView.setTextColor(fg)
+            timerView.background = round(bg, 8)
+        }
+
+        if (item.isPaused == 1) {
+            static("Paused", TEXT_SECONDARY, CARD)
+            return
+        }
+
+        val currentEp = item.currentEp ?: 0
+        val schedule = item.episodeSchedule
+        val total = maxOf(item.totalEps ?: 0, schedule?.size ?: 0)
+        if (total > 0 && currentEp >= total) {
+            static("Released", RELEASED_GREEN, RELEASED_BG)
+            return
+        }
+
+        val eps = episodesOnDate(item, selectedDateKey)
+        when {
+            eps.isNotEmpty() -> {
+                if (eps.all { it <= currentEp }) {
+                    // every episode of this date is already out
+                    static("Released", RELEASED_GREEN, RELEASED_BG)
+                } else {
+                    val target = targetMillisFor(selectedDateKey, parseReleaseTime(item.releaseTime))
+                    if (target != null) {
+                        timerChips.add(TimerChip(timerView, target, selectedDateKey == todayKey()))
+                    } else {
+                        static("-", TEXT_SECONDARY, CARD)
+                    }
+                }
+            }
+            schedule.isNullOrEmpty() -> {
+                // no per-episode dates -> fall back to the weekly pattern
+                val target = releaseTarget(selectedDay, item.releaseTime)
+                if (target != null) {
+                    timerChips.add(TimerChip(timerView, target.first, target.second))
+                } else {
+                    static("-", TEXT_SECONDARY, CARD)
+                }
+            }
+            else -> {
+                // nothing scheduled on this tab date -> count down to the next release
+                val next = nextUnreleasedDateKey(item, currentEp)
+                val last = schedule.maxOfOrNull { it.trim().take(10) }
+                when {
+                    next != null -> {
+                        val target = targetMillisFor(next, parseReleaseTime(item.releaseTime))
+                        if (target != null) {
+                            timerChips.add(TimerChip(timerView, target, next == todayKey()))
+                        } else {
+                            static("-", TEXT_SECONDARY, CARD)
+                        }
+                    }
+                    last != null && selectedDateKey > last -> {
+                        // tab lies beyond the scheduled range -> weekly pattern
+                        val target = releaseTarget(selectedDay, item.releaseTime)
+                        if (target != null) {
+                            timerChips.add(TimerChip(timerView, target.first, target.second))
+                        } else {
+                            static("-", TEXT_SECONDARY, CARD)
+                        }
+                    }
+                    else -> static("Released", RELEASED_GREEN, RELEASED_BG)
+                }
+            }
         }
     }
 
@@ -423,13 +598,14 @@ class ScheduleScreen(context: Context) : Dialog(context, android.R.style.Theme_B
     private fun showDay(day: String) {
         if (allItems.isEmpty()) return
         selectedDay = day
+        selectedDateKey = dateKeyForDay(day)
         WEEK_DAYS.forEach { styleTab(it) }
 
         timerChips.clear()
         listContainer.removeAllViews()
         listScroll.scrollTo(0, 0)
 
-        listContainer.addView(text(day.uppercase(), 13f, ACCENT, true).apply {
+        listContainer.addView(text("${day.uppercase()}  •  ${prettyDateKey(selectedDateKey)}", 13f, ACCENT, true).apply {
             letterSpacing = 0.1f
             setPadding(dp(4), dp(2), dp(4), dp(2))
         })
@@ -439,7 +615,7 @@ class ScheduleScreen(context: Context) : Dialog(context, android.R.style.Theme_B
             })
         }
 
-        val dayItems = allItems.filter { showsOnDay(it, day) }
+        val dayItems = allItems.filter { showsOnDay(it, day, selectedDateKey) }
         if (dayItems.isEmpty()) {
             listContainer.addView(text("No releases scheduled for this day.", 13f, TEXT_SECONDARY).apply {
                 setPadding(dp(4), dp(8), dp(4), dp(8))
@@ -486,20 +662,7 @@ class ScheduleScreen(context: Context) : Dialog(context, android.R.style.Theme_B
             setTypeface(typeface, Typeface.BOLD)
             setPadding(dp(8), dp(3), dp(8), dp(3))
         }
-        if (item.isPaused == 1) {
-            timerView.text = "Paused"
-            timerView.setTextColor(TEXT_SECONDARY)
-            timerView.background = round(CARD, 8)
-        } else {
-            val target = releaseTarget(selectedDay, item.releaseTime)
-            if (target != null) {
-                timerChips.add(TimerChip(timerView, target.first, target.second))
-            } else {
-                timerView.text = if (selectedDay == currentDayName()) "Released" else "-"
-                timerView.setTextColor(TEXT_SECONDARY)
-                timerView.background = round(CARD, 8)
-            }
-        }
+        bindTimer(timerView, item)
         col.addView(timerView, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply { bottomMargin = dp(6) })
@@ -520,9 +683,15 @@ class ScheduleScreen(context: Context) : Dialog(context, android.R.style.Theme_B
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         val seasonPart = item.seasonName?.takeIf { it.isNotBlank() }
+        // EP line follows the selected tab date: one episode, a range when
+        // several episodes share the date, or the released count as fallback
+        val epsOnDay = episodesOnDate(item, selectedDateKey)
         val epPart = buildString {
-            append("EP ")
-            append(item.currentEp ?: 0)
+            when {
+                epsOnDay.isEmpty() -> append("EP ${item.currentEp ?: 0}")
+                epsOnDay.size == 1 -> append("EP ${epsOnDay.first()}")
+                else -> append("EP ${epsOnDay.first()}–${epsOnDay.last()}")
+            }
             val total = item.totalEps ?: 0
             if (total > 0) append("/$total")
         }
