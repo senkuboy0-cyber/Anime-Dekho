@@ -51,14 +51,14 @@
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/MyAnimesProvider.cs3",
         "status": 1,
-        "version": 18,
+        "version": 20,
         "name": "MyAnimesProvider",
         "internalName": "MyAnimesProvider",
         "authors": [
             "senkuboy0-cyber"
         ],
         "description": "MyAnimes: Hindi, Tamil, Telugu, English multi-audio anime, series and movies.",
-        "fileSize": 55939,
+        "fileSize": 84355,
         "repositoryUrl": "https://github.com/senkuboy0-cyber/Anime-Dekho",
         "language": "hi",
         "tvTypes": [
@@ -70,10 +70,7 @@
         ],
         "iconUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/refs/heads/main/assets/icons/myanimes.png",
         "apiVersion": 1,
-        "fileHash": "sha256-804d9745b01daba1aac80f36e56704459a147846af6ade488a65d5927e4751e0",
-        "jarFileSize": 207964,
-        "jarUrl": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/MyAnimesProvider.jar",
-        "jarHash": "sha256-3b39eda05cc3dbd933a4afa50decbeda4dbfce864b491347abcdceb3038472d3"
+        "fileHash": "sha256-683120d9a77922cd08dd74b709d21415b267ffb63fedcda88a2c77e94532315f"
     },
     {
         "url": "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/builds/OtanoxProvider.cs3",
