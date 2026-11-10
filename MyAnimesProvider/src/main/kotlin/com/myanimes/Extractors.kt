@@ -94,6 +94,74 @@ class Cloudy : UpnsPlayer() {
     override var mainUrl = "https://cloudy.upns.one"
 }
 
+/**
+ * RubyVidHub -> rubyvidhub.com (redirects to nuvorel.top, streamruby family).
+ *
+ * Verified live flow (2025-11):
+ *  1. GET https://rubyvidhub.com/embed-{code}.html  (follows 302 -> nuvorel.top)
+ *     The embed page contains the jwplayer config inline - no POST /dl needed
+ *     (unlike rubystm.com, POST /dl here returns a generic page).
+ *  2. Video:  jwplayer("vplayer").setup({ sources: [{file: "...master.m3u8?t=..."}] })
+ *  3. Subs:   tracks: [{file: "..._sli.vtt", kind: "thumbnails"},   <- preview, skip
+ *                      {file: "..._eng.vtt", label: "English", kind: "captions", "default": true}]
+ *     Only kind "captions" tracks are emitted as subtitles.
+ *  4. The stream CDN rejects non-browser user agents, so playback must
+ *     carry a desktop User-Agent header.
+ */
+class RubyVidHub : ExtractorApi() {
+    override var name = "RubyVidHub"
+    override var mainUrl = "https://rubyvidhub.com"
+    override val requiresReferer = true
+
+    override suspend fun getUrl(
+        url: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        val fileCode = url.substringAfterLast("/embed-").substringBefore(".html")
+        if (fileCode.isBlank()) return
+
+        // Follow the redirect (rubyvidhub.com -> nuvorel.top) and grab the
+        // embed page that already contains the full jwplayer setup.
+        val embedRes = app.get(url, referer = referer ?: mainUrl)
+        val html = embedRes.text
+
+        val m3u8 = Regex("""file\s*:\s*"?(https?://[^"\s]+\.m3u8[^"\s]*)"?""")
+            .find(html)?.groupValues?.get(1) ?: return
+
+        // tracks: only kind "captions" - skip the "thumbnails" preview track
+        Regex("""\{[^{}]*file\s*:\s*"?(https?://[^"\s]+\.vtt[^"\s]*)"?[^{}]*\}""").findAll(html)
+            .forEach { track ->
+                val obj = track.groupValues[0]
+                if (!obj.contains("captions", ignoreCase = true)) return@forEach
+                val label = Regex("""label\s*:\s*"([^"]*)"""").find(obj)
+                    ?.groupValues?.get(1)?.takeIf { it.isNotBlank() } ?: "English"
+                subtitleCallback(SubtitleFile(label, track.groupValues[1]))
+            }
+
+        val playerBase = try {
+            val u = URI(embedRes.url)
+            "${u.scheme}://${u.host}"
+        } catch (e: Exception) {
+            mainUrl
+        }
+
+        callback(
+            newExtractorLink(source = name, name = name, url = m3u8, type = ExtractorLinkType.M3U8) {
+                this.referer = "$playerBase/"
+                this.quality = Qualities.Unknown.value
+                // streamruby.net CDN rejects okhttp default UA (403),
+                // so the playback request must carry a desktop UA
+                this.headers = mapOf(
+                    "User-Agent" to USER_AGENT,
+                    "Referer" to "$playerBase/"
+                )
+            }
+        )
+    }
+}
+
 open class UpnsPlayer : ExtractorApi() {
     override var name = "Upns"
     override var mainUrl = "https://upns.one"

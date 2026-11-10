@@ -1,4 +1,4 @@
-version = 18
+version = 19
 
 cloudstream {
     language = "hi"
@@ -13,5 +13,5 @@ cloudstream {
         "Movie"
     )
     iconUrl = "https://raw.githubusercontent.com/senkuboy0-cyber/Anime-Dekho/refs/heads/main/assets/icons/myanimes.png"
-    isCrossPlatform = true
+    isCrossPlatform = false
 }

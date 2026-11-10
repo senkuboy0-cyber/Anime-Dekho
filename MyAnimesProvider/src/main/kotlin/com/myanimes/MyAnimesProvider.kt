@@ -5,12 +5,17 @@ import com.google.gson.Gson
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
+import com.lagradost.cloudstream3.LoadResponse.Companion.addAniListId
+import com.lagradost.cloudstream3.LoadResponse.Companion.addMalId
 import com.lagradost.cloudstream3.utils.AppUtils
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
 import kotlin.math.abs
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 
 // --- TMDB Data Classes ---
 data class TmdbImages(
@@ -47,6 +52,37 @@ data class TmdbDetails(
     val type: String?,
     val logo: String?,
     val backdrop: String?
+)
+
+data class TmdbSeasonBase(
+    @JsonProperty("season_number") val seasonNumber: Int? = null
+)
+
+data class TmdbShowResponse(
+    @JsonProperty("seasons") val seasons: List<TmdbSeasonBase>? = null
+)
+
+data class TmdbSeason(
+    @JsonProperty("episodes") val episodes: List<TmdbEpisode>? = null
+)
+
+data class TmdbEpisode(
+    @JsonProperty("season_number") val seasonNumber: Int? = null,
+    @JsonProperty("episode_number") val episodeNumber: Int? = null,
+    @JsonProperty("name") val name: String? = null,
+    @JsonProperty("still_path") val stillPath: String? = null
+)
+
+// Intermediate episode model so TMDB metadata can be merged
+// before building the final CloudStream episode list
+data class SiteEpisode(
+    val href: String,
+    val rawName: String,
+    val rawPoster: String?,
+    val season: Int,
+    val epNum: Int,
+    var finalName: String = rawName,
+    var finalPoster: String? = rawPoster
 )
 
 data class AnimeSaltSearchItem(
@@ -152,57 +188,69 @@ class MyAnimesProvider : MainAPI() {
         year: Int?
     ): TmdbDetails {
         return try {
-            val safeTitle = encodeUri(title)
-            val searchRes = app.get("$TMDB_API/search/multi?api_key=$TMDB_KEY&query=$safeTitle")
-                .parsedSafe<TmdbSearch>()
+            var tmdbId: Int? = null
+            var actualMediaType = if (isSeries) "tv" else "movie"
 
-            val validResults = searchRes?.results?.filter {
-                it.mediaType == "movie" || it.mediaType == "tv"
-            } ?: emptyList()
-            val normTitle = normalizeTitle(title)
-
-            val exactCandidates = validResults.filter {
-                normalizeTitle(it.title ?: it.name) == normTitle
-            }
-            var bestMatch = pickBestResult(exactCandidates, year)
-
-            if (bestMatch == null && normTitle.length >= 6) {
-                val startsWithCandidates = validResults.filter {
-                    val tn = normalizeTitle(it.title ?: it.name)
-                    tn.isNotEmpty() && tn.startsWith(normTitle)
-                }
-                bestMatch = pickBestResult(startsWithCandidates, year)
+            // 1. The page links the exact TMDB entry in its metadata sources section
+            parseTmdbDirect(document)?.let { direct ->
+                tmdbId = direct.second
+                actualMediaType = direct.first
             }
 
-            var tmdbId = bestMatch?.id
-            var actualMediaType = bestMatch?.mediaType ?: if (isSeries) "tv" else "movie"
-
+            // 2. Fallback: TMDB search by title
             if (tmdbId == null) {
-                val imdbId = document.select("a[href*=imdb.com/title]").mapNotNull { link ->
-                    val possibleId = link.attr("href").substringAfter("title/").substringBefore("/")
-                    if (possibleId.startsWith("tt")) possibleId else null
-                }.firstOrNull()
+                val safeTitle = encodeUri(title)
+                val searchRes = app.get("$TMDB_API/search/multi?api_key=$TMDB_KEY&query=$safeTitle")
+                    .parsedSafe<TmdbSearch>()
 
-                if (imdbId != null) {
-                    val findRes = app.get(
-                        "$TMDB_API/find/$imdbId?api_key=$TMDB_KEY&external_source=imdb_id"
-                    ).parsedSafe<TmdbFind>()
-                    val match = if (isSeries) {
-                        findRes?.tvShows?.firstOrNull() ?: findRes?.movies?.firstOrNull()
-                    } else {
-                        findRes?.movies?.firstOrNull() ?: findRes?.tvShows?.firstOrNull()
+                val validResults = searchRes?.results?.filter {
+                    it.mediaType == "movie" || it.mediaType == "tv"
+                } ?: emptyList()
+                val normTitle = normalizeTitle(title)
+
+                val exactCandidates = validResults.filter {
+                    normalizeTitle(it.title ?: it.name) == normTitle
+                }
+                var bestMatch = pickBestResult(exactCandidates, year)
+
+                if (bestMatch == null && normTitle.length >= 6) {
+                    val startsWithCandidates = validResults.filter {
+                        val tn = normalizeTitle(it.title ?: it.name)
+                        tn.isNotEmpty() && tn.startsWith(normTitle)
                     }
-                    if (match != null) {
-                        tmdbId = match.id
-                        actualMediaType = match.mediaType ?: actualMediaType
+                    bestMatch = pickBestResult(startsWithCandidates, year)
+                }
+
+                tmdbId = bestMatch?.id
+                actualMediaType = bestMatch?.mediaType ?: actualMediaType
+
+                if (tmdbId == null) {
+                    val imdbId = document.select("a[href*=imdb.com/title]").mapNotNull { link ->
+                        val possibleId = link.attr("href").substringAfter("title/").substringBefore("/")
+                        if (possibleId.startsWith("tt")) possibleId else null
+                    }.firstOrNull()
+
+                    if (imdbId != null) {
+                        val findRes = app.get(
+                            "$TMDB_API/find/$imdbId?api_key=$TMDB_KEY&external_source=imdb_id"
+                        ).parsedSafe<TmdbFind>()
+                        val match = if (isSeries) {
+                            findRes?.tvShows?.firstOrNull() ?: findRes?.movies?.firstOrNull()
+                        } else {
+                            findRes?.movies?.firstOrNull() ?: findRes?.tvShows?.firstOrNull()
+                        }
+                        if (match != null) {
+                            tmdbId = match.id
+                            actualMediaType = match.mediaType ?: actualMediaType
+                        }
                     }
                 }
-            }
 
-            if (tmdbId == null && validResults.isNotEmpty()) {
-                val fallback = pickBestResult(validResults, year)
-                tmdbId = fallback?.id
-                actualMediaType = fallback?.mediaType ?: actualMediaType
+                if (tmdbId == null && validResults.isNotEmpty()) {
+                    val fallback = pickBestResult(validResults, year)
+                    tmdbId = fallback?.id
+                    actualMediaType = fallback?.mediaType ?: actualMediaType
+                }
             }
 
             if (tmdbId == null) return TmdbDetails(null, null, null, null)
@@ -235,6 +283,84 @@ class MyAnimesProvider : MainAPI() {
         } catch (e: Exception) {
             Log.e("MyAnimes", "TMDB failed: ${e.message}")
             TmdbDetails(null, null, null, null)
+        }
+    }
+
+    /** Reads the exact TMDB tv/movie id linked on the page in its metadata sources section. */
+    private fun parseTmdbDirect(document: org.jsoup.nodes.Document): Pair<String, Int>? {
+        val href = document.selectFirst("nav.ma-metadata-sources a[href*=themoviedb.org]")
+            ?.attr("href") ?: return null
+        val match = Regex("themoviedb\\.org/(tv|movie)/(\\d+)").find(href) ?: return null
+        val id = match.groupValues[2].toIntOrNull() ?: return null
+        return match.groupValues[1] to id
+    }
+
+    /** MAL + AniList ids from the metadata sources section. CloudStream uses them
+     *  for tracking and to show the skip intro/outro buttons in the player. */
+    private fun parseExternalIds(document: org.jsoup.nodes.Document): Pair<Int?, Int?> {
+        val malId = document.selectFirst("nav.ma-metadata-sources a[href*=myanimelist.net]")
+            ?.attr("href")
+            ?.let { Regex("myanimelist\\.net/anime/(\\d+)").find(it)?.groupValues?.get(1)?.toIntOrNull() }
+        val aniListId = document.selectFirst("nav.ma-metadata-sources a[href*=anilist.co]")
+            ?.attr("href")
+            ?.let { Regex("anilist\\.co/anime/(\\d+)").find(it)?.groupValues?.get(1)?.toIntOrNull() }
+        return malId to aniListId
+    }
+
+    /**
+     * Enriches the site episodes with TMDB episode titles and stills.
+     * Every season is fetched up front; exact season/episode matches are preferred,
+     * with positional mapping as a fallback when the two sides number differently.
+     */
+    private suspend fun applyTmdbEpisodeMetadata(episodes: List<SiteEpisode>, tmdbDetails: TmdbDetails) {
+        val tmdbId = tmdbDetails.id ?: return
+        if (tmdbDetails.type != "tv" || episodes.isEmpty()) return
+
+        try {
+            val showRes = app.get("$TMDB_API/tv/$tmdbId?api_key=$TMDB_KEY").parsedSafe<TmdbShowResponse>()
+            val validSeasons = showRes?.seasons?.mapNotNull { it.seasonNumber }?.filter { it > 0 } ?: return
+            if (validSeasons.isEmpty()) return
+
+            val allTmdbEpisodes = mutableListOf<TmdbEpisode>()
+            coroutineScope {
+                validSeasons.map { sNum ->
+                    async {
+                        app.get("$TMDB_API/tv/$tmdbId/season/$sNum?api_key=$TMDB_KEY").parsedSafe<TmdbSeason>()
+                    }
+                }.awaitAll().forEach { season ->
+                    season?.episodes?.let { allTmdbEpisodes.addAll(it) }
+                }
+            }
+
+            allTmdbEpisodes.sortWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
+
+            val chronoEpisodes = episodes
+                .filter { it.season > 0 }
+                .sortedWith(compareBy({ it.season }, { it.epNum }))
+
+            if (tmdbId == 0x10196) {
+                // Leave Season 1 untouched and map Season 2+ sequentially starting from the 26th TMDB episode
+                val s2PlusEpisodes = chronoEpisodes.filter { it.season >= 2 }
+                val s2PlusTmdbEpisodes = allTmdbEpisodes.drop(25)
+
+                s2PlusEpisodes.forEachIndexed { index, ep ->
+                    val tmdbEp = s2PlusTmdbEpisodes.getOrNull(index) ?: return@forEachIndexed
+                    tmdbEp.name?.takeIf { it.isNotEmpty() }?.let { ep.finalName = it }
+                    tmdbEp.stillPath?.takeIf { it.isNotEmpty() }?.let { ep.finalPoster = "$TMDB_IMG$it" }
+                }
+            } else {
+                chronoEpisodes.forEachIndexed { index, ep ->
+                    val tmdbEp = allTmdbEpisodes.find {
+                        it.seasonNumber == ep.season && it.episodeNumber == ep.epNum
+                    } ?: allTmdbEpisodes.getOrNull(index)
+                    ?: return@forEachIndexed
+
+                    tmdbEp.name?.takeIf { it.isNotEmpty() }?.let { ep.finalName = it }
+                    tmdbEp.stillPath?.takeIf { it.isNotEmpty() }?.let { ep.finalPoster = "$TMDB_IMG$it" }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("MyAnimes", "TMDB episode mapping failed: ${e.message}")
         }
     }
 
@@ -326,15 +452,17 @@ class MyAnimesProvider : MainAPI() {
             ?: document.selectFirst("h1 a")?.text()?.trim()
             ?: return null
 
-        // সবার আগে মেইন পেজ থেকে আসা poster টাকেই নেওয়া হচ্ছে। যদি সেটা কোনো কারণে না থাকে, তবেই পেজ থেকে স্ক্র্যাপ করবে।
+        // Prefer the poster carried over from the home/search page; only fall
+        // back to scraping the details page when it is missing for some reason
         val poster = media.poster?.takeIf { it.isNotBlank() } 
             ?: document.selectFirst(".as-poster img, .post-thumbnail img")?.let {
                 it.attr("src").ifBlank { it.attr("data-src") }
             }
 
-        val plot = document.selectFirst(
-            ".as-overview, .overview, .description, .entry-content p, section.single p"
-        )?.text()?.trim()
+        // The clean description block; the surrounding .as-overview container
+        // also holds the heading, the read-more button and the genre tags
+        val plot = document.selectFirst("#as-overview-text")?.text()?.trim()
+            ?: document.selectFirst(".as-overview-text")?.text()?.trim()
 
         val year = document.selectFirst("span.year, .as-meta")?.text()?.let {
             Regex("""\b(19|20)\d{2}\b""").find(it)?.value?.toIntOrNull()
@@ -359,6 +487,7 @@ class MyAnimesProvider : MainAPI() {
 
         val tmdbTitle = cleanTitleForTmdb(title)
         val tmdbDetails = fetchTmdbDetails(document, tmdbTitle, !isMovie, year)
+        val (malId, aniListId) = parseExternalIds(document)
 
         if (isMovie) {
             return newMovieLoadResponse(title, url, TvType.AnimeMovie, actualUrl) {
@@ -370,10 +499,12 @@ class MyAnimesProvider : MainAPI() {
                 this.tags = tags
                 this.recommendations = recommendations
                 addActors(actors)
+                addMalId(malId)
+                addAniListId(aniListId)
             }
         }
 
-        val episodes = mutableListOf<Episode>()
+        val siteEpisodes = mutableListOf<SiteEpisode>()
 
         document.select("div.as-episode-grid").forEach { grid ->
             val seasonFromPanel = grid.attr("data-season-panel").toIntOrNull()
@@ -395,16 +526,11 @@ class MyAnimesProvider : MainAPI() {
                     a.selectFirst("img")?.attr("data-src")
                 }
 
-                episodes.add(newEpisode(href) {
-                    this.name = epName
-                    this.season = seasonNum
-                    this.episode = epNum
-                    this.posterUrl = epPoster
-                })
+                siteEpisodes.add(SiteEpisode(href, epName, epPoster, seasonNum, epNum))
             }
         }
 
-        if (episodes.isEmpty()) {
+        if (siteEpisodes.isEmpty()) {
             document.select("a.as-episode[href*=/episode/], a[href*=/episode/]").forEach { a ->
                 val href = fixUrl(a.attr("href"))
                 val seMatch = Regex("""(\d+)x(\d+)""").find(href)
@@ -413,18 +539,23 @@ class MyAnimesProvider : MainAPI() {
                 val epName = a.selectFirst("h3")?.text()?.trim()?.ifBlank { null } ?: "Episode $epNum"
                 val epPoster = a.selectFirst("img")?.attr("src")
 
-                episodes.add(newEpisode(href) {
-                    this.name = epName
-                    this.season = seasonNum
-                    this.episode = epNum
-                    this.posterUrl = epPoster
-                })
+                siteEpisodes.add(SiteEpisode(href, epName, epPoster, seasonNum, epNum))
             }
         }
 
-        val uniqueEpisodes = episodes.distinctBy { it.data }
+        val uniqueEpisodes = siteEpisodes.distinctBy { it.href }
+        applyTmdbEpisodeMetadata(uniqueEpisodes, tmdbDetails)
 
-        return newTvSeriesLoadResponse(title, url, TvType.TvSeries, uniqueEpisodes) {
+        val episodes = uniqueEpisodes.map { ep ->
+            newEpisode(ep.href) {
+                this.name = ep.finalName
+                this.season = ep.season
+                this.episode = ep.epNum
+                this.posterUrl = ep.finalPoster
+            }
+        }
+
+        return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
             this.posterUrl = poster
             this.backgroundPosterUrl = tmdbDetails.backdrop ?: poster
             this.logoUrl = tmdbDetails.logo
@@ -433,6 +564,8 @@ class MyAnimesProvider : MainAPI() {
             this.tags = tags
             this.recommendations = recommendations
             addActors(actors)
+            addMalId(malId)
+            addAniListId(aniListId)
         }
     }
 
