@@ -688,7 +688,7 @@ open class Streamhg : ExtractorApi() {
         val alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+/="
         var acc = 0
         var bits = 0
-        val out = ArrayList<Byte>(input.size * 3 / 4)
+        val out = ArrayList<Byte>(input.length * 3 / 4)
         for (c in input) {
             val idx = alphabet.indexOf(c)
             if (idx < 0 || idx == 64) continue
@@ -703,12 +703,25 @@ open class Streamhg : ExtractorApi() {
     }
 
     /** Tiny arithmetic evaluator for the obfuscator's hex math (ints, + - * /). */
-    private fun evalArith(expr: String): Long? {
-        var pos = 0
+    private fun evalArith(expr: String): Long? = ArithParser(expr).parse()
 
-        fun skipWs() { while (pos < expr.length && expr[pos].isWhitespace()) pos++ }
+    /**
+     * Recursive-descent parser as a small class so that primary/term/sum can
+     * call each other (local functions in Kotlin cannot be mutually recursive).
+     */
+    private class ArithParser(private val expr: String) {
+        private var pos = 0
 
-        fun primary(): Double? {
+        fun parse(): Long? {
+            val result = sum() ?: return null
+            skipWs()
+            if (pos != expr.length) return null
+            return if (result.isNaN() || result.isInfinite()) null else result.toLong()
+        }
+
+        private fun skipWs() { while (pos < expr.length && expr[pos].isWhitespace()) pos++ }
+
+        private fun primary(): Double? {
             skipWs()
             if (pos < expr.length && expr[pos] == '(') {
                 pos++
@@ -729,7 +742,7 @@ open class Streamhg : ExtractorApi() {
             return value?.times(sign)
         }
 
-        fun term(): Double? {
+        private fun term(): Double? {
             var v = primary() ?: return null
             while (true) {
                 skipWs()
@@ -741,7 +754,7 @@ open class Streamhg : ExtractorApi() {
             }
         }
 
-        fun sum(): Double? {
+        private fun sum(): Double? {
             var v = term() ?: return null
             while (true) {
                 skipWs()
@@ -750,11 +763,6 @@ open class Streamhg : ExtractorApi() {
                 else return v
             }
         }
-
-        val result = sum() ?: return null
-        skipWs()
-        if (pos != expr.length) return null
-        return if (result.isNaN() || result.isInfinite()) null else result.toLong()
     }
 
     private fun matchBrace(js: String, open: Int): Int? {

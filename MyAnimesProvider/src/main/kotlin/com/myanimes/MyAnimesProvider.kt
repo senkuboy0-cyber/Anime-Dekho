@@ -465,7 +465,7 @@ class MyAnimesProvider : MainAPI() {
                     this.name = epTitle
                     this.season = season
                     this.episode = episode
-                    this.poster = poster
+                    this.posterUrl = poster
                 }
             )) {
                 this.posterUrl = poster
