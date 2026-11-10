@@ -16,6 +16,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
 import android.os.Handler
 import android.os.Looper
 import android.text.TextUtils
@@ -43,6 +44,7 @@ import kotlinx.coroutines.withContext
 import java.util.Calendar
 import java.util.Locale
 import java.util.TimeZone
+import java.util.WeakHashMap
 
 data class ScheduleResponse(
     @JsonProperty("generated_at") val generatedAt: String? = null,
@@ -124,8 +126,21 @@ class ScheduleScreen(context: Context) : Dialog(context, android.R.style.Theme_B
     private lateinit var errorText: TextView
     private lateinit var tabsScroll: HorizontalScrollView
     private lateinit var tabsRow: LinearLayout
+    private lateinit var backButton: ImageView
+    private lateinit var retryButton: TextView
 
     private val tabViews = linkedMapOf<String, TextView>()
+
+    // --- Android TV (D-pad) focus feedback state ---
+    // The visuals are applied only outside touch mode, so phones and
+    // tablets look and behave exactly as before; a remote is required
+    // to ever see them.
+    private class TvFocusSpec(val cornerRadius: Int, val scale: Float, val borderColor: Int)
+
+    private val tvFocusSpecs = WeakHashMap<View, TvFocusSpec>()
+
+    /** Normal background of a focused view, restored when focus leaves. */
+    private val tvFocusBase = WeakHashMap<View, Drawable>()
     private var allItems: List<ScheduleItem> = emptyList()
     private var siteTimeZone: TimeZone = TimeZone.getDefault()
     private var selectedDay: String = currentDayName()
@@ -153,6 +168,46 @@ class ScheduleScreen(context: Context) : Dialog(context, android.R.style.Theme_B
     private fun round(color: Int, radius: Int) = GradientDrawable().apply {
         cornerRadius = dp(radius).toFloat()
         setColor(color)
+    }
+
+    /**
+     * Registers a view for Android TV D-pad feedback: while focused it
+     * gets a colored border plus an optional slight scale-up so the user
+     * always sees which element the remote is pointing at. The listener
+     * is a no-op in touch mode, so the phone UI stays untouched.
+     */
+    private fun enableTvFocus(
+        view: View,
+        cornerRadius: Int,
+        scale: Float = 0f,
+        borderColor: Int = ACCENT
+    ) {
+        tvFocusSpecs[view] = TvFocusSpec(cornerRadius, scale, borderColor)
+        view.setOnFocusChangeListener { v, hasFocus ->
+            if (v.isInTouchMode) return@setOnFocusChangeListener
+            if (hasFocus) applyTvFocus(v) else clearTvFocus(v)
+        }
+    }
+
+    private fun applyTvFocus(view: View) {
+        val spec = tvFocusSpecs[view] ?: return
+        val base = tvFocusBase.getOrPut(view) { view.background }
+        val border = GradientDrawable().apply {
+            cornerRadius = dp(spec.cornerRadius).toFloat()
+            setStroke(dp(3), spec.borderColor)
+        }
+        view.background = if (base == null) border else LayerDrawable(arrayOf(base, border))
+        if (spec.scale > 1f) {
+            view.animate().scaleX(spec.scale).scaleY(spec.scale).setDuration(120).start()
+        }
+    }
+
+    private fun clearTvFocus(view: View) {
+        tvFocusBase[view]?.let { view.background = it }
+        val spec = tvFocusSpecs[view]
+        if (spec != null && spec.scale > 1f) {
+            view.animate().scaleX(1f).scaleY(1f).setDuration(120).start()
+        }
     }
 
     private fun text(s: String, size: Float, color: Int, bold: Boolean = false) = TextView(context).apply {
@@ -424,7 +479,7 @@ class ScheduleScreen(context: Context) : Dialog(context, android.R.style.Theme_B
             setPadding(dp(12), dp(14), dp(16), dp(14))
             setBackgroundColor(Color.BLACK)
         }
-        bar.addView(ImageView(context).apply {
+        backButton = ImageView(context).apply {
             setImageDrawable(BackIcon())
             background = round(CARD, 24)
             scaleType = ImageView.ScaleType.CENTER_INSIDE
@@ -432,7 +487,10 @@ class ScheduleScreen(context: Context) : Dialog(context, android.R.style.Theme_B
             isClickable = true
             isFocusable = true
             setOnClickListener { dismiss() }
-        }, LinearLayout.LayoutParams(dp(48), dp(48)))
+        }
+        // Android TV: visible D-pad focus on the back button
+        enableTvFocus(backButton, 24, scale = 1.08f)
+        bar.addView(backButton, LinearLayout.LayoutParams(dp(48), dp(48)))
 
         val titleCol = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
         titleCol.addView(text("MY ANIMES", 11f, TEXT_SECONDARY, true).apply { letterSpacing = 0.12f })
@@ -464,6 +522,9 @@ class ScheduleScreen(context: Context) : Dialog(context, android.R.style.Theme_B
                 isFocusable = true
                 setOnClickListener { showDay(day) }
             }
+            // Android TV: white border reads well on both the selected
+            // (accent) and the idle (dark) tab background
+            enableTvFocus(tab, 12, scale = 1.08f, borderColor = Color.WHITE)
             tabViews[day] = tab
             tabsRow.addView(tab, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
@@ -499,14 +560,17 @@ class ScheduleScreen(context: Context) : Dialog(context, android.R.style.Theme_B
         }
         errorText = text("", 14f, TEXT_SECONDARY).apply { gravity = Gravity.CENTER }
         errorBox.addView(errorText)
-        errorBox.addView(text("Retry", 15f, Color.WHITE, true).apply {
+        retryButton = text("Retry", 15f, Color.WHITE, true).apply {
             gravity = Gravity.CENTER
             background = round(ACCENT, 16)
             setPadding(dp(24), dp(12), dp(24), dp(12))
             isClickable = true
             isFocusable = true
             setOnClickListener { loadSchedule() }
-        }, LinearLayout.LayoutParams(
+        }
+        // Android TV: visible D-pad focus on the retry action
+        enableTvFocus(retryButton, 16, scale = 1.06f, borderColor = Color.WHITE)
+        errorBox.addView(retryButton, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply { topMargin = dp(16) })
         body.addView(errorBox, FrameLayout.LayoutParams(
@@ -531,6 +595,10 @@ class ScheduleScreen(context: Context) : Dialog(context, android.R.style.Theme_B
             setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT)
             setBackgroundDrawable(ColorDrawable(Color.BLACK))
         }
+        // Android TV: start with the focus on the back button so the user
+        // immediately sees where the remote is; in touch mode this is a
+        // no-op and nothing is highlighted
+        backButton.post { backButton.requestFocus() }
         loadSchedule()
     }
 
@@ -545,6 +613,12 @@ class ScheduleScreen(context: Context) : Dialog(context, android.R.style.Theme_B
         tv.setTextColor(if (selected) Color.WHITE else TEXT_SECONDARY)
         tv.background = round(if (selected) ACCENT else CARD_2, 12)
         tv.setPadding(dp(14), dp(7), dp(14), dp(7))
+        // Android TV: keep the focus border fresh when the focused tab
+        // gets re-styled after a selection change
+        if (tv.isFocused && !tv.isInTouchMode) {
+            tvFocusBase[tv] = tv.background
+            applyTvFocus(tv)
+        }
     }
 
     private fun setLoading(loading: Boolean) {
@@ -559,6 +633,8 @@ class ScheduleScreen(context: Context) : Dialog(context, android.R.style.Theme_B
         listContainer.visibility = View.GONE
         errorText.text = message
         errorBox.visibility = View.VISIBLE
+        // Android TV: hand the remote focus to Retry so it is reachable
+        retryButton.requestFocus()
     }
 
     private fun loadSchedule() {
@@ -643,6 +719,9 @@ class ScheduleScreen(context: Context) : Dialog(context, android.R.style.Theme_B
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(12), dp(12), dp(12), dp(12))
             background = round(CARD_2, 18)
+            // Android TV: rows are D-pad focusable so the whole list can
+            // be browsed with the remote; touch devices never show this
+            isFocusable = true
         }
 
         // Poster with rounded corners (bitmap clipped by the view outline)
@@ -744,6 +823,9 @@ class ScheduleScreen(context: Context) : Dialog(context, android.R.style.Theme_B
         })
 
         item.posterUrl?.takeIf { it.isNotBlank() }?.let { url -> loadPoster(url, poster) }
+
+        // Android TV: clear accent border while the row is focused
+        enableTvFocus(card, 18)
 
         return card
     }
