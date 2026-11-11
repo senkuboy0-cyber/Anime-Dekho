@@ -1254,9 +1254,8 @@ class HubCopy : ExtractorApi() {
             val inner = "$parent/v/$host?t=$token"
             val real = try {
                 val r = app.get("$inner&fetch=1", referer = parent, allowRedirects = false)
-                r.headers.entries
-                    .firstOrNull { it.key.equals("Location", true) }?.value
-                    ?.takeIf { it.startsWith("http") }
+                // okhttp3 Headers.get(name) is case-insensitive and returns the last value
+                r.headers["location"]?.takeIf { it.startsWith("http") }
             } catch (e: Exception) {
                 Log.e(name, "$host fetch=1 failed: ${e.message}")
                 null
