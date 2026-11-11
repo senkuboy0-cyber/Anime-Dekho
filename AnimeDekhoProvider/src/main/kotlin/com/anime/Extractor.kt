@@ -137,11 +137,41 @@ class Abyss : ExtractorApi() {
     )
 }
 
-// Unpacks obfuscated JavaScript to extract M3U8 URLs and VTT subtitle links.
+// Unpacks the StreamRuby player page to extract the master M3U8 and VTT subtitle tracks.
+// Handles BOTH url formats with ONE extractor:
+//   old:  https://nuvorel.top/embed-wh8qymiqj463.html
+//   new:  https://rubystm.com/e/gh6br0e4uu5a.html   (mirror -> 301 nuvorel.top)
+//
+// Fixes vs the old version:
+//   F1  fileCode regex matches /e/{code}.html AND embed-{code}.html
+//   F2  redirect resolved first (rubystm.com -> nuvorel.top); the /dl POST
+//       goes to the FINAL host, because the POST body is dropped on redirect
+//   F3  player page is now plain jwplayer().setup() (NOT packed) -> plain
+//       regex first, JsUnpacker only as legacy fallback
+//   F4  tracks parsed per-object: kind:"thumbnails" (seekbar sprite) skipped,
+//       label used as subtitle name; lang-code fallback if label missing
+//   F5  tracks sometimes keep an OLD file code while the m3u8 uses a remapped
+//       code (code_eng.vtt 404s, m3u8-path code works) -> code swapped from
+//       the m3u8 path
+//
+// Verified live on 2026-11-11:
+//   rubystm.com/e/gh6br0e4uu5a.html      -> m3u8 OK (360p..1080p, hi/ja audio)
+//   nuvorel.top/embed-wh8qymiqj463.html  -> m3u8 OK + [English] sub OK
 class StreamRuby : ExtractorApi() {
     override var name = "StreamRuby"
     override var mainUrl = "https://rubystm.com"
     override val requiresReferer = true
+
+    // F1: both /e/{code}.html and embed-{code}.html
+    private val codeRegex = Regex("""(?:/e/|embed-)([A-Za-z0-9]+)""")
+    private val m3u8Regex = Regex("""file\s*:\s*\u0022(https?://[^\u0022]+\.m3u8[^\u0022]*)\u0022""")
+    // F4: one track object: { file: "...vtt", label: "...", kind: "..." }
+    private val trackRegex = Regex("""\{\s*file\s*:\s*\u0022(https?://[^\u0022]+\.vtt[^\u0022]*)\u0022\s*,([^}]*)\}""")
+    private val labelRegex = Regex("""label\s*:\s*\u0022([^\u0022]*)\u0022""")
+    private val kindRegex = Regex("""kind\s*:\s*\u0022([^\u0022]*)\u0022""")
+    // F5: internal storage code inside the m3u8 path: /hls2/XX/NNNNN/{code}_...
+    private val hlsCodeRegex = Regex("""/hls2/[^/]+/[^/]+/([A-Za-z0-9]{12})_""")
+    private val packedRegex = Regex("""eval\(function\(p,a,c,k,e,d\)[\s\S]+?'\|'\)\)""")
 
     override suspend fun getUrl(
         url: String,
@@ -149,39 +179,56 @@ class StreamRuby : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        val fileCode = url.substringAfterLast("/e/").substringBefore(".html")
-        if (fileCode.isBlank()) return
+        val fileCode = codeRegex.find(url)?.groupValues?.get(1) ?: return
 
-        app.get("$mainUrl/e/$fileCode.html", referer = referer ?: mainUrl)
+        // F2: GET the embed url (follows the mirror 301) and take the FINAL host.
+        val page = app.get(url, referer = referer ?: mainUrl)
+        val base = Regex("""https?://[^/]+""").find(page.url)?.value
+            ?: return
 
-        val html = app.post(
-            url = "$mainUrl/dl",
-            data = mapOf(
-                "op" to "embed",
-                "file_code" to fileCode,
-                "auto" to "1",
-                "referer" to (referer ?: "")
-            ),
-            referer = "$mainUrl/e/$fileCode.html"
-        ).text
+        // F3: the old embed- format returns the player page on GET;
+        // the new /e/ format returns a snapshot landing page -> POST /dl.
+        var html = page.text
+        if (!html.contains(".m3u8") && !html.contains("jwplayer(")) {
+            html = app.post(
+                url = "$base/dl",
+                data = mapOf(
+                    "op" to "embed",
+                    "file_code" to fileCode,
+                    "auto" to "1",
+                    "referer" to (referer ?: "")
+                ),
+                referer = page.url
+            ).text
+        }
 
-        val packed = Regex("""eval\(function\(p,a,c,k,e,d\)[\s\S]+?'\|'\)\)""")
-            .find(html)?.value ?: return
-        val unpacked = JsUnpacker(packed).unpack() ?: return
+        // F3: plain jwplayer setup first; unpack only for legacy packed pages.
+        val player = if (m3u8Regex.containsMatchIn(html)) html
+        else {
+            val packed = packedRegex.find(html)?.value ?: return
+            JsUnpacker(packed).unpack() ?: return
+        }
 
-        val m3u8 = Regex("""file\s*:\s*\u0022(https?://[^\u0022]+\.m3u8[^\u0022]*)\u0022""")
-            .find(unpacked)?.groupValues?.get(1) ?: return
+        val m3u8 = m3u8Regex.find(player)?.groupValues?.get(1) ?: return
+        val realCode = hlsCodeRegex.find(m3u8)?.groupValues?.get(1)
 
-        val subMatches = Regex("""file\s*:\s*\u0022(https?://[^\u0022]+_([a-z]{2,3})\.vtt[^\u0022]*)\u0022[\s\S]+?kind\s*:\s*\u0022captions\u0022""")
-            .findAll(unpacked)
-        for (match in subMatches) {
-            subtitleCallback.invoke(SubtitleFile(match.groupValues[2], match.groupValues[1]))
+        // F4 + F5: subtitle name = label; skip thumbnails; fix remapped code.
+        for (t in trackRegex.findAll(player)) {
+            val subUrl = t.groupValues[1]
+            val rest = t.groupValues[2]
+            if (kindRegex.find(rest)?.groupValues?.get(1)?.contains("thumbnail") == true) continue
+            val label = labelRegex.find(rest)?.groupValues?.get(1)
+                ?: subUrl.substringAfterLast("_").substringBefore(".vtt").uppercase()
+            val fixedUrl = if (realCode != null)
+                subUrl.replace(Regex("""/([A-Za-z0-9]{12})_"""), "/$realCode" + "_")
+            else subUrl
+            subtitleCallback.invoke(SubtitleFile(label, fixedUrl))
         }
 
         callback.invoke(
             newExtractorLink(source = name, name = name, url = m3u8, type = ExtractorLinkType.M3U8) {
-                this.referer = mainUrl
-                this.quality = Qualities.Unknown.value
+                this.referer = base          // resolved host, e.g. nuvorel.top
+                this.quality = Qualities.Unknown.value   // master m3u8 -> all qualities
             }
         )
     }
@@ -1131,14 +1178,50 @@ class VidSrcGet : XerverMirror() {
     override var mainUrl = "https://animedekho.tv/aaa/get"
 }
 
-// 1) GET play file → regex fetch file?id=XXXX
-// 2) GET fetch file?id=XXXX → JSON sources
-class NeoCDN : ExtractorApi() {
-    private val domain = "https://animedekho.tv"
-
-    override var name = "NeoCDN"
-    override var mainUrl = "$domain/aaa/myth"
+// =========================================================================
+// HubCopy — aggregator player used by animedekho.tv (HubCopy-480p/720p/1080p).
+// The provider already unwraps its player.php wrapper via resolveRealIframe(),
+// so this extractor receives the direct page: https://cdn.hubcopy.vip/e/{slug}
+// (301 -> hubcopy.lol).
+//
+// Chain (verified live 2026-11-11, Psyren 1x3):
+//   page JS   : const D = {"slug":"..","players":[{"host":"..","label":".."}],"t":".."}, KEY = ".."
+//   inner     : https://cdn.hubcopy.vip/e/{slug}/v/{host}?t={t}
+//   trick     : append &fetch=1 -> HTTP 302, Location = REAL embed URL
+//
+//   StreamRuby  302 -> https://nuvorel.top/embed-fb2tpz15el2f.html
+//   Vidmoly     302 -> https://vidmoly.biz/embed-3dly23r517pd.html
+//   Byse        302 -> https://bysezejataos.com/e/30qcde8qsmcg
+//   Content.st  302 -> https://content.st/e/5ju35vspmuh
+//   LuluStream  302 -> https://luluvido.com/e/rfbkbeybnxgr
+//   Vidara      302 -> https://vidara.so/e/TvsXip2R6rfrF
+//   VOE         302 -> https://voe.sx/e/ccdnuamuigzi
+//
+// Each real URL is routed to its extractor. The proven hosts are called
+// directly because their live domains drifted away from the extractors'
+// mainUrl (nuvorel.top != rubystm.com, bysezejataos.com != bysetayico.com,
+// vidmoly.biz != vidmoly.net), so the global loadExtractor() cannot match
+// them. Everything else falls through to loadExtractor() as usual.
+// =========================================================================
+class HubCopy : ExtractorApi() {
+    override var name = "HubCopy"
+    override var mainUrl = "https://cdn.hubcopy.vip"   // 301 -> hubcopy.lol
     override val requiresReferer = true
+
+    // const D = {...}, KEY  (DOT_MATCHES_ALL ~ re.S; lazy so it stops at ", KEY")
+    private val dRegex = Regex("""const D = (\{.*?\}), KEY""", RegexOption.DOT_MATCHES_ALL)
+    private val hostRegex = Regex("""https?://[^/]+""")
+
+    data class HubCopyD(
+        val slug: String? = null,
+        val t: String? = null,
+        val players: List<HubCopyPlayer>? = null,
+    )
+
+    data class HubCopyPlayer(
+        val host: String? = null,
+        val label: String? = null,
+    )
 
     override suspend fun getUrl(
         url: String,
@@ -1146,70 +1229,66 @@ class NeoCDN : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        val headers = mapOf(
-            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Referer" to "$domain/",
-        )
-
+        // 1) GET the hubcopy page (cdn.hubcopy.vip redirects to hubcopy.lol)
         val page = try {
-            app.get(url, headers = headers).text
+            app.get(url, referer = referer ?: mainUrl)
         } catch (e: Exception) {
-            Log.e(name, "play failed: ${e.message}")
+            Log.e(name, "page failed: ${e.message}")
             return
         }
+        val base = hostRegex.find(page.url)?.value ?: return
 
-        val fetchId = Regex("""fetch\.php\?id=([A-Za-z0-9_-]+)""")
-            .find(page)?.groupValues?.getOrNull(1)
-            ?: run {
-                Log.e(name, "fetch id not found")
-                return
+        // 2) Parse the D object: slug + token + player list
+        val d = dRegex.find(page.text)?.groupValues?.get(1) ?: run {
+            Log.e(name, "D object not found")
+            return
+        }
+        val json = tryParseJson<HubCopyD>(d) ?: return
+        val slug = json.slug ?: return
+        val token = json.t ?: return
+        val parent = "$base/e/$slug"
+
+        // 3) For every player: /v/{host}?t={t}&fetch=1 -> 302 -> real embed URL
+        for (p in json.players.orEmpty()) {
+            val host = p.host ?: continue
+            val inner = "$parent/v/$host?t=$token"
+            val real = try {
+                val r = app.get("$inner&fetch=1", referer = parent, allowRedirects = false)
+                r.headers.entries
+                    .firstOrNull { it.key.equals("Location", true) }?.value
+                    ?.takeIf { it.startsWith("http") }
+            } catch (e: Exception) {
+                Log.e(name, "$host fetch=1 failed: ${e.message}")
+                null
+            }
+            if (real == null) {
+                Log.e(name, "${p.label ?: host}: no real URL (token dead?)")
+                continue
             }
 
-        val apiUrl = "$mainUrl/fetch.php?id=$fetchId"
-        val response = try {
-            app.get(
-                apiUrl,
-                headers = headers + mapOf("Accept" to "application/json"),
-                referer = url
-            ).parsedSafe<NeoCDNResponse>()
-        } catch (e: Exception) {
-            Log.e(name, "fetch api failed: ${e.message}")
-            return
-        } ?: return
-
-        val sources = response.sources
-        if (sources.isNullOrEmpty()) {
-            Log.e(name, "empty sources")
-            return
-        }
-
-        for (source in sources) {
-            val streamUrl = source.url?.takeIf { it.startsWith("http") } ?: continue
-            callback.invoke(
-                newExtractorLink(
-                    source = name,
-                    name = name,
-                    url = streamUrl,
-                    type = INFER_TYPE
-                ) {
-                    this.quality = getQualityFromName(source.type ?: "")
-                    this.headers = mapOf(
-                        "Referer" to "$domain/",
-                        "User-Agent" to headers.getValue("User-Agent")
-                    )
-                }
-            )
+            Log.i(name, "${p.label ?: host} -> $real")
+            delegate(real, referer ?: parent, subtitleCallback, callback)
         }
     }
 
-    data class NeoCDNResponse(
-        val final_url: String? = null,
-        val sources: List<NeoCDNSource>? = null,
-    )
-
-    data class NeoCDNSource(
-        val url: String? = null,
-        val size: String? = null,
-        val type: String? = null, 
-    )
+    // Route a resolved embed URL to the extractor that can parse it.
+    private suspend fun delegate(
+        realUrl: String,
+        referer: String?,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        return when {
+            listOf("streamruby", "rubystm", "nuvorel").any { realUrl.contains(it, true) } -> {
+                StreamRuby().getUrl(realUrl, referer, subtitleCallback, callback); true
+            }
+            realUrl.contains("vidmoly", true) -> {
+                VidMolyNet().getUrl(realUrl, referer, subtitleCallback, callback); true
+            }
+            realUrl.contains("byse", true) -> {
+                Byse().getUrl(realUrl, referer, subtitleCallback, callback); true
+            }
+            else -> loadExtractor(realUrl, referer, subtitleCallback, callback)
+        }
+    }
 }

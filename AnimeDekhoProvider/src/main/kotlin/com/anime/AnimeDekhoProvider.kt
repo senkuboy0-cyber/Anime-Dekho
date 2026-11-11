@@ -66,7 +66,7 @@ open class AnimeDekhoProvider : MainAPI() {
     private val byse           = Byse()
     private val xerverMirror   = XerverMirror()
     private val vidSrcGet      = VidSrcGet()
-    private val neoCdn         = NeoCDN()
+    private val hubCopy        = HubCopy()
 
     companion object {
         private const val USER_AGENT =
@@ -474,7 +474,7 @@ open class AnimeDekhoProvider : MainAPI() {
                 url.contains("bysetayico", true) || url.contains("byse", true) -> { byse.getUrl(url, referer, subtitleCallback, callback); true }
                 url.contains("mirror.xerver", true) || url.contains("xerver", true) -> { xerverMirror.getUrl(url, referer, subtitleCallback, callback); true }
                 url.contains("aaa/get", true) -> { vidSrcGet.getUrl(url, referer, subtitleCallback, callback); true }
-                url.contains("aaa/myth", true) -> { neoCdn.getUrl(url, referer, subtitleCallback, callback); true }
+                url.contains("hubcopy", true) -> { hubCopy.getUrl(url, referer, subtitleCallback, callback); true }
                 else -> loadExtractor(url, referer, subtitleCallback, callback)
             }
         } catch (e: Exception) {
