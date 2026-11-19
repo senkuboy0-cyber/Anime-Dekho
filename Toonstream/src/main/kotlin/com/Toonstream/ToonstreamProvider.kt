@@ -8,6 +8,8 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -162,31 +164,37 @@ class ToonstreamProvider : MainAPI() {
      * unlocked for the next 24 hours.
      */
     private suspend fun getDocumentBypassingAccessGate(url: String): Document {
-        val response = app.get(url)
+        // Ask without following redirects so the gate redirect can be
+        // inspected directly.
+        val response = app.get(url, allowRedirects = false)
+        val location = response.headers["location"]
 
-        // Page is not gated - return the document as-is.
-        if (!response.url.contains("/access", ignoreCase = true)) return response.document
-
-        // Recover the originally requested path (from the redirect's returnTo
-        // parameter, falling back to the path of the URL we requested).
-        val returnTo = extractReturnTo(response.url) ?: urlPathOf(url)
-
-        try {
-            app.post(
-                "$mainUrl/api/access/ads/verify",
-                headers = mapOf(
-                    "Content-Type" to "application/json",
-                    "Origin" to mainUrl,
-                    "Referer" to response.url
-                ),
-                body = Gson().toJson(mapOf("returnTo" to returnTo))
-            )
-        } catch (e: Exception) {
-            Log.w("ToonStream", "Access gate activation failed: ${e.message}")
+        if (response.code in 300..399 && location != null) {
+            // Gated page: activate the 24-hour pass first. The redirect
+            // carries the original path as its returnTo parameter.
+            if (location.contains("/access", ignoreCase = true)) {
+                val returnTo = extractReturnTo(location) ?: urlPathOf(url)
+                try {
+                    app.post(
+                        "$mainUrl/api/access/ads/verify",
+                        headers = mapOf(
+                            "Origin" to mainUrl,
+                            "Referer" to "$mainUrl/access"
+                        ),
+                        requestBody = Gson().toJson(mapOf("returnTo" to returnTo))
+                            .toRequestBody("application/json".toMediaType())
+                    )
+                } catch (e: Exception) {
+                    Log.w("ToonStream", "Access gate activation failed: ${e.message}")
+                }
+            }
+            // Re-fetch with redirects enabled: the gate is now open, or the
+            // redirect was a normal one the client should follow anyway.
+            return app.get(url).document
         }
 
-        // Re-fetch the original page now that the access cookies are stored.
-        return app.get(url).document
+        // Not gated - return the document as-is.
+        return response.document
     }
 
     /**
