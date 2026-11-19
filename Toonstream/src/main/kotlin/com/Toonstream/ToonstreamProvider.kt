@@ -11,6 +11,7 @@ import kotlinx.coroutines.launch
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import java.net.URLDecoder
 import java.net.URLEncoder
 import kotlin.math.abs
 
@@ -116,6 +117,76 @@ class ToonstreamProvider : MainAPI() {
         } catch (e: Exception) {
             text.replace(" ", "+")
         }
+    }
+
+    /**
+     * Extracts the URL-decoded "returnTo" query parameter from an /access
+     * gate redirect URL (e.g. /access?returnTo=%2Fepisode%2Ffoo%2F).
+     */
+    private fun extractReturnTo(accessUrl: String): String? {
+        return try {
+            val query = java.net.URI(accessUrl).rawQuery ?: return null
+            query.split("&")
+                .firstOrNull { it.startsWith("returnTo=") }
+                ?.substringAfter("returnTo=")
+                ?.let { URLDecoder.decode(it, "UTF-8") }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Builds the path (+ query) part of an absolute URL, used as the
+     * "returnTo" value when activating the access gate.
+     */
+    private fun urlPathOf(url: String): String {
+        return try {
+            val uri = java.net.URI(url)
+            val query = uri.rawQuery?.let { "?$it" } ?: ""
+            (uri.path ?: "/") + query
+        } catch (e: Exception) {
+            "/"
+        }
+    }
+
+    /**
+     * Fetches a page as a Jsoup Document while transparently bypassing
+     * ToonStream's 24-hour "access" ad gate.
+     *
+     * Gated pages (/episode/*, /movies/*) respond with a 302 redirect to
+     * /access?returnTo=<path> until a 24-hour pass has been activated.
+     * Activating it is a single POST to /api/access/ads/verify with the
+     * JSON body {"returnTo": "<path>"}. The response sets the access_token
+     * (+24h) and access_device (+1yr) HttpOnly cookies, which the shared
+     * OkHttp client persists automatically, so every later request stays
+     * unlocked for the next 24 hours.
+     */
+    private suspend fun getDocumentBypassingAccessGate(url: String): Document {
+        val response = app.get(url)
+
+        // Page is not gated - return the document as-is.
+        if (!response.url.contains("/access", ignoreCase = true)) return response.document
+
+        // Recover the originally requested path (from the redirect's returnTo
+        // parameter, falling back to the path of the URL we requested).
+        val returnTo = extractReturnTo(response.url) ?: urlPathOf(url)
+
+        try {
+            app.post(
+                "$mainUrl/api/access/ads/verify",
+                headers = mapOf(
+                    "Content-Type" to "application/json",
+                    "Origin" to mainUrl,
+                    "Referer" to response.url
+                ),
+                body = Gson().toJson(mapOf("returnTo" to returnTo))
+            )
+        } catch (e: Exception) {
+            Log.w("ToonStream", "Access gate activation failed: ${e.message}")
+        }
+
+        // Re-fetch the original page now that the access cookies are stored.
+        return app.get(url).document
     }
 
     /**
@@ -244,7 +315,6 @@ class ToonstreamProvider : MainAPI() {
 
     // Homepage categories definition
     override val mainPage = mainPageOf(
-        "fresh-drop"                          to "Fresh Drop",
         "category/anime-series"               to "Anime Series",
         "category/anime-movies"               to "Anime Movies",
         "category/language/hindi-language"    to "Hindi",
@@ -253,16 +323,7 @@ class ToonstreamProvider : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // Handle "Fresh Drop" category uniquely
-        if (request.data == "fresh-drop") {
-            val items = fetchFreshDrop()
-            return newHomePageResponse(
-                list = HomePageList(name = request.name, list = items, isHorizontalImages = true),
-                hasNext = false
-            )
-        }
-
-        // Handle other standard categories with pagination support
+        // Handle standard categories with pagination support
         val path = request.data
         val url = when {
             path == "category/anime-series" && page == 1 -> "$mainUrl/category/anime%20series?type=series"
@@ -280,45 +341,6 @@ class ToonstreamProvider : MainAPI() {
             list = HomePageList(name = request.name, list = home, isHorizontalImages = false),
             hasNext = home.isNotEmpty()
         )
-    }
-
-    /**
-     * Parses the "Fresh Drop" section from the homepage.
-     */
-    private suspend fun fetchFreshDrop(): List<SearchResponse> {
-        val document = app.get("$mainUrl/home/").document
-
-        val header = document.select("h3.section-title").firstOrNull { it.text().contains("Fresh Drop", ignoreCase = true) }
-            ?: return emptyList()
-
-        val section = header.parents().firstOrNull { it.select("article.post.dfx").isNotEmpty() }
-            ?: return emptyList()
-
-        return section.select("article.post.dfx").mapNotNull { el ->
-            val rawTitle = el.selectFirst("h2.entry-title")?.text()?.replace(Regex("(?i)Watch Online"), "")?.trim()
-            if (rawTitle.isNullOrBlank()) return@mapNotNull null
-
-            val cleanedTitle = cleanTitleText(rawTitle)
-            if (cleanedTitle.isBlank()) return@mapNotNull null
-
-            val hrefRaw = el.selectFirst("a.lnk-blk")?.attr("href") ?: return@mapNotNull null
-            val href = fixUrl(hrefRaw)
-
-            val posterRaw = el.selectFirst("img")?.attr("src")
-            val fallbackPoster = if (posterRaw.isNullOrEmpty()) null else if (posterRaw.startsWith("http")) posterRaw else "https:$posterRaw"
-
-            val rating = el.selectFirst("span.vote")?.text()?.replace("TMDB", "")?.trim()?.toDoubleOrNull()
-            
-            // Try fetching TMDB backdrop for horizontal image display
-            val tmdbAssets = fetchTmdbAssets(null, cleanedTitle, true, null)
-            val backdrop = tmdbAssets.backdropUrl ?: fallbackPoster
-            val mediaJson = Gson().toJson(ToonMedia(href, fallbackPoster))
-
-            newMovieSearchResponse(rawTitle, mediaJson, TvType.TvSeries) {
-                this.posterUrl = backdrop
-                this.score = Score.from10(rating)
-            }
-        }
     }
 
     /**
@@ -424,7 +446,9 @@ class ToonstreamProvider : MainAPI() {
         }
 
         val actualUrl = media.url
-        val document = app.get(actualUrl).document
+        // Movie detail pages (/movies/*) sit behind the access ad gate,
+        // series pages are not gated - the helper handles both cases.
+        val document = getDocumentBypassingAccessGate(actualUrl)
 
         val rawTitle = document.selectFirst("header.entry-header > h1")?.text()?.replace(Regex("(?i)Watch Online"), "")?.trim() ?: ""
         val cleanTitle = cleanTitleText(rawTitle)
@@ -458,7 +482,8 @@ class ToonstreamProvider : MainAPI() {
     }
 
     /**
-     * Parses episodes for TV series, including handling dynamic season loading via AJAX.
+     * Parses episodes for TV series by loading each season's episode list
+     * from the site's season fragment endpoint.
      */
     private suspend fun loadSeries(
         url: String,
@@ -478,29 +503,21 @@ class ToonstreamProvider : MainAPI() {
         val media = try { Gson().fromJson(url, ToonMedia::class.java) } catch (e: Exception) { ToonMedia(url, null) }
         val actualUrl = media.url
 
+        // The old WP admin-ajax route (action=action_select_season) is dead
+        // (404). The site's own JavaScript now loads each season with
+        // GET /series/<slug>/season/<N>, which responds with a bare HTML
+        // fragment of <li><article class="post ... episodes"> items.
+        val seasonBaseUrl = actualUrl.trimEnd('/')
         for (season in seasonNumbers) {
-            // Attempt to load episodes for the season via WP admin-ajax
             val seasonDoc = try {
-                app.post(
-                    "$mainUrl/wp-admin/admin-ajax.php",
-                    data = mapOf(
-                        "action" to "action_select_season",
-                        "season" to season.toString(),
-                        "post" to (document.selectFirst("a.season-btn[data-season='$season']")?.attr("data-post") ?: "")
-                    ),
-                    headers = mapOf("X-Requested-With" to "XMLHttpRequest")
-                ).document
+                getDocumentBypassingAccessGate("$seasonBaseUrl/season/$season")
             } catch (e: Exception) {
+                Log.w("ToonStream", "Season $season fetch failed: ${e.message}")
                 Jsoup.parse("")
             }
 
-            // Fallback to direct URL if AJAX fails or returns empty
-            val finalDoc = if (seasonDoc.select("article").isEmpty()) {
-                try { app.get("$actualUrl/season/$season").document } catch (e: Exception) { seasonDoc }
-            } else seasonDoc
-
             var epNum = 1
-            finalDoc.select("article.post.episodes, article.post").forEach { ep ->
+            seasonDoc.select("article.post.episodes, article.post").forEach { ep ->
                 val epHref = ep.selectFirst("a.lnk-blk, a")?.attr("href") ?: return@forEach
                 val epPosterRaw = ep.selectFirst("img")?.attr("src")
                 val epPoster = epPosterRaw?.let { if (it.startsWith("http")) it else "https:$it" }
@@ -581,7 +598,8 @@ class ToonstreamProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val document = app.get(data).document
+        // Episode pages sit behind the 24-hour access ad gate.
+        val document = getDocumentBypassingAccessGate(data)
         var found = false
 
         // 1. Extract streaming links embedded in iframes
