@@ -153,7 +153,7 @@ class ToonstreamProvider : MainAPI() {
      * Fetches a page as a Jsoup Document while transparently bypassing
      * ToonStream's 24-hour "access" ad gate.
      *
-     * Gated pages (/episode/*, /movies/*) respond with a 302 redirect to
+     * Gated pages (/episode/ and /movies/) respond with a 302 redirect to
      * /access?returnTo=<path> until a 24-hour pass has been activated.
      * Activating it is a single POST to /api/access/ads/verify with the
      * JSON body {"returnTo": "<path>"}. The response sets the access_token
