@@ -206,7 +206,8 @@ class ToonstreamProvider : MainAPI() {
                 // to get ALL Set-Cookie values (get() returns only one).
                 val rawCookies = response.headers.toMultimap()
                     .filter { it.key.equals("set-cookie", ignoreCase = true) }
-                    .flatMap { it.value }
+                    .map { it.value }
+                    .flatten()
                     .joinToString("\n")
 
                 val device = Regex("access_device=([^;\\s,]+)").find(rawCookies)?.groupValues?.get(1)
