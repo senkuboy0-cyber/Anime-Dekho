@@ -8,12 +8,13 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import java.net.URLDecoder
 import java.net.URLEncoder
 import kotlin.math.abs
 
@@ -121,21 +122,25 @@ class ToonstreamProvider : MainAPI() {
         }
     }
 
-    /**
-     * Extracts the URL-decoded "returnTo" query parameter from an /access
-     * gate redirect URL (e.g. /access?returnTo=%2Fepisode%2Ffoo%2F).
-     */
-    private fun extractReturnTo(accessUrl: String): String? {
-        return try {
-            val query = java.net.URI(accessUrl).rawQuery ?: return null
-            query.split("&")
-                .firstOrNull { it.startsWith("returnTo=") }
-                ?.substringAfter("returnTo=")
-                ?.let { URLDecoder.decode(it, "UTF-8") }
-        } catch (e: Exception) {
-            null
-        }
-    }
+    // ===================== 24-HOUR AD GATE UNLOCK =====================
+    //
+    // ToonStream gates /movies/ and /episode/ pages behind a 24-hour
+    // "access" pass. Live-tested on 2026-11-20:
+    //   * POST /api/access/ads/verify  {"returnTo":"<path>"} -> 200
+    //     {"success":true,...} + Set-Cookie access_token (24h) and
+    //     access_device (1yr). Works standalone (no prior page visit
+    //     needed), needs no Origin/Referer and accepts a plain
+    //     okhttp/* UA - even though the "Continue with Ads" button is
+    //     currently hidden on /access (continueskipEnabled:false), the
+    //     server still honors this endpoint.
+    //   * GET /api/access/status -> {"active":bool,"expiresAt":...}
+    //   * GET /api/access/ads/verify -> 404 (POST only)
+    //
+    // The old code relied on the shared OkHttp client persisting the
+    // HttpOnly cookies automatically; that is not reliable in
+    // Cloudstream, so the follow-up fetch stayed locked. Here the
+    // cookies are captured explicitly from Set-Cookie and sent back as
+    // a Cookie header on every gated request.
 
     /**
      * Builds the path (+ query) part of an absolute URL, used as the
@@ -151,50 +156,117 @@ class ToonstreamProvider : MainAPI() {
         }
     }
 
+    private val gateMutex = Mutex()
+    private var accessCookieHeader: String? = null
+    private var accessActivatedAtMs: Long = 0L
+
+    private fun accessPassFresh(): Boolean {
+        return accessCookieHeader != null &&
+            System.currentTimeMillis() - accessActivatedAtMs < 23 * 60 * 60 * 1000L
+    }
+
     /**
-     * Fetches a page as a Jsoup Document while transparently bypassing
-     * ToonStream's 24-hour "access" ad gate.
-     *
-     * Gated pages (/episode/ and /movies/) respond with a 302 redirect to
-     * /access?returnTo=<path> until a 24-hour pass has been activated.
-     * Activating it is a single POST to /api/access/ads/verify with the
-     * JSON body {"returnTo": "<path>"}. The response sets the access_token
-     * (+24h) and access_device (+1yr) HttpOnly cookies, which the shared
-     * OkHttp client persists automatically, so every later request stays
-     * unlocked for the next 24 hours.
+     * Only /movies/ and /episode/ pages are gated; /series/ (and its
+     * season fragments) are open.
      */
-    private suspend fun getDocumentBypassingAccessGate(url: String): Document {
-        // Ask without following redirects so the gate redirect can be
-        // inspected directly.
-        val response = app.get(url, allowRedirects = false)
-        val location = response.headers["location"]
+    private fun pageNeedsGate(url: String): Boolean {
+        return url.contains("/movies/", ignoreCase = true) ||
+            url.contains("/episode/", ignoreCase = true)
+    }
 
-        if (response.code in 300..399 && location != null) {
-            // Gated page: activate the 24-hour pass first. The redirect
-            // carries the original path as its returnTo parameter.
-            if (location.contains("/access", ignoreCase = true)) {
-                val returnTo = extractReturnTo(location) ?: urlPathOf(url)
-                try {
-                    app.post(
-                        "$mainUrl/api/access/ads/verify",
-                        headers = mapOf(
-                            "Origin" to mainUrl,
-                            "Referer" to "$mainUrl/access"
-                        ),
-                        requestBody = Gson().toJson(mapOf("returnTo" to returnTo))
-                            .toRequestBody("application/json".toMediaType())
+    /**
+     * Activates the 24-hour pass with a single standalone POST and
+     * returns the "access_device=...; access_token=..." cookie header
+     * built from the Set-Cookie response headers (null on failure).
+     */
+    private suspend fun activateAccessPass(returnTo: String): String? {
+        return gateMutex.withLock {
+            try {
+                val response = app.post(
+                    "$mainUrl/api/access/ads/verify",
+                    headers = mapOf(
+                        "Origin" to mainUrl,
+                        "Referer" to "$mainUrl/access"
+                    ),
+                    requestBody = Gson().toJson(mapOf("returnTo" to returnTo))
+                        .toRequestBody("application/json".toMediaType())
+                )
+
+                if (response.code != 200 || !response.text.contains("\"success\":true")) {
+                    Log.w(
+                        "ToonStream",
+                        "Gate activation failed (HTTP ${response.code}): ${response.text.take(120)}"
                     )
-                } catch (e: Exception) {
-                    Log.w("ToonStream", "Access gate activation failed: ${e.message}")
+                    return@withLock null
                 }
-            }
-            // Re-fetch with redirects enabled: the gate is now open, or the
-            // redirect was a normal one the client should follow anyway.
-            return app.get(url).document
-        }
 
-        // Not gated - return the document as-is.
-        return response.document
+                // Capture the cookies explicitly - do NOT rely on the
+                // client's cookie jar keeping HttpOnly cookies.
+                val rawCookies = response.headers.entries
+                    .filter { it.key.equals("set-cookie", ignoreCase = true) }
+                    .joinToString("\n") { it.value }
+
+                val device = Regex("access_device=([^;\\s,]+)").find(rawCookies)?.groupValues?.get(1)
+                val token = Regex("access_token=([^;\\s,]+)").find(rawCookies)?.groupValues?.get(1)
+                if (token == null) {
+                    Log.w("ToonStream", "Gate activation: no access_token cookie in response")
+                    return@withLock null
+                }
+
+                val header = buildString {
+                    if (device != null) append("access_device=$device; ")
+                    append("access_token=$token")
+                }
+
+                accessCookieHeader = header
+                accessActivatedAtMs = System.currentTimeMillis()
+                Log.d("ToonStream", "Access gate activated (24h pass)")
+                header
+            } catch (e: Exception) {
+                Log.w("ToonStream", "Gate activation error: ${e.message}")
+                null
+            }
+        }
+    }
+
+    /**
+     * Fetches a page as a Jsoup Document, transparently unlocking the
+     * 24-hour access gate for /movies/ and /episode/ URLs. Gated pages
+     * are requested WITHOUT redirects so the gate can be detected
+     * directly; non-gated URLs are fetched as-is.
+     */
+    private suspend fun unlockedGet(url: String): Document {
+        if (!pageNeedsGate(url)) return app.get(url).document
+
+        // Activate the pass up front - it works standalone, without
+        // having to see the gate redirect first (verified live).
+        if (!accessPassFresh()) activateAccessPass(urlPathOf(url))
+
+        val first = accessCookieHeader
+        val response = app.get(
+            url,
+            allowRedirects = false,
+            headers = if (first != null) mapOf("Cookie" to first) else emptyMap<String, String>()
+        )
+        val location = response.headers.entries
+            .firstOrNull { it.key.equals("location", ignoreCase = true) }?.value
+
+        return when {
+            // Gate still up (token expired/cleared server-side): refresh
+            // the pass once and fetch again.
+            response.code in 300..399 && location?.contains("/access", true) == true -> {
+                activateAccessPass(urlPathOf(url))
+                val fresh = accessCookieHeader
+                app.get(
+                    url,
+                    headers = if (fresh != null) mapOf("Cookie" to fresh) else emptyMap<String, String>()
+                ).document
+            }
+            // Normal redirect the client should follow.
+            response.code in 300..399 && location != null -> app.get(url).document
+            // Unlocked / direct response.
+            else -> response.document
+        }
     }
 
     /**
@@ -454,9 +526,10 @@ class ToonstreamProvider : MainAPI() {
         }
 
         val actualUrl = media.url
-        // Movie detail pages (/movies/*) sit behind the access ad gate,
-        // series pages are not gated - the helper handles both cases.
-        val document = getDocumentBypassingAccessGate(actualUrl)
+        // Movie detail pages (/movies/*) sit behind the 24-hour access ad
+        // gate: unlock here, at the details page. Series pages (/series/*)
+        // are not gated - unlockedGet() then fetches them as-is.
+        val document = unlockedGet(actualUrl)
 
         val rawTitle = document.selectFirst("header.entry-header > h1")?.text()?.replace(Regex("(?i)Watch Online"), "")?.trim() ?: ""
         val cleanTitle = cleanTitleText(rawTitle)
@@ -517,8 +590,10 @@ class ToonstreamProvider : MainAPI() {
         // fragment of <li><article class="post ... episodes"> items.
         val seasonBaseUrl = actualUrl.trimEnd('/')
         for (season in seasonNumbers) {
+            // Season fragments are NOT gated (verified live 2026-11-20:
+            // HTTP 200 without cookies) - plain fetch, no gate activation.
             val seasonDoc = try {
-                getDocumentBypassingAccessGate("$seasonBaseUrl/season/$season")
+                app.get("$seasonBaseUrl/season/$season").document
             } catch (e: Exception) {
                 Log.w("ToonStream", "Season $season fetch failed: ${e.message}")
                 Jsoup.parse("")
@@ -606,8 +681,11 @@ class ToonstreamProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Episode pages sit behind the 24-hour access ad gate.
-        val document = getDocumentBypassingAccessGate(data)
+        // Series: the gate hits exactly here, when an episode page
+        // (/episode/*) is opened. Movies reach this with their /movies/*
+        // details URL. unlockedGet() activates/refreshes the 24-hour pass
+        // as needed and carries the access cookies explicitly.
+        val document = unlockedGet(data)
         var found = false
 
         // 1. Extract streaming links embedded in iframes
