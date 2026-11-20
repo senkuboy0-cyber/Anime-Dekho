@@ -202,9 +202,12 @@ class ToonstreamProvider : MainAPI() {
 
                 // Capture the cookies explicitly - do NOT rely on the
                 // client's cookie jar keeping HttpOnly cookies.
-                val rawCookies = response.headers.entries
+                // response.headers is okhttp3.Headers - use toMultimap()
+                // to get ALL Set-Cookie values (get() returns only one).
+                val rawCookies = response.headers.toMultimap()
                     .filter { it.key.equals("set-cookie", ignoreCase = true) }
-                    .joinToString("\n") { it.value }
+                    .flatMap { it.value }
+                    .joinToString("\n")
 
                 val device = Regex("access_device=([^;\\s,]+)").find(rawCookies)?.groupValues?.get(1)
                 val token = Regex("access_token=([^;\\s,]+)").find(rawCookies)?.groupValues?.get(1)
@@ -248,8 +251,8 @@ class ToonstreamProvider : MainAPI() {
             allowRedirects = false,
             headers = if (first != null) mapOf("Cookie" to first) else emptyMap<String, String>()
         )
-        val location = response.headers.entries
-            .firstOrNull { it.key.equals("location", ignoreCase = true) }?.value
+        // okhttp3 Headers.get(name) is case-insensitive (repo-proven API)
+        val location = response.headers["location"]
 
         return when {
             // Gate still up (token expired/cleared server-side): refresh
